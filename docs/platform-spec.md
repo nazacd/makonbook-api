@@ -37,6 +37,10 @@ Access (except placement) is limited to people who are active in HolliHop.
 | D9 | Placement JSON keeps integer IDs; gains explicit `type` and multi-answer grid-ins. | |
 | D10 | Practice content: questions stored in Postgres, tests **published as immutable JSON packages** for offline download. | |
 | D11 | Students/teachers who leave are **deactivated, not hard-deleted**. | Changed from the original sync note: attendance, attempts and vocab progress exist only in our DB, and a bad sync must not be able to wipe them. A returning student keeps the same HolliHop `ClientId` and is simply reactivated (password reset to default + forced change). |
+| D12 | A substitute teacher who isn't on the HolliHop schedule item **cannot open attendance**; an admin updates the schedule in HolliHop first. | For now; revisit if it becomes a burden. |
+| D13 | **Late** = scanned after lesson start + 10 min. Teachers may correct marks for **24 h** after the lesson. | |
+| D14 | One account may be logged in on **several devices** at once; device binding applies only within an attendance session. | A stricter device policy may come later. |
+| D15 | **Force update**: the API exposes a minimum supported app version; older apps are blocked with an "update the app" screen. | Phase 1. |
 
 ## 3. System overview
 
@@ -303,6 +307,7 @@ hollihop_outbox(id, kind, payload jsonb, attempts, next_attempt_at, last_error,
 ## 17. API outline (v1)
 
 ```
+GET  /v1/app/config                   {min_app_version, …} — no auth; app blocks itself if older
 POST /v1/auth/login                    {login, password} → {token, must_change_password, role}
 POST /v1/auth/change-password
 POST /v1/auth/logout
@@ -344,7 +349,7 @@ POST /v1/practice/attempts             idempotent by client UUID
 - Confirm `SetStudentPasses` behaviour on one real lesson (8.6).
 
 **Phase 1 — foundation**
-Go skeleton, DB, migrations, sync worker with guards, auth, OpenAPI; admin web (sync, data quality, people, reset); mobile: login, forced password change, role shells, profile; placement data changes (section 10). Deploy to Hetzner.
+Go skeleton, DB, migrations, sync worker with guards, auth, OpenAPI; admin web (sync, data quality, people, reset); mobile: force-update check, login, forced password change, role shells, profile; placement data changes (section 10). Deploy to Hetzner.
 
 **Phase 2 — attendance**
 Lesson days, sessions, QR, scanning, overrides, outbox write-back, admin attendance pages.
@@ -355,7 +360,4 @@ Authoring in admin, publishing, generic test engine on mobile, offline packages,
 **Phase 4 — vocabulary.** **Phase 5 — parents.** Later: Telegram login/reset, push notifications.
 
 ## 20. Open items
-1. Substitute teacher not on the HolliHop schedule item: they can't open a session — admin must update HolliHop first. Acceptable?
-2. "Late" threshold (proposed start + 10 min) and teacher override window (proposed 24 h).
-3. Should one account be allowed on several devices at once? (Proposed: yes; device binding is per attendance session only.)
-4. Minimum supported app version endpoint (force-update) — proposed for phase 1.
+None at the moment — all earlier open items are recorded as D12–D15. Deferred on purpose: stricter device policy (D14), substitute-teacher handling without a HolliHop change (D12), Telegram, push notifications.
