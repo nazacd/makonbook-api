@@ -82,7 +82,7 @@ Verified against the live account (read-only) on 2026-10-09/10 and the
 - 5 369 records; **1 065 with status `Занимается` (StatusId 2)**. Other statuses: 3 Закончил обучение, 4 Ушел (старый ученик), 5 Ушел (после пробного урока), 6 Отложил обучение.
 - **Identity key is `ClientId`, not `Id`.** Enrollments reference `StudentClientId`.
 - Phone formats vary (`+998…`, bare 9 digits, spaces, brackets) → must normalise.
-- Active-student phone quality: 4 blank, 5 wrong length, 4 numbers shared by 2 students (3 of 4 are siblings on a parent's phone), 15 students whose number equals their parent's.
+- Active-student phone quality: 4 blank, 5 invalid (checked with libphonenumber; one foreign `+1` number is valid), 4 numbers shared by 2 students (3 of 4 are siblings on a parent's phone), 15 students whose number equals their parent's.
 - `Birthday` is junk for most records (defaults to creation date) and `Maturity` is unreliable → **not synced**.
 
 ### 4.3 Groups, schedules, teachers
@@ -112,7 +112,7 @@ Verified against the live account (read-only) on 2026-10-09/10 and the
 | **Group roster** | Enrollments current on that date (dates + weekday mask) **∩** active students. |
 | **Active teacher** (may log in) | `Fired = false` **and** listed in `TeacherIds` of at least one current schedule item **and** valid unique phone. |
 | **Attendance-enabled group** | `LearningType = GROUP` and office ≠ `ONLINE` (configurable). |
-| **Phone normalisation** | Strip non-digits; 9 digits → prefix `998`; must be 12 digits starting `998`; stored as `+998XXXXXXXXX`. |
+| **Phone normalisation** | Parse with libphonenumber (Go: `github.com/nyaruka/phonenumbers`), default region `UZ`, so bare 9-digit numbers become `+998…`. Must pass `IsValidNumber` (catches wrong length and non-existent operator codes). Foreign numbers are allowed (e.g. `+1…`). Stored in E.164. |
 | **Conflicts** | A phone shared by two active people → **both** are excluded from login and listed in the admin *Data quality* page. Never silently pick one. |
 
 A person who is both teacher and student (same phone) is a conflict too unless explicitly linked by an admin.
