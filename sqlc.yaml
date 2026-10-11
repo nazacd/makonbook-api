@@ -10,3 +10,19 @@ sql:
         package: systemdb
         out: internal/system/systemdb
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/people/queries.sql
+    gen:
+      go:
+        package: peopledb
+        out: internal/people/peopledb
+        sql_package: pgx/v5
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/sync/queries.sql
+    gen:
+      go:
+        package: syncdb
+        out: internal/sync/syncdb
+        sql_package: pgx/v5

@@ -5,8 +5,12 @@ plus the worker that syncs with HolliHop. What it does and why is in
 [`docs/platform-spec.md`](docs/platform-spec.md) — read it before changing
 behaviour.
 
-**Status:** phase 1, step 1 — project skeleton, configuration, database and
-migrations, HTTP server with health checks and `GET /v1/app/config`.
+**Status:** phase 1.
+- Step 1 — project skeleton, configuration, database and migrations, HTTP
+  server with health checks and `GET /v1/app/config`.
+- Step 2 — HolliHop sync: students, teachers, groups, schedules and
+  enrollments mirrored into Postgres, login phones, data-quality issues,
+  mass-change guard, alerts.
 
 ## Getting started
 
@@ -29,6 +33,8 @@ The project builds one binary, `makonbook`:
 | Command | What it does |
 |---|---|
 | `makonbook serve` | Run the HTTP API. Refuses to start if migrations are pending. |
+| `makonbook worker` | Run the HolliHop sync forever: incremental every `SYNC_INTERVAL`, full once a day after `SYNC_FULL_AT`. |
+| `makonbook sync full\|incremental` | Run one sync now and print a summary. Add `--allow-mass-change` to apply a run the guard blocked, after checking the change is real. |
 | `makonbook migrate up` | Apply pending migrations. Run this before `serve` on every deploy. |
 | `makonbook migrate down` | Roll back the last migration. |
 | `makonbook migrate status` | List migrations and whether each is applied. |
@@ -45,6 +51,12 @@ All configuration comes from environment variables (see `.env.example`).
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `LOG_FORMAT` | `text` (`json` in production) | |
 | `SHUTDOWN_TIMEOUT` | `15s` | Grace period for in-flight requests |
+| `TIMEZONE` | `Asia/Tashkent` | School time zone; defines "today" for schedules |
+| `HOLLIHOP_BASE_URL` | — (worker/sync) | e.g. `https://school.t8s.ru/Api/V2` |
+| `HOLLIHOP_AUTHKEY` | — (worker/sync) | Secret. Never logged. |
+| `SYNC_INTERVAL` | `15m` | Between incremental syncs |
+| `SYNC_FULL_AT` | `03:00` | Local time of the nightly full sync |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALERT_CHAT_ID` | — | Optional, set both: sync alerts go to this chat instead of only the log |
 | `TEST_DATABASE_URL` | — | Tests only; database tests are skipped without it |
 
 ## Layout
@@ -55,9 +67,12 @@ api/openapi.yaml       API contract for the mobile app and admin panel
 db/migrations/         goose SQL migrations, embedded in the binary
 internal/
   app/                 wires features into one HTTP handler
-  platform/            shared plumbing: config, logging, postgres, migrate, httpx, testdb
+  platform/            shared plumbing: config, logging, postgres, migrate, httpx, alert, testdb
+  hollihop/            read-only HolliHop API client
+  people/              mirror of HolliHop people and groups; login phones; data-quality issues
+  sync/                sync runs: fetch → people.Apply in one transaction → cursor, guard, alerts
   system/              health checks and public app config
-    queries.sql        this feature's SQL
+    queries.sql        each feature's SQL
     systemdb/          sqlc-generated code — do not edit
 ```
 
@@ -80,7 +95,18 @@ package). A feature never queries another feature's tables directly.
 - **Checks:** `make lint` and `make test` must pass; CI runs both plus the
   generated-code check.
 
+## HolliHop sync in one paragraph
+
+A run fetches teachers, groups, students and enrollments from HolliHop, then
+applies everything in one transaction. Students are stored only once they have
+been "Занимается"; people who leave are **deactivated, never deleted**. Each
+active person gets a `login_phone` only if their HolliHop mobile is valid and
+not shared with anyone else active; otherwise a row in `data_quality_issues`
+says what admins must fix. A run that would deactivate more than 10 % of
+students or teachers is rolled back and alerted (`blocked`). Details: spec
+section 6.
+
 ## Secrets
 
-Never commit `.env`, the HolliHop auth key or database passwords. Production
-values live only in the server's environment.
+Never commit `.env`, the HolliHop auth key, the Telegram bot token or database
+passwords. Production values live only in the server's environment.

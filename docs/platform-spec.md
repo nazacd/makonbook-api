@@ -108,9 +108,9 @@ Verified against the live account (read-only) on 2026-10-09/10 and the
 
 | Rule | Definition |
 |---|---|
-| **Active student** (may log in) | HolliHop status `Занимается` **and** valid, unique normalised phone. |
+| **Active student** (may log in) | HolliHop status `Занимается` (StatusId 2) **and** valid, unique normalised phone. Only students who are or have been active are stored. |
 | **Group roster** | Enrollments current on that date (dates + weekday mask) **∩** active students. |
-| **Active teacher** (may log in) | `Fired = false` **and** listed in `TeacherIds` of at least one current schedule item **and** valid unique phone. |
+| **Active teacher** (may log in) | `Fired = false` **and** listed in `TeacherIds` of a current schedule item **and** valid unique phone. "Current" allows a margin: the item starts within 14 days and ended no more than 7 days ago, so teachers aren't logged out between one group ending and the next starting. |
 | **Attendance-enabled group** | `LearningType = GROUP` and office ≠ `ONLINE` (configurable). |
 | **Phone normalisation** | Parse with libphonenumber (Go: `github.com/nyaruka/phonenumbers`), default region `UZ`, so bare 9-digit numbers become `+998…`. Must pass `IsValidNumber` (catches wrong length and non-existent operator codes). Foreign numbers are allowed (e.g. `+1…`). Stored in E.164. |
 | **Conflicts** | A phone shared by two active people → **both** are excluded from login and listed in the admin *Data quality* page. Never silently pick one. |
@@ -126,21 +126,28 @@ A person who is both teacher and student (same phone) is a conflict too unless e
 | Groups + schedule items (full) | 15 min | `GetEdUnits` (paged) |
 | Students (incremental) | 15 min | `GetStudents?lastUpdatedFrom=<cursor>` — **no status filter** |
 | Enrollments (full rebuild) | 15 min | `GetEdUnitStudents?statuses=Normal` (paged), filtered by date client-side |
-| Lesson days, next 7 days | hourly | `GetEdUnits?queryDays=true&dateFrom&dateTo` |
+| Lesson days, next 7 days | hourly | `GetEdUnits?queryDays=true&dateFrom&dateTo` — added in phase 2 (attendance) |
 | Students (full reconcile) | nightly | `GetStudents` (paged) |
 
-Order within a run: **teachers → groups/schedules → students → enrollments**. A full
-run is ~25 requests — far under the rate limit.
+A run first **fetches everything**, then applies it **in one transaction** (groups and
+schedules → teachers → students → enrollments → login phones and data-quality issues),
+so a failure part-way leaves the database untouched. A full run is ~25 requests — far
+under the rate limit — and takes under a minute, almost all of it HolliHop response time.
+The worker (`makonbook worker`) runs incremental syncs every `SYNC_INTERVAL` and a full
+one once a day after `SYNC_FULL_AT` (school time zone `TIMEZONE`); `makonbook sync
+full|incremental` runs one by hand.
 
 ### 6.2 Rules
 - Upsert by HolliHop id (`client_id` for students, `id` for teachers/groups/schedule items).
 - Sync writes **only HolliHop-sourced columns** (names, phone, status, offices, group links). It never touches app-owned columns (password hash, username, email, flags).
 - Leaving → `deactivated_at = now()`, all sessions revoked immediately. Returning → reactivated, password reset to default, `must_change_password = true`.
-- Enrollments: rebuild into a temp table, diff, apply **in one transaction**.
+- Schedule items and enrollments: deleted and re-inserted inside the run's transaction (readers never see the gap). Only current and future enrollments of stored students are kept.
 - Cursor (`lastUpdatedFrom`) saved **only after the run commits**, using the response's `Now`.
-- **Mass-change guard:** if a run would deactivate > 10 % of active students or teachers, abort, alert, and require an admin to approve the run in the admin panel.
+- **Mass-change guard:** if a run would deactivate more than 10 % of active students or teachers (ignoring changes of fewer than 5 people), it is rolled back, recorded as `blocked`, and admins are alerted. After checking the change is real, an admin re-runs it with `makonbook sync full --allow-mass-change` (an admin-panel button comes later).
+- A run where HolliHop returns an empty list of teachers, groups, enrollments or (full run) students is refused as a HolliHop fault.
 - One run at a time: Postgres advisory lock.
-- Every run recorded in `sync_runs` (start, end, counts per entity, errors). Failure → alert (Telegram message to an admin chat via bot API — outbound only).
+- Every run recorded in `sync_runs` (start, end, counts, errors). Alerts go to a Telegram chat via bot API (outbound only; optional) or the error log, **only when the outcome changes** — first failure/block, then recovery — not on every failing run.
+- The HolliHop auth key and the Telegram bot token travel in URLs; the code strips URLs from every error so neither reaches logs or `sync_runs`.
 
 ## 7. Authentication
 
@@ -265,23 +272,27 @@ Inside a feature: `handler.go` (HTTP ↔ service), `service.go` (rules), `store.
 
 ## 15. Data model (phase 1–2)
 
+The authoritative schema is `db/migrations/`; this is the overview.
+
 ```
-students(client_id PK, first_name, last_name, phone UNIQUE NULL, hh_status_id,
-         offices text[], hh_updated_at, deactivated_at,
-         username UNIQUE NULL, password_hash, must_change_password, email NULL,
-         created_at, updated_at)
-teachers(id PK, first_name, last_name, phone UNIQUE NULL, fired, deactivated_at,
-         username, password_hash, must_change_password, created_at, updated_at)
-groups(id PK, name, discipline, subject, level, learning_type, office_id, office_name,
-       office_tz, attendance_enabled, synced_at)
-schedule_items(id PK, group_id FK, weekdays smallint, begin_time, end_time,
-               begin_date, end_date NULL, classroom, teacher_ids int[])
-enrollments(group_id, student_client_id, begin_date, end_date NULL, weekdays, status,
-            PRIMARY KEY(group_id, student_client_id, begin_date))
-lesson_days(group_id, date, schedule_item_ids int[], minutes, PRIMARY KEY(group_id, date))
-data_quality_issues(id, entity, entity_id, kind, detail, first_seen, resolved_at)
-sync_runs(id, kind, started_at, finished_at, status, counts jsonb, error, needs_approval)
+-- built (phase 1, step 2)
+offices(id PK, name, utc_offset)
+groups(id PK, name, discipline, level, learning_type, office_id FK, removed_at)
+schedule_items(id PK, group_id FK, begin_date NULL, end_date NULL, begin_time, end_time,
+               weekdays smallint, classroom, teacher_ids int[])
+teachers(id PK, first_name, last_name, phone_raw, login_phone UNIQUE NULL, fired,
+         deactivated_at)
+students(client_id PK, hh_student_id, first_name, last_name, phone_raw,
+         login_phone UNIQUE NULL, hh_status_id NULL, office_ids int[], deactivated_at)
+enrollments(id PK, group_id FK, student_client_id FK, begin_date NULL, end_date NULL, weekdays)
+data_quality_issues(id, person_kind, person_id, kind, detail, first_seen_at, last_seen_at,
+                    resolved_at)                -- one open row per (person, kind)
+sync_runs(id, mode, status, started_at, finished_at, stats jsonb, error)
 sync_cursors(name PK, value)
+
+-- planned: credentials are added to students/teachers by the auth migration
+--   (username UNIQUE NULL, password_hash, must_change_password, email NULL)
+lesson_days(group_id, date, schedule_item_ids int[], minutes, PRIMARY KEY(group_id, date))
 auth_sessions(id, token_hash UNIQUE, subject_type, subject_id, device_id, created_at,
               last_seen_at, expires_at, revoked_at)
 login_attempts(...)
