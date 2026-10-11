@@ -21,7 +21,7 @@ Requirements: Go 1.27+, Docker (for the local database), `make`.
 
 ```bash
 cp .env.example .env
-make db-up          # Postgres 18 in Docker, plus a makonbook_test database
+make db-up          # Postgres 16 in Docker (production's version), plus a makonbook_test database
 make migrate-up
 make run            # http://localhost:8080
 curl localhost:8080/v1/app/config
@@ -55,7 +55,7 @@ All configuration comes from environment variables (see `.env.example`).
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `LOG_FORMAT` | `text` (`json` in production) | |
 | `SHUTDOWN_TIMEOUT` | `15s` | Grace period for in-flight requests |
-| `TRUST_PROXY` | `false` | `true` behind Caddy: take the client IP from `X-Forwarded-For` (login rate limit). Never without a proxy. |
+| `TRUST_PROXY` | `false` | `true` behind the edge nginx: take the client IP from `X-Forwarded-For` (login rate limit). Never without a proxy. |
 | `TIMEZONE` | `Asia/Tashkent` | School time zone; defines "today" for schedules |
 | `HOLLIHOP_BASE_URL` | — (worker/sync) | e.g. `https://school.t8s.ru/Api/V2` |
 | `HOLLIHOP_AUTHKEY` | — (worker/sync) | Secret. Never logged. |
@@ -123,6 +123,14 @@ row lock the account for 15 minutes, doubling with each further lockout up to
 logout, on a password change (other devices), when the person stops being
 active in HolliHop, and after 30 days unused. Someone who leaves and returns
 starts again from the default password. Details: spec section 7.
+
+## Deploying
+
+Production runs on the MakonBook VPS behind the existing edge nginx, with its
+own database in the shared Postgres. Step-by-step guide, compose file, nginx
+blocks and backup script: [`deploy/`](deploy/DEPLOY.md). Images are built by
+`.github/workflows/docker.yml` and pushed to Docker Hub as
+`nazacd/makonbook-api`.
 
 ## Secrets
 

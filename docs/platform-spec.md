@@ -156,7 +156,7 @@ full|incremental` runs one by hand.
 - **Own password valid only for the current active period:** `students/teachers.activated_at` is set again on reactivation; a password set before it no longer counts, so a returning student is back on the default password (spec 6.2) without the sync ever touching auth tables. Sessions created before `activated_at` are dead for the same reason.
 - **Hashing:** argon2id (19 MiB, t=2, p=1 — OWASP minimum), PHC string format, concurrency capped so a classroom logging in at once can't exhaust memory. Paths with nothing to verify spend the same time, so timing doesn't reveal whether an account exists.
 - **Sessions:** opaque random token (32 bytes), stored as SHA-256 in `auth_sessions`, 30-day expiry extended on use (at most one write per hour). Dead on logout, on password change (other devices), when the person is deactivated, after reset, and after 30 days unused. Stored on device in `expo-secure-store`.
-- **Brute force:** per-account lockout — every 5th consecutive failure locks for 15 min × 2^(lockouts−1), capped at 24 h (so the 4-digit default can't be guessed in practice); a successful login resets the count. Wrong current passwords in a password change count too. Per-IP limit of 100 attempts / 10 min (generous: a classroom shares one IP). Behind Caddy, `TRUST_PROXY=true` takes the IP from `X-Forwarded-For`.
+- **Brute force:** per-account lockout — every 5th consecutive failure locks for 15 min × 2^(lockouts−1), capped at 24 h (so the 4-digit default can't be guessed in practice); a successful login resets the count. Wrong current passwords in a password change count too. Per-IP limit of 100 attempts / 10 min (generous: a classroom shares one IP). Behind the edge nginx, `TRUST_PROXY=true` takes the IP from `X-Forwarded-For`.
 - **Reset:** `makonbook reset-password student|teacher <id>` (admin-panel button later) forgets the own password, unlocks and ends all sessions. Email-code reset (hashed code, 15 min expiry, 5 attempts) can follow; Telegram later.
 - **Errors:** unknown account and wrong password both answer 401 `invalid_credentials`; a locked account answers 429 `account_locked` with `Retry-After`.
 - **Admins:** separate `admin_users` (email + password + TOTP), created via CLI. Roles: `admin`, `content_author` (main teachers writing practice content).
@@ -233,7 +233,7 @@ Sync `StudentAgents` mobiles; one parent account ↔ many children; see attendan
 
 ## 13. Admin web (React)
 
-Vite + React + TypeScript + TanStack Query + client generated from `api/openapi.yaml`. Served as static files by Caddy. Lives in `web/admin/` in this repo so it shares the OpenAPI contract.
+Vite + React + TypeScript + TanStack Query + client generated from `api/openapi.yaml`. Served as static files by the edge nginx (`admin.makonbook.uz`). Lives in `web/admin/` in this repo so it shares the OpenAPI contract.
 
 Phase 1 pages: login · sync status & run history (approve guarded runs) · **data quality** (blank/invalid/duplicate phones, teachers without phone) · students / teachers / groups (read-only mirror) · reset password · revoke sessions.
 Phase 2: attendance by group/date · teacher override report · HolliHop write errors.
@@ -316,8 +316,12 @@ hollihop_outbox(id, kind, payload jsonb, attempts, next_attempt_at, last_error,
 ```
 
 ## 16. Hosting & data
-- Hetzner VPS (DE), Docker Compose: `caddy`, `makonbook serve`, `makonbook worker`, `postgres`.
-- Nightly `pg_dump` to Hetzner Object Storage / Storage Box, 14-day retention, **restore tested** once a month.
+- The existing MakonBook VPS (Hetzner, DE; 2 vCPU, 3.7 GB RAM), shared with the Django site, the leaderboard, sat-makon.uz and school28. Guide: `deploy/DEPLOY.md`.
+- **Edge:** the existing `makonbook-nginx` container owns :80/:443 and terminates TLS; `api.makonbook.uz` gets its own server block and its own Let's Encrypt lineage (the shared SAN cert is not touched). The API trusts `X-Forwarded-For` from it (`TRUST_PROXY=true`).
+- **Containers:** `makonbook-api` (serve) and `makonbook-api-worker` (sync) from `nazacd/makonbook-api`, built by GitHub Actions and pulled from Docker Hub like the other services; on the shared `sat_makon_network`, no published ports, read-only filesystem.
+- **Database:** the shared `db` container (Postgres 16). MakonBook has its own database `makonbook_api` and a **non-superuser** role `makonbook_api`; no access to the other apps' databases. Dev and CI use Postgres 16 to match.
+- **Security precondition:** before go-live, port 5432 must not be reachable from the internet (Hetzner Cloud Firewall: inbound 22/80/443 only). Found open during the server audit (2026-10).
+- **Backups:** nightly `pg_dump` of every database in `db` (there were none before), 14-day retention on the server; copy off-site (Hetzner Storage Box) and **test a restore** once a month.
 - Data minimisation: only fields listed above; no birthdays, no parent data before phase 5.
 - **Legal note:** Uzbekistan's personal-data law requires citizens' personal data to be stored in Uzbekistan. Hosting in Germany was chosen knowingly (HolliHop itself is hosted abroad too). Revisit if the business needs to be compliant.
 

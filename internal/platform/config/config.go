@@ -22,7 +22,7 @@ type Config struct {
 	LogLevel        slog.Level
 	LogFormat       string // "text" or "json"
 	ShutdownTimeout time.Duration
-	// TrustProxy: the API runs behind a reverse proxy (Caddy) and may take the
+	// TrustProxy: the API runs behind a reverse proxy (the edge nginx) and may take the
 	// client IP from X-Forwarded-For. Never enable without a proxy in front.
 	TrustProxy bool
 

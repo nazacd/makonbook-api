@@ -6,8 +6,8 @@ import (
 	"strings"
 )
 
-// ClientIP returns the caller's IP address. Behind a reverse proxy (Caddy in
-// production) every request comes from the proxy, so with trustProxy the
+// ClientIP returns the caller's IP address. Behind a reverse proxy (the edge
+// nginx in production) every request comes from the proxy, so with trustProxy the
 // last X-Forwarded-For entry — the one the proxy itself appended — is used.
 // Without trustProxy the header is ignored, since clients can forge it.
 func ClientIP(r *http.Request, trustProxy bool) string {

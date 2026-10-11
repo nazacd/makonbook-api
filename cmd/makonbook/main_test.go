@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -40,5 +42,28 @@ func TestSyncCommandsRequireHolliHopSettings(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "HOLLIHOP_AUTHKEY") {
 			t.Errorf("run(%q) = %v, want HolliHop config error", args, err)
 		}
+	}
+}
+
+func TestHealthcheck(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/readyz" {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	env := func(k string) string {
+		if k == "HTTP_ADDR" {
+			return addr
+		}
+		return ""
+	}
+	if err := run(t.Context(), []string{"healthcheck"}, env, io.Discard, io.Discard); err != nil {
+		t.Errorf("healthy server: %v", err)
+	}
+	srv.Close()
+	if err := run(t.Context(), []string{"healthcheck"}, env, io.Discard, io.Discard); err == nil {
+		t.Error("stopped server reported healthy")
 	}
 }

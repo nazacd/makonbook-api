@@ -15,10 +15,12 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 	_ "time/tzdata" // the school time zone must resolve even in a minimal container
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -45,6 +47,7 @@ commands:
                             run one HolliHop sync now; --allow-mass-change applies a run
                             the mass-change guard blocked, once you've checked it is real
   migrate up|down|status    manage database migrations
+  healthcheck               exit 0 if the local API answers /readyz (for Docker)
   reset-password student|teacher <id>
                             back to the default password (last 4 digits of the phone),
                             unlock the account and log out everywhere
@@ -67,6 +70,10 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) error {
+	// Container health probe: needs no configuration beyond HTTP_ADDR.
+	if len(args) == 1 && args[0] == "healthcheck" {
+		return healthcheck(ctx, getenv("HTTP_ADDR"))
+	}
 	if !validArgs(args) {
 		return errUsage
 	}
@@ -248,6 +255,36 @@ func resetPassword(ctx context.Context, cfg config.Config, kind string, id int32
 	}
 	if !p.Active {
 		fmt.Fprintln(stdout, "Note: they are not active, so they can't log in at all.")
+	}
+	return nil
+}
+
+// healthcheck asks the API on this machine whether it is ready. The
+// production image has no shell or curl, so Docker's HEALTHCHECK runs this.
+func healthcheck(ctx context.Context, addr string) error {
+	if addr == "" {
+		addr = ":8080"
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("HTTP_ADDR %q: %w", addr, err)
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+net.JoinHostPort(host, port)+"/readyz", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("readyz: status %d", resp.StatusCode)
 	}
 	return nil
 }
