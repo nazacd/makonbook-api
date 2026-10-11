@@ -104,9 +104,11 @@ certificate is not touched:
 
 ```bash
 cd /opt/sat-makon/makonbook
+# The server has more than one Let's Encrypt account; use the one that renews makonbook.uz.
+ACCOUNT=$(docker exec makonbook-nginx grep -h '^account' /etc/letsencrypt/renewal/makonbook.uz.conf | awk -F'= *' '{print $2}')
 docker compose run --rm --entrypoint certbot certbot certonly \
   --webroot -w /var/www/certbot -d api.makonbook.uz \
-  --non-interactive --agree-tos
+  --account "$ACCOUNT" --non-interactive --agree-tos
 ```
 
 The certbot container's 12-hourly `certbot renew` renews it with the others,
