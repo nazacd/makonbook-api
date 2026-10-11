@@ -11,9 +11,12 @@ import (
 // Stable error codes returned in the "code" field. Clients branch on these,
 // never on the message text.
 const (
-	CodeNotFound    = "not_found"
-	CodeInternal    = "internal"
-	CodeUnavailable = "unavailable"
+	CodeNotFound     = "not_found"
+	CodeInternal     = "internal"
+	CodeUnavailable  = "unavailable"
+	CodeBadRequest   = "bad_request"
+	CodeUnauthorized = "unauthorized"
+	CodeRateLimited  = "rate_limited"
 )
 
 type errorBody struct {
@@ -44,6 +47,20 @@ func WriteError(w http.ResponseWriter, r *http.Request, status int, code, messag
 		Message:   message,
 		RequestID: RequestID(r.Context()),
 	}})
+}
+
+// maxBody caps request bodies; the API takes small JSON documents only.
+const maxBody = 64 << 10
+
+// DecodeJSON reads a JSON request body into v. On failure it has already
+// written a 400 response and returns false.
+func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	if err := dec.Decode(v); err != nil {
+		WriteError(w, r, http.StatusBadRequest, CodeBadRequest, "request body must be a JSON object")
+		return false
+	}
+	return true
 }
 
 // NotFound answers any request that matched no route.

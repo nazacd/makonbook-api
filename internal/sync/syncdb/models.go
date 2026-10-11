@@ -14,6 +14,28 @@ type AppSetting struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type AuthSession struct {
+	ID         int64
+	TokenHash  []byte
+	PersonKind string
+	PersonID   int32
+	DeviceID   string
+	CreatedAt  pgtype.Timestamptz
+	LastSeenAt pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	RevokedAt  pgtype.Timestamptz
+}
+
+type Credential struct {
+	PersonKind        string
+	PersonID          int32
+	Username          pgtype.Text
+	PasswordHash      pgtype.Text
+	PasswordChangedAt pgtype.Timestamptz
+	FailedAttempts    int32
+	LockedUntil       pgtype.Timestamptz
+}
+
 type DataQualityIssue struct {
 	ID          int64
 	PersonKind  string
@@ -77,6 +99,7 @@ type Student struct {
 	DeactivatedAt pgtype.Timestamptz
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
+	ActivatedAt   pgtype.Timestamptz
 }
 
 type SyncCursor struct {
@@ -105,4 +128,5 @@ type Teacher struct {
 	DeactivatedAt pgtype.Timestamptz
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
+	ActivatedAt   pgtype.Timestamptz
 }

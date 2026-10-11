@@ -147,6 +147,163 @@ func (q *Queries) DeleteScheduleItems(ctx context.Context) error {
 	return err
 }
 
+const findByLoginPhone = `-- name: FindByLoginPhone :many
+
+SELECT 'student'::text AS kind, client_id AS id, first_name, last_name, login_phone, deactivated_at, activated_at
+FROM students WHERE login_phone = $1::text
+UNION ALL
+SELECT 'teacher'::text, id, first_name, last_name, login_phone, deactivated_at, activated_at
+FROM teachers WHERE login_phone = $1::text
+`
+
+type FindByLoginPhoneRow struct {
+	Kind          string
+	ID            int32
+	FirstName     string
+	LastName      string
+	LoginPhone    pgtype.Text
+	DeactivatedAt pgtype.Timestamptz
+	ActivatedAt   pgtype.Timestamptz
+}
+
+// Reads for other features (see directory.go). -------------------------------
+func (q *Queries) FindByLoginPhone(ctx context.Context, phone string) ([]FindByLoginPhoneRow, error) {
+	rows, err := q.db.Query(ctx, findByLoginPhone, phone)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FindByLoginPhoneRow
+	for rows.Next() {
+		var i FindByLoginPhoneRow
+		if err := rows.Scan(
+			&i.Kind,
+			&i.ID,
+			&i.FirstName,
+			&i.LastName,
+			&i.LoginPhone,
+			&i.DeactivatedAt,
+			&i.ActivatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getStudent = `-- name: GetStudent :one
+SELECT client_id, first_name, last_name, login_phone, deactivated_at, activated_at
+FROM students WHERE client_id = $1
+`
+
+type GetStudentRow struct {
+	ClientID      int32
+	FirstName     string
+	LastName      string
+	LoginPhone    pgtype.Text
+	DeactivatedAt pgtype.Timestamptz
+	ActivatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) GetStudent(ctx context.Context, clientID int32) (GetStudentRow, error) {
+	row := q.db.QueryRow(ctx, getStudent, clientID)
+	var i GetStudentRow
+	err := row.Scan(
+		&i.ClientID,
+		&i.FirstName,
+		&i.LastName,
+		&i.LoginPhone,
+		&i.DeactivatedAt,
+		&i.ActivatedAt,
+	)
+	return i, err
+}
+
+const getTeacher = `-- name: GetTeacher :one
+SELECT id, first_name, last_name, login_phone, deactivated_at, activated_at
+FROM teachers WHERE id = $1
+`
+
+type GetTeacherRow struct {
+	ID            int32
+	FirstName     string
+	LastName      string
+	LoginPhone    pgtype.Text
+	DeactivatedAt pgtype.Timestamptz
+	ActivatedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) GetTeacher(ctx context.Context, id int32) (GetTeacherRow, error) {
+	row := q.db.QueryRow(ctx, getTeacher, id)
+	var i GetTeacherRow
+	err := row.Scan(
+		&i.ID,
+		&i.FirstName,
+		&i.LastName,
+		&i.LoginPhone,
+		&i.DeactivatedAt,
+		&i.ActivatedAt,
+	)
+	return i, err
+}
+
+const groupSchedules = `-- name: GroupSchedules :many
+SELECT group_id, begin_date, end_date, begin_time, end_time, weekdays, classroom, teacher_ids
+FROM schedule_items
+WHERE group_id = ANY ($1::int[])
+  AND (end_date IS NULL OR end_date >= $2::date)
+ORDER BY group_id, begin_time
+`
+
+type GroupSchedulesParams struct {
+	GroupIds []int32
+	Today    pgtype.Date
+}
+
+type GroupSchedulesRow struct {
+	GroupID    int32
+	BeginDate  pgtype.Date
+	EndDate    pgtype.Date
+	BeginTime  pgtype.Time
+	EndTime    pgtype.Time
+	Weekdays   int16
+	Classroom  string
+	TeacherIds []int32
+}
+
+func (q *Queries) GroupSchedules(ctx context.Context, arg GroupSchedulesParams) ([]GroupSchedulesRow, error) {
+	rows, err := q.db.Query(ctx, groupSchedules, arg.GroupIds, arg.Today)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GroupSchedulesRow
+	for rows.Next() {
+		var i GroupSchedulesRow
+		if err := rows.Scan(
+			&i.GroupID,
+			&i.BeginDate,
+			&i.EndDate,
+			&i.BeginTime,
+			&i.EndTime,
+			&i.Weekdays,
+			&i.Classroom,
+			&i.TeacherIds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 type InsertEnrollmentsParams struct {
 	GroupID         int32
 	StudentClientID int32
@@ -289,7 +446,7 @@ func (q *Queries) MarkStudentsMissing(ctx context.Context, presentIds []int32) (
 
 const reactivateStudents = `-- name: ReactivateStudents :many
 UPDATE students
-SET deactivated_at = NULL, updated_at = now()
+SET deactivated_at = NULL, activated_at = now(), updated_at = now()
 WHERE deactivated_at IS NOT NULL AND hh_status_id = $1::int
 RETURNING client_id
 `
@@ -316,7 +473,7 @@ func (q *Queries) ReactivateStudents(ctx context.Context, studyingStatus int32) 
 
 const reactivateTeachers = `-- name: ReactivateTeachers :many
 UPDATE teachers
-SET deactivated_at = NULL, updated_at = now()
+SET deactivated_at = NULL, activated_at = now(), updated_at = now()
 WHERE deactivated_at IS NOT NULL AND id = ANY ($1::int[])
 RETURNING id
 `
@@ -396,4 +553,138 @@ type SetTeacherLoginPhonesParams struct {
 func (q *Queries) SetTeacherLoginPhones(ctx context.Context, arg SetTeacherLoginPhonesParams) error {
 	_, err := q.db.Exec(ctx, setTeacherLoginPhones, arg.Ids, arg.Phones)
 	return err
+}
+
+const studentGroups = `-- name: StudentGroups :many
+SELECT g.id, g.name, g.discipline, g.learning_type, coalesce(o.name, '')::text AS office
+FROM groups g
+LEFT JOIN offices o ON o.id = g.office_id
+WHERE g.removed_at IS NULL
+  AND EXISTS (
+      SELECT 1 FROM enrollments e
+      WHERE e.group_id = g.id AND e.student_client_id = $1
+        AND (e.end_date IS NULL OR e.end_date >= $2::date))
+ORDER BY g.discipline, g.name
+`
+
+type StudentGroupsParams struct {
+	ClientID int32
+	Today    pgtype.Date
+}
+
+type StudentGroupsRow struct {
+	ID           int32
+	Name         string
+	Discipline   string
+	LearningType string
+	Office       string
+}
+
+// Groups a student is enrolled in now or later.
+func (q *Queries) StudentGroups(ctx context.Context, arg StudentGroupsParams) ([]StudentGroupsRow, error) {
+	rows, err := q.db.Query(ctx, studentGroups, arg.ClientID, arg.Today)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []StudentGroupsRow
+	for rows.Next() {
+		var i StudentGroupsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Discipline,
+			&i.LearningType,
+			&i.Office,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const teacherGroups = `-- name: TeacherGroups :many
+SELECT g.id, g.name, g.discipline, g.learning_type, coalesce(o.name, '')::text AS office
+FROM groups g
+LEFT JOIN offices o ON o.id = g.office_id
+WHERE g.removed_at IS NULL
+  AND EXISTS (
+      SELECT 1 FROM schedule_items s
+      WHERE s.group_id = g.id AND $1::int = ANY (s.teacher_ids)
+        AND (s.end_date IS NULL OR s.end_date >= $2::date))
+ORDER BY g.discipline, g.name
+`
+
+type TeacherGroupsParams struct {
+	TeacherID int32
+	Today     pgtype.Date
+}
+
+type TeacherGroupsRow struct {
+	ID           int32
+	Name         string
+	Discipline   string
+	LearningType string
+	Office       string
+}
+
+// Groups a teacher teaches now or later.
+func (q *Queries) TeacherGroups(ctx context.Context, arg TeacherGroupsParams) ([]TeacherGroupsRow, error) {
+	rows, err := q.db.Query(ctx, teacherGroups, arg.TeacherID, arg.Today)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TeacherGroupsRow
+	for rows.Next() {
+		var i TeacherGroupsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Discipline,
+			&i.LearningType,
+			&i.Office,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const teacherNames = `-- name: TeacherNames :many
+SELECT id, first_name, last_name FROM teachers WHERE id = ANY ($1::int[])
+`
+
+type TeacherNamesRow struct {
+	ID        int32
+	FirstName string
+	LastName  string
+}
+
+func (q *Queries) TeacherNames(ctx context.Context, ids []int32) ([]TeacherNamesRow, error) {
+	rows, err := q.db.Query(ctx, teacherNames, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TeacherNamesRow
+	for rows.Next() {
+		var i TeacherNamesRow
+		if err := rows.Scan(&i.ID, &i.FirstName, &i.LastName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

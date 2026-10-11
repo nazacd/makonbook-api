@@ -61,7 +61,7 @@ RETURNING id;
 
 -- name: ReactivateTeachers :many
 UPDATE teachers
-SET deactivated_at = NULL, updated_at = now()
+SET deactivated_at = NULL, activated_at = now(), updated_at = now()
 WHERE deactivated_at IS NOT NULL AND id = ANY (@active_ids::int[])
 RETURNING id;
 
@@ -101,7 +101,7 @@ RETURNING client_id;
 
 -- name: ReactivateStudents :many
 UPDATE students
-SET deactivated_at = NULL, updated_at = now()
+SET deactivated_at = NULL, activated_at = now(), updated_at = now()
 WHERE deactivated_at IS NOT NULL AND hh_status_id = @studying_status::int
 RETURNING client_id;
 
@@ -164,3 +164,54 @@ WHERE i.resolved_at IS NULL
   AND NOT EXISTS (
       SELECT 1 FROM (SELECT unnest(@person_kinds::text[]) AS person_kind, unnest(@person_ids::int[]) AS person_id, unnest(@kinds::text[]) AS kind) AS c
       WHERE c.person_kind = i.person_kind AND c.person_id = i.person_id AND c.kind = i.kind);
+
+-- Reads for other features (see directory.go). -------------------------------
+
+-- name: FindByLoginPhone :many
+SELECT 'student'::text AS kind, client_id AS id, first_name, last_name, login_phone, deactivated_at, activated_at
+FROM students WHERE login_phone = @phone::text
+UNION ALL
+SELECT 'teacher'::text, id, first_name, last_name, login_phone, deactivated_at, activated_at
+FROM teachers WHERE login_phone = @phone::text;
+
+-- name: GetStudent :one
+SELECT client_id, first_name, last_name, login_phone, deactivated_at, activated_at
+FROM students WHERE client_id = @client_id;
+
+-- name: GetTeacher :one
+SELECT id, first_name, last_name, login_phone, deactivated_at, activated_at
+FROM teachers WHERE id = @id;
+
+-- Groups a student is enrolled in now or later.
+-- name: StudentGroups :many
+SELECT g.id, g.name, g.discipline, g.learning_type, coalesce(o.name, '')::text AS office
+FROM groups g
+LEFT JOIN offices o ON o.id = g.office_id
+WHERE g.removed_at IS NULL
+  AND EXISTS (
+      SELECT 1 FROM enrollments e
+      WHERE e.group_id = g.id AND e.student_client_id = @client_id
+        AND (e.end_date IS NULL OR e.end_date >= @today::date))
+ORDER BY g.discipline, g.name;
+
+-- Groups a teacher teaches now or later.
+-- name: TeacherGroups :many
+SELECT g.id, g.name, g.discipline, g.learning_type, coalesce(o.name, '')::text AS office
+FROM groups g
+LEFT JOIN offices o ON o.id = g.office_id
+WHERE g.removed_at IS NULL
+  AND EXISTS (
+      SELECT 1 FROM schedule_items s
+      WHERE s.group_id = g.id AND @teacher_id::int = ANY (s.teacher_ids)
+        AND (s.end_date IS NULL OR s.end_date >= @today::date))
+ORDER BY g.discipline, g.name;
+
+-- name: GroupSchedules :many
+SELECT group_id, begin_date, end_date, begin_time, end_time, weekdays, classroom, teacher_ids
+FROM schedule_items
+WHERE group_id = ANY (@group_ids::int[])
+  AND (end_date IS NULL OR end_date >= @today::date)
+ORDER BY group_id, begin_time;
+
+-- name: TeacherNames :many
+SELECT id, first_name, last_name FROM teachers WHERE id = ANY (@ids::int[]);

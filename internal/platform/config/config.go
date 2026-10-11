@@ -22,6 +22,9 @@ type Config struct {
 	LogLevel        slog.Level
 	LogFormat       string // "text" or "json"
 	ShutdownTimeout time.Duration
+	// TrustProxy: the API runs behind a reverse proxy (the edge nginx) and may take the
+	// client IP from X-Forwarded-For. Never enable without a proxy in front.
+	TrustProxy bool
 
 	// Location is the school's time zone; it decides what "today" means for
 	// schedules and enrollments.
@@ -75,6 +78,14 @@ func Load(getenv func(string) string) (Config, error) {
 		errs = append(errs, fmt.Errorf("SHUTDOWN_TIMEOUT must be a positive duration such as 15s, got %q", getenv("SHUTDOWN_TIMEOUT")))
 	}
 	cfg.ShutdownTimeout = timeout
+
+	switch v := strings.ToLower(getenv("TRUST_PROXY")); v {
+	case "", "false", "0":
+	case "true", "1":
+		cfg.TrustProxy = true
+	default:
+		errs = append(errs, fmt.Errorf("TRUST_PROXY must be true or false, got %q", v))
+	}
 
 	tz := withDefault(getenv("TIMEZONE"), "Asia/Tashkent")
 	if cfg.Location, err = time.LoadLocation(tz); err != nil {

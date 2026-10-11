@@ -9,6 +9,14 @@ info:
     Every error response uses the `Error` envelope; clients branch on
     `error.code`, never on `error.message`. Every response carries an
     `X-Request-ID` header — quote it when reporting a problem.
+
+    Authentication: `POST /v1/auth/login` returns a bearer token; send it as
+    `Authorization: Bearer <token>`. While `must_change_password` is true
+    (the person still uses the default password, the last 4 digits of their
+    phone) only `/v1/me`, `/v1/auth/password` and `/v1/auth/logout` work;
+    everything else answers 403 `password_change_required`. Any 401 means the
+    session is gone (logout, password changed elsewhere, person no longer
+    active): send the user back to the login screen.
 servers:
   - url: http://localhost:8080
     description: Local development
@@ -60,8 +68,209 @@ paths:
         "500":
           $ref: "#/components/responses/Error"
 
+  /v1/auth/login:
+    post:
+      summary: Log in with phone number or username
+      operationId: login
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401":
+          description: "`invalid_credentials` — same answer whether the account exists or not"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429":
+          description: |
+            `account_locked` (5 wrong passwords in a row; 15 min, doubling
+            with each further lockout, at most 24 h) or `rate_limited` (too
+            many attempts from one network). `Retry-After` gives seconds.
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/auth/password:
+    post:
+      summary: Change password (including replacing the default one)
+      description: Logs out every other session of this person.
+      operationId: changePassword
+      tags: [auth]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangePasswordRequest" }
+      responses:
+        "204": { description: Changed }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`wrong_password` — counts towards the lockout"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "`weak_password` — the message says why (8–128 characters, not the old one, must not contain the phone number)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+
+  /v1/auth/username:
+    put:
+      summary: Set an optional username to log in with
+      operationId: setUsername
+      tags: [auth]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Username" }
+      responses:
+        "200":
+          description: Saved (lower-cased)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Username" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`username_taken`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "422":
+          description: "`invalid_username`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /v1/auth/logout:
+    post:
+      summary: End this session
+      operationId: logout
+      tags: [auth]
+      security: [{ bearer: [] }]
+      responses:
+        "204": { description: Logged out }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/me:
+    get:
+      summary: The logged-in person, with their groups
+      operationId: getMe
+      tags: [auth]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "401": { $ref: "#/components/responses/Error" }
+
 components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+
   schemas:
+    LoginRequest:
+      type: object
+      required: [login, password]
+      properties:
+        login:
+          type: string
+          description: Phone number in any common format (`+998901234567`, `90 123 45 67`) or username.
+          maxLength: 100
+        password: { type: string, maxLength: 256 }
+        device_id:
+          type: string
+          maxLength: 100
+          description: Random id the app generates once per install.
+
+    LoginResponse:
+      type: object
+      required: [token, expires_at, user]
+      properties:
+        token: { type: string, description: Bearer token. Store it in secure storage. }
+        expires_at:
+          type: string
+          format: date-time
+          description: Extended on use; a session unused for 30 days expires.
+        user: { $ref: "#/components/schemas/Profile" }
+
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password: { type: string }
+        new_password: { type: string, minLength: 8, maxLength: 128 }
+
+    Username:
+      type: object
+      required: [username]
+      properties:
+        username:
+          type: string
+          pattern: "^[a-zA-Z][a-zA-Z0-9_.]{2,29}$"
+
+    Profile:
+      type: object
+      required: [kind, id, first_name, last_name, username, must_change_password, groups]
+      properties:
+        kind: { type: string, enum: [student, teacher] }
+        id: { type: integer, description: HolliHop client id (students) or teacher id }
+        first_name: { type: string }
+        last_name: { type: string }
+        username: { type: [string, "null"] }
+        must_change_password: { type: boolean }
+        groups:
+          type: array
+          description: Current and upcoming groups (enrolled in, or teaching).
+          items: { $ref: "#/components/schemas/Group" }
+
+    Group:
+      type: object
+      required: [id, name, discipline, learning_type, office, schedule]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        discipline: { type: string, example: PRE SAT MATH }
+        learning_type: { type: string, example: GROUP }
+        office: { type: string, example: NOVZA }
+        schedule:
+          type: array
+          items: { $ref: "#/components/schemas/Slot" }
+
+    Slot:
+      type: object
+      required: [weekdays, begin_time, end_time, classroom, teachers]
+      properties:
+        weekdays:
+          type: array
+          items: { type: string, enum: [mon, tue, wed, thu, fri, sat, sun] }
+        begin_time: { type: string, example: "14:00", description: School time zone }
+        end_time: { type: string, example: "15:30" }
+        classroom: { type: string }
+        begin_date: { type: string, format: date, description: Absent when open-ended }
+        end_date: { type: string, format: date, description: Absent when open-ended }
+        teachers: { type: array, items: { type: string } }
+
     Status:
       type: object
       required: [status]
@@ -90,7 +299,20 @@ components:
             code:
               type: string
               description: Stable machine-readable code.
-              enum: [not_found, internal, unavailable]
+              enum:
+                - not_found
+                - internal
+                - unavailable
+                - bad_request
+                - unauthorized
+                - rate_limited
+                - invalid_credentials
+                - account_locked
+                - password_change_required
+                - wrong_password
+                - weak_password
+                - invalid_username
+                - username_taken
             message:
               type: string
               description: Human-readable explanation; may change.

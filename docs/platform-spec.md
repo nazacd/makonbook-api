@@ -151,12 +151,14 @@ full|incremental` runs one by hand.
 
 ## 7. Authentication
 
-- **Login:** phone (or username once set) + password.
-- **First login:** password = last 4 digits of phone; account has `must_change_password` → app forces a new password (min 8 chars, not equal to default) and offers an optional username before anything else is reachable.
-- **Hashing:** argon2id.
-- **Sessions:** opaque random token (32 bytes), stored **hashed** in `auth_sessions`, 30-day sliding expiry, checked on every request. Revoked on password change (other devices), deactivation, or admin action. Stored on device in `expo-secure-store`.
-- **Brute force:** per-account lockout with backoff (5 failures → 15 min), per-IP rate limit. Matters because the default password is guessable by classmates.
-- **Reset:** admin "reset to default" in admin panel (phase 1). Email-code reset (hashed code, 15 min expiry, 5 attempts) can follow; Telegram later.
+- **Login:** phone number in any common format, or a username once set, + password. Identifiers made only of digits and phone punctuation are phone numbers; usernames are 3–30 characters (`a-z 0-9 _ .`, lower-cased) and start with a letter, so the two never collide. Username login works even if the person's phone later becomes unusable; phone login needs a `login_phone` (spec 5).
+- **First login:** the default password is the last 4 digits of the person's `login_phone`. It is **derived, never stored**: if admins correct a number in HolliHop, the default follows it. While it is in use the API marks the session `must_change_password` and only allows `/v1/me`, `/v1/auth/password` and `/v1/auth/logout` (403 `password_change_required` elsewhere). New passwords: 8–128 characters, different from the current one, and must not contain the person's 9-digit phone number. Username is optional, set afterwards.
+- **Own password valid only for the current active period:** `students/teachers.activated_at` is set again on reactivation; a password set before it no longer counts, so a returning student is back on the default password (spec 6.2) without the sync ever touching auth tables. Sessions created before `activated_at` are dead for the same reason.
+- **Hashing:** argon2id (19 MiB, t=2, p=1 — OWASP minimum), PHC string format, concurrency capped so a classroom logging in at once can't exhaust memory. Paths with nothing to verify spend the same time, so timing doesn't reveal whether an account exists.
+- **Sessions:** opaque random token (32 bytes), stored as SHA-256 in `auth_sessions`, 30-day expiry extended on use (at most one write per hour). Dead on logout, on password change (other devices), when the person is deactivated, after reset, and after 30 days unused. Stored on device in `expo-secure-store`.
+- **Brute force:** per-account lockout — every 5th consecutive failure locks for 15 min × 2^(lockouts−1), capped at 24 h (so the 4-digit default can't be guessed in practice); a successful login resets the count. Wrong current passwords in a password change count too. Per-IP limit of 100 attempts / 10 min (generous: a classroom shares one IP). Behind the edge nginx, `TRUST_PROXY=true` takes the IP from `X-Forwarded-For`.
+- **Reset:** `makonbook reset-password student|teacher <id>` (admin-panel button later) forgets the own password, unlocks and ends all sessions. Email-code reset (hashed code, 15 min expiry, 5 attempts) can follow; Telegram later.
+- **Errors:** unknown account and wrong password both answer 401 `invalid_credentials`; a locked account answers 429 `account_locked` with `Retry-After`.
 - **Admins:** separate `admin_users` (email + password + TOTP), created via CLI. Roles: `admin`, `content_author` (main teachers writing practice content).
 
 ## 8. Attendance (phase 2)
@@ -231,7 +233,7 @@ Sync `StudentAgents` mobiles; one parent account ↔ many children; see attendan
 
 ## 13. Admin web (React)
 
-Vite + React + TypeScript + TanStack Query + client generated from `api/openapi.yaml`. Served as static files by Caddy. Lives in `web/admin/` in this repo so it shares the OpenAPI contract.
+Vite + React + TypeScript + TanStack Query + client generated from `api/openapi.yaml`. Served as static files by the edge nginx (`admin.makonbook.uz`). Lives in `web/admin/` in this repo so it shares the OpenAPI contract.
 
 Phase 1 pages: login · sync status & run history (approve guarded runs) · **data quality** (blank/invalid/duplicate phones, teachers without phone) · students / teachers / groups (read-only mirror) · reset password · revoke sessions.
 Phase 2: attendance by group/date · teacher override report · HolliHop write errors.
@@ -290,12 +292,16 @@ data_quality_issues(id, person_kind, person_id, kind, detail, first_seen_at, las
 sync_runs(id, mode, status, started_at, finished_at, stats jsonb, error)
 sync_cursors(name PK, value)
 
--- planned: credentials are added to students/teachers by the auth migration
---   (username UNIQUE NULL, password_hash, must_change_password, email NULL)
-lesson_days(group_id, date, schedule_item_ids int[], minutes, PRIMARY KEY(group_id, date))
-auth_sessions(id, token_hash UNIQUE, subject_type, subject_id, device_id, created_at,
+-- built (phase 1, step 3)
+students.activated_at, teachers.activated_at       -- start of the current active period
+credentials(person_kind, person_id PK, username UNIQUE NULL, password_hash NULL,
+            password_changed_at NULL, failed_attempts, locked_until NULL)
+            -- no row / stale password = default password
+auth_sessions(id, token_hash UNIQUE, person_kind, person_id, device_id, created_at,
               last_seen_at, expires_at, revoked_at)
-login_attempts(...)
+
+-- planned
+lesson_days(group_id, date, schedule_item_ids int[], minutes, PRIMARY KEY(group_id, date))
 admin_users(id, email UNIQUE, password_hash, totp_secret, role, created_at)
 
 attendance_sessions(id uuid PK, group_id, date, teacher_id, secret, opened_at,
@@ -310,8 +316,12 @@ hollihop_outbox(id, kind, payload jsonb, attempts, next_attempt_at, last_error,
 ```
 
 ## 16. Hosting & data
-- Hetzner VPS (DE), Docker Compose: `caddy`, `makonbook serve`, `makonbook worker`, `postgres`.
-- Nightly `pg_dump` to Hetzner Object Storage / Storage Box, 14-day retention, **restore tested** once a month.
+- The existing MakonBook VPS (Hetzner, DE; 2 vCPU, 3.7 GB RAM), shared with the Django site, the leaderboard, sat-makon.uz and school28. Guide: `deploy/DEPLOY.md`.
+- **Edge:** the existing `makonbook-nginx` container owns :80/:443 and terminates TLS; `api.makonbook.uz` gets its own server block and its own Let's Encrypt lineage (the shared SAN cert is not touched). The API trusts `X-Forwarded-For` from it (`TRUST_PROXY=true`).
+- **Containers:** `makonbook-api` (serve) and `makonbook-api-worker` (sync) from `nazacd/makonbook-api`, built by GitHub Actions and pulled from Docker Hub like the other services; on the shared `sat_makon_network`, no published ports, read-only filesystem.
+- **Database:** the shared `db` container (Postgres 16, own Compose project `/opt/sat-makon/postgres`). MakonBook has its own database `makonbook_api` and a **non-superuser** role `makonbook_api`; no access to the other apps' databases. Dev and CI use Postgres 16 to match.
+- **Security:** the server audit (2026-10) found Postgres published to the internet with a weak superuser password under active brute force. Fixed: Postgres moved to its own Compose project bound to 127.0.0.1, superuser password rotated, no signs of intrusion. Still recommended: Hetzner Cloud Firewall (inbound 22/80/443).
+- **Backups:** nightly `pg_dump` of every database in `db` (there were none before), 14-day retention on the server; copy off-site (Hetzner Storage Box) and **test a restore** once a month.
 - Data minimisation: only fields listed above; no birthdays, no parent data before phase 5.
 - **Legal note:** Uzbekistan's personal-data law requires citizens' personal data to be stored in Uzbekistan. Hosting in Germany was chosen knowingly (HolliHop itself is hosted abroad too). Revisit if the business needs to be compliant.
 
