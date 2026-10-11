@@ -37,6 +37,10 @@ Access (except placement) is limited to people who are active in HolliHop.
 | D9 | Placement JSON keeps integer IDs; gains explicit `type` and multi-answer grid-ins. | |
 | D10 | Practice content: questions stored in Postgres, tests **published as immutable JSON packages** for offline download. | |
 | D11 | Students/teachers who leave are **deactivated, not hard-deleted**. | Changed from the original sync note: attendance, attempts and vocab progress exist only in our DB, and a bad sync must not be able to wipe them. A returning student keeps the same HolliHop `ClientId` and is simply reactivated (password reset to default + forced change). |
+| D12 | A substitute teacher who isn't on the HolliHop schedule item **cannot open attendance**; an admin updates the schedule in HolliHop first. | For now; revisit if it becomes a burden. |
+| D13 | **Late** = scanned after lesson start + 10 min. Teachers may correct marks for **24 h** after the lesson. | |
+| D14 | One account may be logged in on **several devices** at once; device binding applies only within an attendance session. | A stricter device policy may come later. |
+| D15 | **Force update**: the API exposes a minimum supported app version; older apps are blocked with an "update the app" screen. | Phase 1. |
 
 ## 3. System overview
 
@@ -78,7 +82,7 @@ Verified against the live account (read-only) on 2026-10-09/10 and the
 - 5 369 records; **1 065 with status `Занимается` (StatusId 2)**. Other statuses: 3 Закончил обучение, 4 Ушел (старый ученик), 5 Ушел (после пробного урока), 6 Отложил обучение.
 - **Identity key is `ClientId`, not `Id`.** Enrollments reference `StudentClientId`.
 - Phone formats vary (`+998…`, bare 9 digits, spaces, brackets) → must normalise.
-- Active-student phone quality: 4 blank, 5 wrong length, 4 numbers shared by 2 students (3 of 4 are siblings on a parent's phone), 15 students whose number equals their parent's.
+- Active-student phone quality: 4 blank, 5 invalid (checked with libphonenumber; one foreign `+1` number is valid), 4 numbers shared by 2 students (3 of 4 are siblings on a parent's phone), 15 students whose number equals their parent's.
 - `Birthday` is junk for most records (defaults to creation date) and `Maturity` is unreliable → **not synced**.
 
 ### 4.3 Groups, schedules, teachers
@@ -104,11 +108,11 @@ Verified against the live account (read-only) on 2026-10-09/10 and the
 
 | Rule | Definition |
 |---|---|
-| **Active student** (may log in) | HolliHop status `Занимается` **and** valid, unique normalised phone. |
+| **Active student** (may log in) | HolliHop status `Занимается` (StatusId 2) **and** valid, unique normalised phone. Only students who are or have been active are stored. |
 | **Group roster** | Enrollments current on that date (dates + weekday mask) **∩** active students. |
-| **Active teacher** (may log in) | `Fired = false` **and** listed in `TeacherIds` of at least one current schedule item **and** valid unique phone. |
+| **Active teacher** (may log in) | `Fired = false` **and** listed in `TeacherIds` of a current schedule item **and** valid unique phone. "Current" allows a margin: the item starts within 14 days and ended no more than 7 days ago, so teachers aren't logged out between one group ending and the next starting. |
 | **Attendance-enabled group** | `LearningType = GROUP` and office ≠ `ONLINE` (configurable). |
-| **Phone normalisation** | Strip non-digits; 9 digits → prefix `998`; must be 12 digits starting `998`; stored as `+998XXXXXXXXX`. |
+| **Phone normalisation** | Parse with libphonenumber (Go: `github.com/nyaruka/phonenumbers`), default region `UZ`, so bare 9-digit numbers become `+998…`. Must pass `IsValidNumber` (catches wrong length and non-existent operator codes). Foreign numbers are allowed (e.g. `+1…`). Stored in E.164. |
 | **Conflicts** | A phone shared by two active people → **both** are excluded from login and listed in the admin *Data quality* page. Never silently pick one. |
 
 A person who is both teacher and student (same phone) is a conflict too unless explicitly linked by an admin.
@@ -122,21 +126,28 @@ A person who is both teacher and student (same phone) is a conflict too unless e
 | Groups + schedule items (full) | 15 min | `GetEdUnits` (paged) |
 | Students (incremental) | 15 min | `GetStudents?lastUpdatedFrom=<cursor>` — **no status filter** |
 | Enrollments (full rebuild) | 15 min | `GetEdUnitStudents?statuses=Normal` (paged), filtered by date client-side |
-| Lesson days, next 7 days | hourly | `GetEdUnits?queryDays=true&dateFrom&dateTo` |
+| Lesson days, next 7 days | hourly | `GetEdUnits?queryDays=true&dateFrom&dateTo` — added in phase 2 (attendance) |
 | Students (full reconcile) | nightly | `GetStudents` (paged) |
 
-Order within a run: **teachers → groups/schedules → students → enrollments**. A full
-run is ~25 requests — far under the rate limit.
+A run first **fetches everything**, then applies it **in one transaction** (groups and
+schedules → teachers → students → enrollments → login phones and data-quality issues),
+so a failure part-way leaves the database untouched. A full run is ~25 requests — far
+under the rate limit — and takes under a minute, almost all of it HolliHop response time.
+The worker (`makonbook worker`) runs incremental syncs every `SYNC_INTERVAL` and a full
+one once a day after `SYNC_FULL_AT` (school time zone `TIMEZONE`); `makonbook sync
+full|incremental` runs one by hand.
 
 ### 6.2 Rules
 - Upsert by HolliHop id (`client_id` for students, `id` for teachers/groups/schedule items).
 - Sync writes **only HolliHop-sourced columns** (names, phone, status, offices, group links). It never touches app-owned columns (password hash, username, email, flags).
 - Leaving → `deactivated_at = now()`, all sessions revoked immediately. Returning → reactivated, password reset to default, `must_change_password = true`.
-- Enrollments: rebuild into a temp table, diff, apply **in one transaction**.
+- Schedule items and enrollments: deleted and re-inserted inside the run's transaction (readers never see the gap). Only current and future enrollments of stored students are kept.
 - Cursor (`lastUpdatedFrom`) saved **only after the run commits**, using the response's `Now`.
-- **Mass-change guard:** if a run would deactivate > 10 % of active students or teachers, abort, alert, and require an admin to approve the run in the admin panel.
+- **Mass-change guard:** if a run would deactivate more than 10 % of active students or teachers (ignoring changes of fewer than 5 people), it is rolled back, recorded as `blocked`, and admins are alerted. After checking the change is real, an admin re-runs it with `makonbook sync full --allow-mass-change` (an admin-panel button comes later).
+- A run where HolliHop returns an empty list of teachers, groups, enrollments or (full run) students is refused as a HolliHop fault.
 - One run at a time: Postgres advisory lock.
-- Every run recorded in `sync_runs` (start, end, counts per entity, errors). Failure → alert (Telegram message to an admin chat via bot API — outbound only).
+- Every run recorded in `sync_runs` (start, end, counts, errors). Alerts go to a Telegram chat via bot API (outbound only; optional) or the error log, **only when the outcome changes** — first failure/block, then recovery — not on every failing run.
+- The HolliHop auth key and the Telegram bot token travel in URLs; the code strips URLs from every error so neither reaches logs or `sync_runs`.
 
 ## 7. Authentication
 
@@ -250,7 +261,7 @@ web/admin/                   React admin app
 Inside a feature: `handler.go` (HTTP ↔ service), `service.go` (rules), `store.go` (sqlc). Features depend on each other only through small interfaces; no cross-feature table access.
 
 ### 14.2 Libraries
-`net/http` (Go 1.22+ routing) · `pgx/v5` · `sqlc` · `goose` · `log/slog` · `oapi-codegen` (server types) · `golang.org/x/crypto/argon2` · `testcontainers-go` for store tests.
+`net/http` (Go 1.22+ routing) · `pgx/v5` · `sqlc` · `goose` · `log/slog` · `oapi-codegen` (server types) · `golang.org/x/crypto/argon2` · database tests run against a real Postgres, each in its own throwaway database (`internal/platform/testdb`); CI uses a Postgres service container.
 
 ### 14.3 Conventions
 - OpenAPI is the source of truth; mobile uses `openapi-typescript` + `openapi-fetch`.
@@ -261,23 +272,27 @@ Inside a feature: `handler.go` (HTTP ↔ service), `service.go` (rules), `store.
 
 ## 15. Data model (phase 1–2)
 
+The authoritative schema is `db/migrations/`; this is the overview.
+
 ```
-students(client_id PK, first_name, last_name, phone UNIQUE NULL, hh_status_id,
-         offices text[], hh_updated_at, deactivated_at,
-         username UNIQUE NULL, password_hash, must_change_password, email NULL,
-         created_at, updated_at)
-teachers(id PK, first_name, last_name, phone UNIQUE NULL, fired, deactivated_at,
-         username, password_hash, must_change_password, created_at, updated_at)
-groups(id PK, name, discipline, subject, level, learning_type, office_id, office_name,
-       office_tz, attendance_enabled, synced_at)
-schedule_items(id PK, group_id FK, weekdays smallint, begin_time, end_time,
-               begin_date, end_date NULL, classroom, teacher_ids int[])
-enrollments(group_id, student_client_id, begin_date, end_date NULL, weekdays, status,
-            PRIMARY KEY(group_id, student_client_id, begin_date))
-lesson_days(group_id, date, schedule_item_ids int[], minutes, PRIMARY KEY(group_id, date))
-data_quality_issues(id, entity, entity_id, kind, detail, first_seen, resolved_at)
-sync_runs(id, kind, started_at, finished_at, status, counts jsonb, error, needs_approval)
+-- built (phase 1, step 2)
+offices(id PK, name, utc_offset)
+groups(id PK, name, discipline, level, learning_type, office_id FK, removed_at)
+schedule_items(id PK, group_id FK, begin_date NULL, end_date NULL, begin_time, end_time,
+               weekdays smallint, classroom, teacher_ids int[])
+teachers(id PK, first_name, last_name, phone_raw, login_phone UNIQUE NULL, fired,
+         deactivated_at)
+students(client_id PK, hh_student_id, first_name, last_name, phone_raw,
+         login_phone UNIQUE NULL, hh_status_id NULL, office_ids int[], deactivated_at)
+enrollments(id PK, group_id FK, student_client_id FK, begin_date NULL, end_date NULL, weekdays)
+data_quality_issues(id, person_kind, person_id, kind, detail, first_seen_at, last_seen_at,
+                    resolved_at)                -- one open row per (person, kind)
+sync_runs(id, mode, status, started_at, finished_at, stats jsonb, error)
 sync_cursors(name PK, value)
+
+-- planned: credentials are added to students/teachers by the auth migration
+--   (username UNIQUE NULL, password_hash, must_change_password, email NULL)
+lesson_days(group_id, date, schedule_item_ids int[], minutes, PRIMARY KEY(group_id, date))
 auth_sessions(id, token_hash UNIQUE, subject_type, subject_id, device_id, created_at,
               last_seen_at, expires_at, revoked_at)
 login_attempts(...)
@@ -303,6 +318,7 @@ hollihop_outbox(id, kind, payload jsonb, attempts, next_attempt_at, last_error,
 ## 17. API outline (v1)
 
 ```
+GET  /v1/app/config                   {min_app_version, …} — no auth; app blocks itself if older
 POST /v1/auth/login                    {login, password} → {token, must_change_password, role}
 POST /v1/auth/change-password
 POST /v1/auth/logout
@@ -344,7 +360,7 @@ POST /v1/practice/attempts             idempotent by client UUID
 - Confirm `SetStudentPasses` behaviour on one real lesson (8.6).
 
 **Phase 1 — foundation**
-Go skeleton, DB, migrations, sync worker with guards, auth, OpenAPI; admin web (sync, data quality, people, reset); mobile: login, forced password change, role shells, profile; placement data changes (section 10). Deploy to Hetzner.
+Go skeleton, DB, migrations, sync worker with guards, auth, OpenAPI; admin web (sync, data quality, people, reset); mobile: force-update check, login, forced password change, role shells, profile; placement data changes (section 10). Deploy to Hetzner.
 
 **Phase 2 — attendance**
 Lesson days, sessions, QR, scanning, overrides, outbox write-back, admin attendance pages.
@@ -355,7 +371,4 @@ Authoring in admin, publishing, generic test engine on mobile, offline packages,
 **Phase 4 — vocabulary.** **Phase 5 — parents.** Later: Telegram login/reset, push notifications.
 
 ## 20. Open items
-1. Substitute teacher not on the HolliHop schedule item: they can't open a session — admin must update HolliHop first. Acceptable?
-2. "Late" threshold (proposed start + 10 min) and teacher override window (proposed 24 h).
-3. Should one account be allowed on several devices at once? (Proposed: yes; device binding is per attendance session only.)
-4. Minimum supported app version endpoint (force-update) — proposed for phase 1.
+None at the moment — all earlier open items are recorded as D12–D15. Deferred on purpose: stricter device policy (D14), substitute-teacher handling without a HolliHop change (D12), Telegram, push notifications.

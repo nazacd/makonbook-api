@@ -1,0 +1,23 @@
+# Local development database. Start it with `make db-up`.
+# The API itself runs on the host with `make run`.
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: makonbook
+      POSTGRES_PASSWORD: makonbook
+      POSTGRES_DB: makonbook
+    ports:
+      - "5432:5432"
+    volumes:
+      # Postgres 18 images keep data under /var/lib/postgresql/<version>.
+      - pgdata:/var/lib/postgresql
+      - ./scripts/create-test-db.sql:/docker-entrypoint-initdb.d/create-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U makonbook"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  pgdata:

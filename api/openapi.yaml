@@ -1,0 +1,105 @@
+openapi: 3.1.0
+info:
+  title: MakonBook API
+  version: 0.1.0
+  description: |
+    Backend for the MakonBook mobile app and admin panel. This file is the
+    contract between this repo, the Expo app and the admin web app (spec 14.3).
+
+    Every error response uses the `Error` envelope; clients branch on
+    `error.code`, never on `error.message`. Every response carries an
+    `X-Request-ID` header — quote it when reporting a problem.
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness check
+      description: Returns 200 while the process is running. Does not check dependencies.
+      operationId: getHealth
+      tags: [system]
+      responses:
+        "200":
+          description: Process is up
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+
+  /readyz:
+    get:
+      summary: Readiness check
+      description: Returns 200 when the service can reach its database, 503 otherwise.
+      operationId: getReady
+      tags: [system]
+      responses:
+        "200":
+          description: Ready to serve traffic
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Status" }
+        "503":
+          $ref: "#/components/responses/Error"
+
+  /v1/app/config:
+    get:
+      summary: Public app configuration
+      description: |
+        Called by the app on startup, without authentication. If the app's
+        version is older than `min_app_version` for its platform, the app
+        shows an "update the app" screen and stops (spec D15).
+      operationId: getAppConfig
+      tags: [system]
+      responses:
+        "200":
+          description: Current configuration
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppConfig" }
+        "500":
+          $ref: "#/components/responses/Error"
+
+components:
+  schemas:
+    Status:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, const: ok }
+
+    AppConfig:
+      type: object
+      required: [min_app_version]
+      properties:
+        min_app_version:
+          type: object
+          required: [android, ios]
+          properties:
+            android: { type: string, example: "1.0.0" }
+            ios: { type: string, example: "1.0.0" }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Stable machine-readable code.
+              enum: [not_found, internal, unavailable]
+            message:
+              type: string
+              description: Human-readable explanation; may change.
+            request_id:
+              type: string
+
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
