@@ -15,24 +15,19 @@ the first deploy; later releases only need "Updating".
 
 ---
 
-## 0. Security first: close Postgres to the internet
+## 0. Server state this guide assumes
 
-The `db` container publishes `0.0.0.0:5432`, and Docker's port publishing
-bypasses `ufw`. Without a cloud firewall, the database is reachable from
-anywhere. Fix **before** student data goes in.
+Done during the October 2026 server clean-up:
 
-1. **Hetzner Cloud Firewall** (no downtime): Console → Firewalls → Create.
-   Inbound: TCP 22, 80, 443. If the leaderboard is opened as
-   `http://<ip>:8080` / `:3000`, allow those two as well for now. **Never 5432.**
-   Apply to the server.
-2. Check: from your own computer (not the VPS)
-   `nc -vz -w 5 188.245.175.83 5432` must time out or be refused.
-3. Optional, also recommended: in `/opt/sat-makon/leaderboard/docker-compose.yaml`
-   change `"5432:5432"` to `"127.0.0.1:5432:5432"`, then
-   `cd /opt/sat-makon/leaderboard && docker compose up -d db`
-   (the database restarts — about 10 s of errors on every site).
+- The shared Postgres runs from its own Compose project, `/opt/sat-makon/postgres`
+  (container `db`, data volume `leaderboard_pgdata` — the name is historical),
+  published on `127.0.0.1:5432` only. **Never** `docker compose down -v` there,
+  never `docker volume prune`: the volume holds every app's database.
+- The `postgres` superuser has a new random password (the old one had been
+  under brute-force attack while the port was open).
+- The leaderboard project and its `satmakon` database were removed.
 
-To see whether anyone tried to get in: `docker logs db 2>&1 | grep -c "password authentication failed"`.
+Still recommended: a Hetzner Cloud Firewall allowing inbound TCP 22, 80, 443 only.
 
 ## 1. DNS
 
@@ -51,9 +46,9 @@ docker exec -i db psql -U postgres -v ON_ERROR_STOP=1 -v pw="$DB_PASSWORD" <<'SQ
 CREATE ROLE makonbook_api LOGIN PASSWORD :'pw';
 CREATE DATABASE makonbook_api OWNER makonbook_api;
 REVOKE ALL ON DATABASE makonbook_api FROM PUBLIC;
--- Other apps' databases: no more "anyone may connect". Their apps log in as
--- postgres (superuser) and are unaffected.
-REVOKE CONNECT ON DATABASE makonbook, satmakon FROM PUBLIC;
+-- Django's database: no more "any role may connect". Django logs in as
+-- postgres (superuser) and is unaffected.
+REVOKE CONNECT ON DATABASE makonbook FROM PUBLIC;
 SQL
 echo "DATABASE_URL=postgres://makonbook_api:$DB_PASSWORD@db:5432/makonbook_api?sslmode=disable"
 ```
@@ -202,6 +197,6 @@ the release notes say otherwise).
 | Migration state | `docker compose run --rm api migrate status` |
 | Stop / start | `docker compose stop` / `docker compose up -d` |
 
-The shared `db` container belongs to the **leaderboard** Compose project:
-`docker compose down` in `/opt/sat-makon/leaderboard` stops the database for
-every site. Never use `down -v` there — it deletes the database volume.
+The shared `db` container is its own Compose project, `/opt/sat-makon/postgres`.
+Restarting it briefly interrupts every site; `down -v` there would delete every
+database.
