@@ -1,7 +1,7 @@
 # Deploying makonbook-api to the VPS
 
 Target: `https://api.makonbook.uz`, on the existing VPS (188.245.175.83) next
-to the Django site, the leaderboard and school28.
+to the Django site, sat-makon.uz and school28.
 
 ```
 internet ─► makonbook-nginx (:80/:443, TLS)  ─► makonbook-api:8080         (serve)
