@@ -12,6 +12,8 @@ func TestRunRejectsBadUsageBeforeLoadingConfig(t *testing.T) {
 	for _, args := range [][]string{
 		nil, {"bogus"}, {"migrate"}, {"migrate", "sideways"}, {"serve", "extra"},
 		{"sync"}, {"sync", "partial"}, {"sync", "full", "--yolo"}, {"worker", "now"},
+		{"reset-password"}, {"reset-password", "admin", "1"}, {"reset-password", "student", "x"},
+		{"reset-password", "student", "99999999999"},
 	} {
 		if err := run(t.Context(), args, noEnv, io.Discard, io.Discard); !errors.Is(err, errUsage) {
 			t.Errorf("run(%q) = %v, want errUsage", args, err)

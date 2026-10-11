@@ -26,3 +26,11 @@ sql:
         package: syncdb
         out: internal/sync/syncdb
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/auth/queries.sql
+    gen:
+      go:
+        package: authdb
+        out: internal/auth/authdb
+        sql_package: pgx/v5

@@ -151,12 +151,14 @@ full|incremental` runs one by hand.
 
 ## 7. Authentication
 
-- **Login:** phone (or username once set) + password.
-- **First login:** password = last 4 digits of phone; account has `must_change_password` → app forces a new password (min 8 chars, not equal to default) and offers an optional username before anything else is reachable.
-- **Hashing:** argon2id.
-- **Sessions:** opaque random token (32 bytes), stored **hashed** in `auth_sessions`, 30-day sliding expiry, checked on every request. Revoked on password change (other devices), deactivation, or admin action. Stored on device in `expo-secure-store`.
-- **Brute force:** per-account lockout with backoff (5 failures → 15 min), per-IP rate limit. Matters because the default password is guessable by classmates.
-- **Reset:** admin "reset to default" in admin panel (phase 1). Email-code reset (hashed code, 15 min expiry, 5 attempts) can follow; Telegram later.
+- **Login:** phone number in any common format, or a username once set, + password. Identifiers made only of digits and phone punctuation are phone numbers; usernames are 3–30 characters (`a-z 0-9 _ .`, lower-cased) and start with a letter, so the two never collide. Username login works even if the person's phone later becomes unusable; phone login needs a `login_phone` (spec 5).
+- **First login:** the default password is the last 4 digits of the person's `login_phone`. It is **derived, never stored**: if admins correct a number in HolliHop, the default follows it. While it is in use the API marks the session `must_change_password` and only allows `/v1/me`, `/v1/auth/password` and `/v1/auth/logout` (403 `password_change_required` elsewhere). New passwords: 8–128 characters, different from the current one, and must not contain the person's 9-digit phone number. Username is optional, set afterwards.
+- **Own password valid only for the current active period:** `students/teachers.activated_at` is set again on reactivation; a password set before it no longer counts, so a returning student is back on the default password (spec 6.2) without the sync ever touching auth tables. Sessions created before `activated_at` are dead for the same reason.
+- **Hashing:** argon2id (19 MiB, t=2, p=1 — OWASP minimum), PHC string format, concurrency capped so a classroom logging in at once can't exhaust memory. Paths with nothing to verify spend the same time, so timing doesn't reveal whether an account exists.
+- **Sessions:** opaque random token (32 bytes), stored as SHA-256 in `auth_sessions`, 30-day expiry extended on use (at most one write per hour). Dead on logout, on password change (other devices), when the person is deactivated, after reset, and after 30 days unused. Stored on device in `expo-secure-store`.
+- **Brute force:** per-account lockout — every 5th consecutive failure locks for 15 min × 2^(lockouts−1), capped at 24 h (so the 4-digit default can't be guessed in practice); a successful login resets the count. Wrong current passwords in a password change count too. Per-IP limit of 100 attempts / 10 min (generous: a classroom shares one IP). Behind Caddy, `TRUST_PROXY=true` takes the IP from `X-Forwarded-For`.
+- **Reset:** `makonbook reset-password student|teacher <id>` (admin-panel button later) forgets the own password, unlocks and ends all sessions. Email-code reset (hashed code, 15 min expiry, 5 attempts) can follow; Telegram later.
+- **Errors:** unknown account and wrong password both answer 401 `invalid_credentials`; a locked account answers 429 `account_locked` with `Retry-After`.
 - **Admins:** separate `admin_users` (email + password + TOTP), created via CLI. Roles: `admin`, `content_author` (main teachers writing practice content).
 
 ## 8. Attendance (phase 2)
@@ -290,12 +292,16 @@ data_quality_issues(id, person_kind, person_id, kind, detail, first_seen_at, las
 sync_runs(id, mode, status, started_at, finished_at, stats jsonb, error)
 sync_cursors(name PK, value)
 
--- planned: credentials are added to students/teachers by the auth migration
---   (username UNIQUE NULL, password_hash, must_change_password, email NULL)
-lesson_days(group_id, date, schedule_item_ids int[], minutes, PRIMARY KEY(group_id, date))
-auth_sessions(id, token_hash UNIQUE, subject_type, subject_id, device_id, created_at,
+-- built (phase 1, step 3)
+students.activated_at, teachers.activated_at       -- start of the current active period
+credentials(person_kind, person_id PK, username UNIQUE NULL, password_hash NULL,
+            password_changed_at NULL, failed_attempts, locked_until NULL)
+            -- no row / stale password = default password
+auth_sessions(id, token_hash UNIQUE, person_kind, person_id, device_id, created_at,
               last_seen_at, expires_at, revoked_at)
-login_attempts(...)
+
+-- planned
+lesson_days(group_id, date, schedule_item_ids int[], minutes, PRIMARY KEY(group_id, date))
 admin_users(id, email UNIQUE, password_hash, totp_secret, role, created_at)
 
 attendance_sessions(id uuid PK, group_id, date, teacher_id, secret, opened_at,

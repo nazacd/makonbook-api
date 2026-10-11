@@ -43,12 +43,13 @@ func TestLoadReportsAllErrors(t *testing.T) {
 		"SYNC_INTERVAL":      "5s",
 		"SYNC_FULL_AT":       "3am",
 		"TELEGRAM_BOT_TOKEN": "t",
+		"TRUST_PROXY":        "maybe",
 	}))
 	if err == nil {
 		t.Fatal("expected an error")
 	}
 	for _, want := range []string{"APP_ENV", "DATABASE_URL", "LOG_LEVEL", "LOG_FORMAT", "SHUTDOWN_TIMEOUT",
-		"TIMEZONE", "SYNC_INTERVAL", "SYNC_FULL_AT", "TELEGRAM_ALERT_CHAT_ID"} {
+		"TIMEZONE", "SYNC_INTERVAL", "SYNC_FULL_AT", "TELEGRAM_ALERT_CHAT_ID", "TRUST_PROXY"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %s: %v", want, err)
 		}
@@ -63,5 +64,14 @@ func TestRequireSync(t *testing.T) {
 	err = cfg.RequireSync()
 	if err == nil || !strings.Contains(err.Error(), "HOLLIHOP_BASE_URL") || !strings.Contains(err.Error(), "HOLLIHOP_AUTHKEY") {
 		t.Errorf("RequireSync() = %v", err)
+	}
+}
+
+func TestTrustProxy(t *testing.T) {
+	for v, want := range map[string]bool{"": false, "false": false, "true": true, "TRUE": true, "1": true} {
+		cfg, err := Load(env(map[string]string{"DATABASE_URL": "x", "TRUST_PROXY": v}))
+		if err != nil || cfg.TrustProxy != want {
+			t.Errorf("TRUST_PROXY=%q: %v, %v", v, cfg.TrustProxy, err)
+		}
 	}
 }

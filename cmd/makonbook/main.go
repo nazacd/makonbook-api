@@ -4,6 +4,7 @@
 //	makonbook worker                     run the HolliHop sync on its schedule
 //	makonbook sync full|incremental      run one HolliHop sync now
 //	makonbook migrate up|down|status     manage database migrations
+//	makonbook reset-password student|teacher <id>
 package main
 
 import (
@@ -16,13 +17,16 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	_ "time/tzdata" // the school time zone must resolve even in a minimal container
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nazacd/makonbook-api/internal/app"
+	"github.com/nazacd/makonbook-api/internal/auth"
 	"github.com/nazacd/makonbook-api/internal/hollihop"
+	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/alert"
 	"github.com/nazacd/makonbook-api/internal/platform/config"
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
@@ -41,6 +45,9 @@ commands:
                             run one HolliHop sync now; --allow-mass-change applies a run
                             the mass-change guard blocked, once you've checked it is real
   migrate up|down|status    manage database migrations
+  reset-password student|teacher <id>
+                            back to the default password (last 4 digits of the phone),
+                            unlock the account and log out everywhere
 `
 
 var errUsage = errors.New("invalid usage")
@@ -76,9 +83,12 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	log := logging.New(stderr, cfg.LogLevel, cfg.LogFormat)
 	slog.SetDefault(log)
 
-	cmd, sub := args[0], ""
+	cmd, sub, arg := args[0], "", ""
 	if len(args) > 1 {
 		sub = args[1]
+	}
+	if len(args) > 2 {
+		arg = args[2]
 	}
 	switch cmd {
 	case "serve":
@@ -87,6 +97,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return worker(ctx, cfg, log)
 	case "sync":
 		return syncOnce(ctx, cfg, log, hhsync.Mode(sub), len(args) == 3, stdout)
+	case "reset-password":
+		id, _ := strconv.ParseInt(arg, 10, 32) // validated in validArgs
+		return resetPassword(ctx, cfg, sub, int32(id), stdout)
 	default:
 		return runMigrate(ctx, cfg, sub, stdout)
 	}
@@ -100,6 +113,9 @@ func validArgs(args []string) bool {
 		return true
 	case len(args) == 2 && args[0] == "migrate":
 		return args[1] == "up" || args[1] == "down" || args[1] == "status"
+	case len(args) == 3 && args[0] == "reset-password":
+		_, err := strconv.ParseInt(args[2], 10, 32)
+		return (args[1] == people.KindStudent || args[1] == people.KindTeacher) && err == nil
 	case (len(args) == 2 || len(args) == 3) && args[0] == "sync":
 		modeOK := args[1] == string(hhsync.ModeFull) || args[1] == string(hhsync.ModeIncremental)
 		return modeOK && (len(args) == 2 || args[2] == "--allow-mass-change")
@@ -136,7 +152,8 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", cfg.HTTPAddr, err)
 	}
-	return httpx.Serve(ctx, ln, app.Handler(pool, log), log, cfg.ShutdownTimeout)
+	handler := app.Handler(app.Deps{Pool: pool, Log: log, Location: cfg.Location, TrustProxy: cfg.TrustProxy})
+	return httpx.Serve(ctx, ln, handler, log, cfg.ShutdownTimeout)
 }
 
 func newRunner(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) *hhsync.Runner {
@@ -208,6 +225,31 @@ func summary(r hhsync.Report) map[string]any {
 		"open_issues":     p.Issues,
 		"issues_resolved": p.IssuesResolved,
 	}
+}
+
+func resetPassword(ctx context.Context, cfg config.Config, kind string, id int32, stdout io.Writer) error {
+	pool, err := openDB(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	svc := auth.NewService(pool, people.NewDirectory(pool), auth.NewHasher())
+	p, err := svc.ResetToDefault(ctx, kind, id)
+	if errors.Is(err, people.ErrNotFound) {
+		return fmt.Errorf("no %s with id %d", kind, id)
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Password of %s %d (%s %s) reset to the default.\n", kind, id, p.LastName, p.FirstName)
+	if p.LoginPhone == "" {
+		fmt.Fprintln(stdout, "Note: they have no valid login phone, so the default password can't be used until their number is fixed in HolliHop.")
+	}
+	if !p.Active {
+		fmt.Fprintln(stdout, "Note: they are not active, so they can't log in at all.")
+	}
+	return nil
 }
 
 func runMigrate(ctx context.Context, cfg config.Config, cmd string, stdout io.Writer) error {
