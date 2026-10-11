@@ -1,0 +1,12 @@
+# One generated package per feature, so a feature can only query tables
+# through its own queries file (spec 14.1).
+version: "2"
+sql:
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/system/queries.sql
+    gen:
+      go:
+        package: systemdb
+        out: internal/system/systemdb
+        sql_package: pgx/v5

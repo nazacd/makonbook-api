@@ -254,7 +254,7 @@ web/admin/                   React admin app
 Inside a feature: `handler.go` (HTTP ↔ service), `service.go` (rules), `store.go` (sqlc). Features depend on each other only through small interfaces; no cross-feature table access.
 
 ### 14.2 Libraries
-`net/http` (Go 1.22+ routing) · `pgx/v5` · `sqlc` · `goose` · `log/slog` · `oapi-codegen` (server types) · `golang.org/x/crypto/argon2` · `testcontainers-go` for store tests.
+`net/http` (Go 1.22+ routing) · `pgx/v5` · `sqlc` · `goose` · `log/slog` · `oapi-codegen` (server types) · `golang.org/x/crypto/argon2` · database tests run against a real Postgres, each in its own throwaway database (`internal/platform/testdb`); CI uses a Postgres service container.
 
 ### 14.3 Conventions
 - OpenAPI is the source of truth; mobile uses `openapi-typescript` + `openapi-fetch`.
