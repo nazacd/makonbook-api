@@ -132,6 +132,22 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (A
 	return i, err
 }
 
+const deleteRecordsBetween = `-- name: DeleteRecordsBetween :exec
+
+DELETE FROM attendance_records WHERE date BETWEEN $1::date AND $2::date
+`
+
+type DeleteRecordsBetweenParams struct {
+	DateFrom pgtype.Date
+	DateTo   pgtype.Date
+}
+
+// HolliHop's attendance, read-only (spec 8.7) --------------------------------
+func (q *Queries) DeleteRecordsBetween(ctx context.Context, arg DeleteRecordsBetweenParams) error {
+	_, err := q.db.Exec(ctx, deleteRecordsBetween, arg.DateFrom, arg.DateTo)
+	return err
+}
+
 const dueSessions = `-- name: DueSessions :many
 SELECT id FROM attendance_sessions WHERE finished_at IS NULL AND ends_at < $1
 `
@@ -282,6 +298,36 @@ func (q *Queries) GetSession(ctx context.Context, id pgtype.UUID) (GetSessionRow
 		&i.GroupName,
 	)
 	return i, err
+}
+
+const groupNames = `-- name: GroupNames :many
+SELECT id, name, discipline FROM groups WHERE id = ANY ($1::int[])
+`
+
+type GroupNamesRow struct {
+	ID         int32
+	Name       string
+	Discipline string
+}
+
+func (q *Queries) GroupNames(ctx context.Context, ids []int32) ([]GroupNamesRow, error) {
+	rows, err := q.db.Query(ctx, groupNames, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GroupNamesRow
+	for rows.Next() {
+		var i GroupNamesRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.Discipline); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const insertAbsentAudit = `-- name: InsertAbsentAudit :exec
@@ -517,6 +563,63 @@ func (q *Queries) SessionMarks(ctx context.Context, sessionID pgtype.UUID) ([]Se
 			&i.FirstName,
 			&i.LastName,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const studentAttendance = `-- name: StudentAttendance :many
+WITH app AS (
+    SELECT s.group_id, s.date, m.state
+    FROM attendance_marks m
+    JOIN attendance_sessions s ON s.id = m.session_id
+    WHERE m.student_client_id = $1::int AND m.state <> 'pending'
+      AND s.date BETWEEN $2::date AND $3::date
+)
+SELECT coalesce(r.group_id, app.group_id)::int AS group_id,
+       coalesce(r.date, app.date)::date AS date,
+       (CASE
+            WHEN r.pass IS NULL THEN app.state
+            WHEN r.pass THEN 'absent'
+            WHEN app.state = 'late' THEN 'late'
+            ELSE 'present'
+        END)::text AS state
+FROM (SELECT ar.group_id, ar.date, ar.pass FROM attendance_records ar
+      WHERE ar.student_client_id = $1::int AND ar.date >= $2::date AND ar.date < $3::date) r
+FULL JOIN app ON app.group_id = r.group_id AND app.date = r.date
+ORDER BY 2 DESC, 1
+`
+
+type StudentAttendanceParams struct {
+	ClientID int32
+	DateFrom pgtype.Date
+	Today    pgtype.Date
+}
+
+type StudentAttendanceRow struct {
+	GroupID int32
+	Date    pgtype.Date
+	State   string
+}
+
+// A student's table: HolliHop's marks before today, plus the app's own marks
+// (late, and today's lesson before HolliHop has it). HolliHop wins where both
+// exist, except that the app adds "late" to a lesson HolliHop counts attended.
+func (q *Queries) StudentAttendance(ctx context.Context, arg StudentAttendanceParams) ([]StudentAttendanceRow, error) {
+	rows, err := q.db.Query(ctx, studentAttendance, arg.ClientID, arg.DateFrom, arg.Today)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []StudentAttendanceRow
+	for rows.Next() {
+		var i StudentAttendanceRow
+		if err := rows.Scan(&i.GroupID, &i.Date, &i.State); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

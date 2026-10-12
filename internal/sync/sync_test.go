@@ -121,11 +121,14 @@ type fakeSource struct {
 	students    []hollihop.Student
 	enrollments []hollihop.EdUnitStudent
 	lessonDays  []hollihop.EdUnitDays
+	studentDays []hollihop.EdUnitStudentDays
+	daysErr     error
 	now         string
 	err         error
 
 	gotSince []string
 	gotDays  [][2]string
+	gotRecs  [][2]string
 }
 
 func (f *fakeSource) GetTeachers(context.Context) ([]hollihop.Teacher, error) {
@@ -139,6 +142,11 @@ func (f *fakeSource) GetEdUnitStudents(context.Context) ([]hollihop.EdUnitStuden
 func (f *fakeSource) GetLessonDays(_ context.Context, from, to string) ([]hollihop.EdUnitDays, error) {
 	f.gotDays = append(f.gotDays, [2]string{from, to})
 	return f.lessonDays, nil
+}
+
+func (f *fakeSource) GetStudentDays(_ context.Context, from, to string) ([]hollihop.EdUnitStudentDays, error) {
+	f.gotRecs = append(f.gotRecs, [2]string{from, to})
+	return f.studentDays, f.daysErr
 }
 
 func (f *fakeSource) GetStudents(_ context.Context, since string) ([]hollihop.Student, string, error) {
@@ -168,6 +176,9 @@ func newFixture(nStudents int) *fakeSource {
 		f.students = append(f.students, hollihop.Student{ID: 500 + i, ClientID: i, FirstName: "S", LastName: "S",
 			Mobile: fmt.Sprintf("+99890200%04d", i), StatusID: people.StatusStudying})
 		f.enrollments = append(f.enrollments, hollihop.EdUnitStudent{EdUnitID: 100, StudentClientID: i, Weekdays: 21, Status: "Normal"})
+		f.studentDays = append(f.studentDays, hollihop.EdUnitStudentDays{EdUnitID: 100, StudentClientID: i, Days: []hollihop.StudentDay{
+			{Date: "2026-10-07T00:00:00", Pass: false}, {Date: "2026-10-09", Pass: i == 1},
+		}})
 	}
 	return f
 }
@@ -364,5 +375,51 @@ func TestRunMirrorsLessonDays(t *testing.T) {
 	}
 	if d := lessonDates(t, pool); d != "10-09,10-13" {
 		t.Errorf("after empty answer: lesson days = %q", d)
+	}
+}
+
+func TestRunMirrorsAttendanceRecords(t *testing.T) {
+	pool := testdb.New(t)
+	src := newFixture(3)
+	r := newRunner(pool, src, &fakeNotifier{})
+	ctx := t.Context()
+
+	// Records of someone MakonBook doesn't store are skipped.
+	src.studentDays = append(src.studentDays, hollihop.EdUnitStudentDays{EdUnitID: 100, StudentClientID: 999,
+		Days: []hollihop.StudentDay{{Date: "2026-10-09", Pass: true}}})
+	rep, err := r.Run(ctx, ModeFull, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := src.gotRecs[0]; got != [2]string{"2026-06-12", "2026-10-10"} {
+		t.Errorf("full run asked for records %v", got)
+	}
+	var stored, absent int
+	_ = pool.QueryRow(ctx, "SELECT count(*), count(*) FILTER (WHERE pass) FROM attendance_records").Scan(&stored, &absent)
+	if stored != 6 || absent != 1 || rep.Fetched.AttendanceRecords != 7 {
+		t.Errorf("stored %d (%d absent), fetched %d", stored, absent, rep.Fetched.AttendanceRecords)
+	}
+
+	// An admin excuses student 1 on the 9th; the incremental run looks a week back.
+	src.studentDays[0].Days[1].Pass = false
+	if _, err := r.Run(ctx, ModeIncremental, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := src.gotRecs[1]; got != [2]string{"2026-10-03", "2026-10-10"} {
+		t.Errorf("incremental run asked for records %v", got)
+	}
+	_ = pool.QueryRow(ctx, "SELECT count(*) FILTER (WHERE pass) FROM attendance_records").Scan(&absent)
+	if absent != 0 {
+		t.Errorf("correction not applied: %d absent", absent)
+	}
+
+	// HolliHop fails on attendance only: the run still succeeds, records stay.
+	src.daysErr = errors.New("status 500")
+	if _, err := r.Run(ctx, ModeIncremental, Options{}); err != nil {
+		t.Errorf("attendance failure failed the run: %v", err)
+	}
+	_ = pool.QueryRow(ctx, "SELECT count(*) FROM attendance_records").Scan(&stored)
+	if stored != 6 {
+		t.Errorf("records after a failed fetch: %d", stored)
 	}
 }

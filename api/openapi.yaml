@@ -307,6 +307,59 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "404": { $ref: "#/components/responses/Error" }
 
+  /v1/me/attendance:
+    get:
+      summary: The student's own attendance table
+      description: |
+        Lessons of the last 120 days, per group, newest first. Past lessons
+        use HolliHop's marks (so admins' corrections count; a lesson nobody
+        marked counts as attended there); the app adds `late`, and today's
+        lessons come from the app until HolliHop has them. Synced from
+        HolliHop every 15 minutes (last week) and nightly (whole window).
+      operationId: getMyAttendance
+      tags: [attendance]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The table
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [from, to, groups]
+                properties:
+                  from: { type: string, format: date }
+                  to: { type: string, format: date }
+                  groups:
+                    type: array
+                    items:
+                      type: object
+                      required: [group_id, group_name, discipline, summary, days]
+                      properties:
+                        group_id: { type: integer }
+                        group_name: { type: string }
+                        discipline: { type: string }
+                        summary:
+                          type: object
+                          required: [lessons, present, late, absent]
+                          properties:
+                            lessons: { type: integer }
+                            present: { type: integer }
+                            late: { type: integer }
+                            absent: { type: integer }
+                        days:
+                          type: array
+                          items:
+                            type: object
+                            required: [date, state]
+                            properties:
+                              date: { type: string, format: date }
+                              state: { type: string, enum: [present, late, absent] }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden` — not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /v1/attendance/scan:
     post:
       summary: A student checks in with the code from the teacher's QR
