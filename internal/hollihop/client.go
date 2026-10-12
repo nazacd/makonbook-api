@@ -1,11 +1,13 @@
-// Package hollihop is a read-only client for the HolliHop CRM API v2, limited
-// to the methods the sync needs.
+// Package hollihop is a client for the HolliHop CRM API v2, limited to the
+// methods MakonBook needs: reads for the sync, and one write,
+// SetStudentPasses, used only by the attendance writer (spec 8.6).
 //
 // The auth key travels in the query string, so this package never lets a
 // request URL reach an error message or a log line.
 package hollihop
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -184,6 +186,11 @@ func (c *Client) paged(ctx context.Context, method string, params url.Values, de
 // get performs one GET with retries on network errors, 5xx, 429 and
 // HolliHop's rate-limit message.
 func (c *Client) get(ctx context.Context, method string, params url.Values) ([]byte, error) {
+	return c.call(ctx, http.MethodGet, method, params, nil)
+}
+
+// call performs a request with retries. body, if not nil, is sent as JSON.
+func (c *Client) call(ctx context.Context, httpMethod, method string, params url.Values, body []byte) ([]byte, error) {
 	params.Set("authkey", c.authKey)
 	u := c.baseURL + "/" + method + "?" + params.Encode()
 
@@ -199,9 +206,9 @@ func (c *Client) get(ctx context.Context, method string, params url.Values) ([]b
 			backoff *= 2
 		}
 
-		body, retry, err := c.do(ctx, u)
+		resp, retry, err := c.do(ctx, httpMethod, u, body)
 		if err == nil {
-			return body, nil
+			return resp, nil
 		}
 		lastErr = fmt.Errorf("hollihop %s: %w", method, err)
 		if !retry || ctx.Err() != nil {
@@ -212,10 +219,17 @@ func (c *Client) get(ctx context.Context, method string, params url.Values) ([]b
 }
 
 // do performs a single request. Errors never contain the URL.
-func (c *Client) do(ctx context.Context, u string) (body []byte, retry bool, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+func (c *Client) do(ctx context.Context, httpMethod, u string, reqBody []byte) (body []byte, retry bool, err error) {
+	var rd io.Reader
+	if reqBody != nil {
+		rd = bytes.NewReader(reqBody)
+	}
+	req, err := http.NewRequestWithContext(ctx, httpMethod, u, rd)
 	if err != nil {
 		return nil, false, errors.New("build request: invalid base URL")
+	}
+	if reqBody != nil {
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -248,4 +262,54 @@ func snippet(b []byte) string {
 		s = s[:200] + "…"
 	}
 	return s
+}
+
+// StudentPass is one row of SetStudentPasses: a student's attendance on one
+// lesson day. Payable and Description are left out unless set, which tells
+// HolliHop to leave them unchanged.
+type StudentPass struct {
+	Date                      string `json:"Date"` // "2006-01-02"
+	EdUnitID                  int32  `json:"EdUnitId"`
+	StudentClientID           int32  `json:"StudentClientId"`
+	Pass                      bool   `json:"Pass"` // true = absent
+	Payable                   *bool  `json:"Payable,omitempty"`
+	OverwriteAcceptedManually bool   `json:"OverwriteAcceptedManually"`
+}
+
+// PassError is HolliHop's complaint about one row of SetStudentPasses.
+type PassError struct {
+	Type            string `json:"errorType"`
+	Message         string `json:"errorMessage"`
+	Date            string `json:"Date"`
+	EdUnitID        int32  `json:"EdUnitId"`
+	StudentClientID int32  `json:"StudentClientId"`
+}
+
+// Messages HolliHop uses for rows it didn't change.
+const (
+	// PassUnchanged: the row already had this state — a success.
+	PassUnchanged = "The pass and payable state will not be changed"
+	// PassSetManually: an admin set this day by hand; with
+	// OverwriteAcceptedManually=false their entry stands.
+	PassSetManually = "The day info was set manually"
+)
+
+// SetStudentPasses writes attendance. The call as a whole succeeds or fails
+// (network, HTTP status); rows HolliHop didn't apply come back as PassErrors.
+func (c *Client) SetStudentPasses(ctx context.Context, rows []StudentPass) ([]PassError, error) {
+	body, err := json.Marshal(rows)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.call(ctx, http.MethodPost, "SetStudentPasses", url.Values{}, body)
+	if err != nil {
+		return nil, err
+	}
+	var r struct{ Errors []PassError }
+	if len(bytes.TrimSpace(resp)) > 0 {
+		if err := json.Unmarshal(resp, &r); err != nil {
+			return nil, fmt.Errorf("hollihop SetStudentPasses: decode response: %w", err)
+		}
+	}
+	return r.Errors, nil
 }

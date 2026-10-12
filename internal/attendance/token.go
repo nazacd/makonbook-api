@@ -47,3 +47,5 @@ func freshWindow(window int64, now time.Time) bool {
 }
 
 func encodeSecret(secret []byte) string { return base64.RawURLEncoding.EncodeToString(secret) }
+
+func decodeSecret(s string) ([]byte, error) { return base64.RawURLEncoding.DecodeString(s) }

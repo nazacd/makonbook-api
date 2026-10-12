@@ -37,6 +37,15 @@ type Config struct {
 	SyncInterval    time.Duration // between incremental runs
 	SyncFullAt      time.Duration // local time of day for the nightly full run
 
+	// Attendance write-back to HolliHop (spec 8.6). Off by default: the
+	// writer only records what it would send ("dry run") until an admin has
+	// watched one real lesson go through.
+	HolliHopWriteEnabled bool
+	// HolliHopAbsentPayable sends Payable=true with absences instead of
+	// leaving billing untouched — only if the test lesson shows HolliHop
+	// would otherwise leave absences unbilled (spec D17). Never false.
+	HolliHopAbsentPayable bool
+
 	// Optional Telegram alerts for sync failures. Both or neither.
 	TelegramBotToken    string
 	TelegramAlertChatID string
@@ -79,12 +88,8 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	cfg.ShutdownTimeout = timeout
 
-	switch v := strings.ToLower(getenv("TRUST_PROXY")); v {
-	case "", "false", "0":
-	case "true", "1":
-		cfg.TrustProxy = true
-	default:
-		errs = append(errs, fmt.Errorf("TRUST_PROXY must be true or false, got %q", v))
+	if cfg.TrustProxy, err = boolVar(getenv, "TRUST_PROXY"); err != nil {
+		errs = append(errs, err)
 	}
 
 	tz := withDefault(getenv("TIMEZONE"), "Asia/Tashkent")
@@ -106,6 +111,13 @@ func Load(getenv func(string) string) (Config, error) {
 		errs = append(errs, fmt.Errorf("SYNC_FULL_AT must be a time like 03:00, got %q", getenv("SYNC_FULL_AT")))
 	}
 	cfg.SyncFullAt = time.Duration(fullAt.Hour())*time.Hour + time.Duration(fullAt.Minute())*time.Minute
+
+	if cfg.HolliHopWriteEnabled, err = boolVar(getenv, "HOLLIHOP_WRITE_ENABLED"); err != nil {
+		errs = append(errs, err)
+	}
+	if cfg.HolliHopAbsentPayable, err = boolVar(getenv, "HOLLIHOP_ABSENT_PAYABLE"); err != nil {
+		errs = append(errs, err)
+	}
 
 	cfg.TelegramBotToken = getenv("TELEGRAM_BOT_TOKEN")
 	cfg.TelegramAlertChatID = getenv("TELEGRAM_ALERT_CHAT_ID")
@@ -133,4 +145,16 @@ func withDefault(v, def string) string {
 		return def
 	}
 	return v
+}
+
+// boolVar reads an optional true/false variable (default false).
+func boolVar(getenv func(string) string, name string) (bool, error) {
+	switch v := strings.ToLower(strings.TrimSpace(getenv(name))); v {
+	case "", "false", "0":
+		return false, nil
+	case "true", "1":
+		return true, nil
+	default:
+		return false, fmt.Errorf("%s must be true or false, got %q", name, v)
+	}
 }

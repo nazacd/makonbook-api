@@ -74,3 +74,49 @@ SELECT @session_id::uuid, unnest(@student_client_ids::int[]), 'system', 'pending
 -- Open sessions whose lesson ended before cutoff: they finish on their own.
 -- name: DueSessions :many
 SELECT id FROM attendance_sessions WHERE finished_at IS NULL AND ends_at < @cutoff;
+
+-- HolliHop write-back (spec 8.6) ---------------------------------------------
+
+-- Every mark of a session that just finished.
+-- name: EnqueueSession :exec
+INSERT INTO hollihop_outbox (session_id, group_id, student_client_id, date, pass, created_at, next_attempt_at)
+SELECT m.session_id, s.group_id, m.student_client_id, s.date, m.state = 'absent', @at::timestamptz, @at::timestamptz
+FROM attendance_marks m
+JOIN attendance_sessions s ON s.id = m.session_id
+WHERE m.session_id = @session_id AND m.state <> 'pending';
+
+-- A correction after the session finished replaces anything not yet sent.
+-- name: SupersedePending :exec
+UPDATE hollihop_outbox SET status = 'superseded', done_at = @at
+WHERE session_id = @session_id AND student_client_id = @student_client_id AND status = 'pending';
+
+-- name: EnqueueMark :exec
+INSERT INTO hollihop_outbox (session_id, group_id, student_client_id, date, pass, created_at, next_attempt_at)
+SELECT s.id, s.group_id, @student_client_id, s.date, @pass, @at::timestamptz, @at::timestamptz
+FROM attendance_sessions s WHERE s.id = @session_id;
+
+-- Read under a share lock so a correction and a concurrent finish serialise:
+-- either the correction lands before the finish enqueues the session, or it
+-- sees the session finished and enqueues itself.
+-- name: IsFinished :one
+SELECT (finished_at IS NOT NULL)::bool AS finished FROM attendance_sessions WHERE id = @id FOR SHARE;
+
+-- Takes due rows for one batch: they are leased (next_attempt_at pushed to
+-- lease_until) so a crashed or concurrent worker doesn't send them twice.
+-- name: ClaimDue :many
+UPDATE hollihop_outbox o SET next_attempt_at = @lease_until::timestamptz, attempts = o.attempts + 1
+WHERE o.id IN (
+    SELECT i.id FROM hollihop_outbox i
+    WHERE i.status = 'pending' AND i.next_attempt_at <= @due_before::timestamptz
+    ORDER BY i.id
+    LIMIT @batch_size
+    FOR UPDATE SKIP LOCKED)
+RETURNING o.id, o.group_id, o.student_client_id, o.date, o.pass, o.attempts;
+
+-- name: CompleteRow :exec
+UPDATE hollihop_outbox SET status = @status, done_at = @at, last_error = sqlc.narg('last_error')
+WHERE id = @id AND status = 'pending';
+
+-- name: RetryRow :exec
+UPDATE hollihop_outbox SET next_attempt_at = @retry_at::timestamptz, last_error = @last_error
+WHERE id = @id AND status = 'pending';

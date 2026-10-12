@@ -2,8 +2,8 @@
 // for one of their lessons, students scan the rotating QR, the teacher
 // finishes it (or it finishes on its own) and may correct marks for 24 hours.
 //
-// Nothing here talks to HolliHop; writing finished attendance back is a
-// separate step (spec 8.6).
+// Finished lessons, and later corrections, are queued in hollihop_outbox;
+// Writer sends them to HolliHop (spec 8.6).
 package attendance
 
 import (
@@ -225,6 +225,10 @@ func (s *Service) SetMark(ctx context.Context, teacherID int32, sessionID string
 	}
 	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		q := attendancedb.New(tx)
+		finished, err := q.IsFinished(ctx, id)
+		if err != nil {
+			return fmt.Errorf("load session: %w", err)
+		}
 		mark, err := q.GetMarkForUpdate(ctx, attendancedb.GetMarkForUpdateParams{SessionID: id, StudentClientID: clientID})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotInRoster
@@ -238,10 +242,21 @@ func (s *Service) SetMark(ctx context.Context, teacherID int32, sessionID string
 		if err := q.TeacherSetMark(ctx, attendancedb.TeacherSetMarkParams{State: state, At: ts(now), SessionID: id, StudentClientID: clientID}); err != nil {
 			return fmt.Errorf("set mark: %w", err)
 		}
-		return q.InsertAudit(ctx, attendancedb.InsertAuditParams{
+		if err := q.InsertAudit(ctx, attendancedb.InsertAuditParams{
 			SessionID: id, StudentClientID: clientID, ActorKind: "teacher", ActorID: pgtype.Int4{Int32: teacherID, Valid: true},
 			FromState: mark.State, ToState: state, At: ts(now),
-		})
+		}); err != nil {
+			return err
+		}
+		// After the session finished, a change between present/late and
+		// absent goes to HolliHop again; present↔late is the same there.
+		if !finished || (mark.State == StateAbsent) == (state == StateAbsent) {
+			return nil
+		}
+		if err := q.SupersedePending(ctx, attendancedb.SupersedePendingParams{At: ts(now), SessionID: id, StudentClientID: clientID}); err != nil {
+			return fmt.Errorf("supersede write-back: %w", err)
+		}
+		return q.EnqueueMark(ctx, attendancedb.EnqueueMarkParams{StudentClientID: clientID, Pass: state == StateAbsent, At: ts(now), SessionID: id})
 	})
 	if err != nil {
 		return Session{}, err
@@ -350,10 +365,16 @@ func (s *Service) finish(ctx context.Context, id pgtype.UUID, by string) error {
 		if err != nil {
 			return fmt.Errorf("mark absent: %w", err)
 		}
-		if len(absent) == 0 {
-			return nil
+		if len(absent) > 0 {
+			if err := q.InsertAbsentAudit(ctx, attendancedb.InsertAbsentAuditParams{SessionID: id, StudentClientIds: absent, At: now}); err != nil {
+				return fmt.Errorf("audit absences: %w", err)
+			}
 		}
-		return q.InsertAbsentAudit(ctx, attendancedb.InsertAbsentAuditParams{SessionID: id, StudentClientIds: absent, At: now})
+		// Queue the whole lesson for HolliHop (spec 8.6).
+		if err := q.EnqueueSession(ctx, attendancedb.EnqueueSessionParams{At: now, SessionID: id}); err != nil {
+			return fmt.Errorf("queue write-back: %w", err)
+		}
+		return nil
 	})
 }
 

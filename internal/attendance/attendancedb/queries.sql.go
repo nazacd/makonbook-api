@@ -11,6 +11,83 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimDue = `-- name: ClaimDue :many
+UPDATE hollihop_outbox o SET next_attempt_at = $1::timestamptz, attempts = o.attempts + 1
+WHERE o.id IN (
+    SELECT i.id FROM hollihop_outbox i
+    WHERE i.status = 'pending' AND i.next_attempt_at <= $2::timestamptz
+    ORDER BY i.id
+    LIMIT $3
+    FOR UPDATE SKIP LOCKED)
+RETURNING o.id, o.group_id, o.student_client_id, o.date, o.pass, o.attempts
+`
+
+type ClaimDueParams struct {
+	LeaseUntil pgtype.Timestamptz
+	DueBefore  pgtype.Timestamptz
+	BatchSize  int32
+}
+
+type ClaimDueRow struct {
+	ID              int64
+	GroupID         int32
+	StudentClientID int32
+	Date            pgtype.Date
+	Pass            bool
+	Attempts        int32
+}
+
+// Takes due rows for one batch: they are leased (next_attempt_at pushed to
+// lease_until) so a crashed or concurrent worker doesn't send them twice.
+func (q *Queries) ClaimDue(ctx context.Context, arg ClaimDueParams) ([]ClaimDueRow, error) {
+	rows, err := q.db.Query(ctx, claimDue, arg.LeaseUntil, arg.DueBefore, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClaimDueRow
+	for rows.Next() {
+		var i ClaimDueRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.GroupID,
+			&i.StudentClientID,
+			&i.Date,
+			&i.Pass,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const completeRow = `-- name: CompleteRow :exec
+UPDATE hollihop_outbox SET status = $1, done_at = $2, last_error = $3
+WHERE id = $4 AND status = 'pending'
+`
+
+type CompleteRowParams struct {
+	Status    string
+	At        pgtype.Timestamptz
+	LastError pgtype.Text
+	ID        int64
+}
+
+func (q *Queries) CompleteRow(ctx context.Context, arg CompleteRowParams) error {
+	_, err := q.db.Exec(ctx, completeRow,
+		arg.Status,
+		arg.At,
+		arg.LastError,
+		arg.ID,
+	)
+	return err
+}
+
 const createSession = `-- name: CreateSession :one
 INSERT INTO attendance_sessions (group_id, date, teacher_id, secret, starts_at, ends_at, opened_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -78,6 +155,50 @@ func (q *Queries) DueSessions(ctx context.Context, cutoff pgtype.Timestamptz) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const enqueueMark = `-- name: EnqueueMark :exec
+INSERT INTO hollihop_outbox (session_id, group_id, student_client_id, date, pass, created_at, next_attempt_at)
+SELECT s.id, s.group_id, $1, s.date, $2, $3::timestamptz, $3::timestamptz
+FROM attendance_sessions s WHERE s.id = $4
+`
+
+type EnqueueMarkParams struct {
+	StudentClientID int32
+	Pass            bool
+	At              pgtype.Timestamptz
+	SessionID       pgtype.UUID
+}
+
+func (q *Queries) EnqueueMark(ctx context.Context, arg EnqueueMarkParams) error {
+	_, err := q.db.Exec(ctx, enqueueMark,
+		arg.StudentClientID,
+		arg.Pass,
+		arg.At,
+		arg.SessionID,
+	)
+	return err
+}
+
+const enqueueSession = `-- name: EnqueueSession :exec
+
+INSERT INTO hollihop_outbox (session_id, group_id, student_client_id, date, pass, created_at, next_attempt_at)
+SELECT m.session_id, s.group_id, m.student_client_id, s.date, m.state = 'absent', $1::timestamptz, $1::timestamptz
+FROM attendance_marks m
+JOIN attendance_sessions s ON s.id = m.session_id
+WHERE m.session_id = $2 AND m.state <> 'pending'
+`
+
+type EnqueueSessionParams struct {
+	At        pgtype.Timestamptz
+	SessionID pgtype.UUID
+}
+
+// HolliHop write-back (spec 8.6) ---------------------------------------------
+// Every mark of a session that just finished.
+func (q *Queries) EnqueueSession(ctx context.Context, arg EnqueueSessionParams) error {
+	_, err := q.db.Exec(ctx, enqueueSession, arg.At, arg.SessionID)
+	return err
 }
 
 const finishSession = `-- name: FinishSession :execrows
@@ -241,6 +362,20 @@ func (q *Queries) InsertRoster(ctx context.Context, arg InsertRosterParams) (int
 	return result.RowsAffected(), nil
 }
 
+const isFinished = `-- name: IsFinished :one
+SELECT (finished_at IS NOT NULL)::bool AS finished FROM attendance_sessions WHERE id = $1 FOR SHARE
+`
+
+// Read under a share lock so a correction and a concurrent finish serialise:
+// either the correction lands before the finish enqueues the session, or it
+// sees the session finished and enqueues itself.
+func (q *Queries) IsFinished(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, isFinished, id)
+	var finished bool
+	err := row.Scan(&finished)
+	return finished, err
+}
+
 const markPendingAbsent = `-- name: MarkPendingAbsent :many
 UPDATE attendance_marks SET state = 'absent', source = 'auto', updated_at = $1
 WHERE session_id = $2 AND state = 'pending'
@@ -270,6 +405,22 @@ func (q *Queries) MarkPendingAbsent(ctx context.Context, arg MarkPendingAbsentPa
 		return nil, err
 	}
 	return items, nil
+}
+
+const retryRow = `-- name: RetryRow :exec
+UPDATE hollihop_outbox SET next_attempt_at = $1::timestamptz, last_error = $2
+WHERE id = $3 AND status = 'pending'
+`
+
+type RetryRowParams struct {
+	RetryAt   pgtype.Timestamptz
+	LastError pgtype.Text
+	ID        int64
+}
+
+func (q *Queries) RetryRow(ctx context.Context, arg RetryRowParams) error {
+	_, err := q.db.Exec(ctx, retryRow, arg.RetryAt, arg.LastError, arg.ID)
+	return err
 }
 
 const scanMark = `-- name: ScanMark :execrows
@@ -374,6 +525,23 @@ func (q *Queries) SessionMarks(ctx context.Context, sessionID pgtype.UUID) ([]Se
 		return nil, err
 	}
 	return items, nil
+}
+
+const supersedePending = `-- name: SupersedePending :exec
+UPDATE hollihop_outbox SET status = 'superseded', done_at = $1
+WHERE session_id = $2 AND student_client_id = $3 AND status = 'pending'
+`
+
+type SupersedePendingParams struct {
+	At              pgtype.Timestamptz
+	SessionID       pgtype.UUID
+	StudentClientID int32
+}
+
+// A correction after the session finished replaces anything not yet sent.
+func (q *Queries) SupersedePending(ctx context.Context, arg SupersedePendingParams) error {
+	_, err := q.db.Exec(ctx, supersedePending, arg.At, arg.SessionID, arg.StudentClientID)
+	return err
 }
 
 const teacherSetMark = `-- name: TeacherSetMark :exec
