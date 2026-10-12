@@ -140,3 +140,27 @@ func TestGetEdUnitStudentsAsksForNormalStatus(t *testing.T) {
 		t.Errorf("rows=%+v err=%v", rows, err)
 	}
 }
+
+func TestGetLessonDays(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if r.URL.Path != "/GetEdUnits" || q.Get("queryDays") != "true" || q.Get("dateFrom") != "2026-10-03" || q.Get("dateTo") != "2026-10-24" {
+			t.Errorf("unexpected request %s %v", r.URL.Path, q)
+		}
+		// Shape as documented: Days carry Date, Minutes and ScheduleItemIds;
+		// other fields are ignored.
+		_, _ = w.Write([]byte(`{"EdUnits":[{"Id":100,"Name":"G","Days":[
+			{"Date":"2026-10-12","Minutes":90,"Pass":false,"ScheduleItemIds":[7]},
+			{"Date":"2026-10-14","Minutes":67.5,"ScheduleItemIds":[7,8]}]},
+			{"Id":101,"Name":"No lessons"}]}`))
+	}))
+	defer srv.Close()
+
+	got, err := New(srv.URL, testKey).GetLessonDays(t.Context(), "2026-10-03", "2026-10-24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || len(got[0].Days) != 2 || got[0].Days[1].Minutes != 67.5 || got[0].Days[1].ScheduleItemIDs[1] != 8 || got[1].Days != nil {
+		t.Errorf("got %+v", got)
+	}
+}

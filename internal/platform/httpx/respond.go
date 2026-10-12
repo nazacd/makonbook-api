@@ -16,6 +16,7 @@ const (
 	CodeUnavailable  = "unavailable"
 	CodeBadRequest   = "bad_request"
 	CodeUnauthorized = "unauthorized"
+	CodeForbidden    = "forbidden"
 	CodeRateLimited  = "rate_limited"
 )
 

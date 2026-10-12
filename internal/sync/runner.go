@@ -1,6 +1,6 @@
 // Package sync mirrors HolliHop into MakonBook's database (spec 6): it fetches
-// teachers, groups, students and enrollments, hands them to people.Apply in
-// one transaction, and keeps a log of runs.
+// teachers, groups, students, enrollments and lesson days, applies them in one
+// transaction, and keeps a log of runs.
 package sync
 
 import (
@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nazacd/makonbook-api/internal/hollihop"
+	"github.com/nazacd/makonbook-api/internal/lessons"
 	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/alert"
 	"github.com/nazacd/makonbook-api/internal/sync/syncdb"
@@ -55,6 +56,7 @@ type Source interface {
 	GetEdUnits(ctx context.Context) ([]hollihop.EdUnit, error)
 	GetStudents(ctx context.Context, updatedSince string) ([]hollihop.Student, string, error)
 	GetEdUnitStudents(ctx context.Context) ([]hollihop.EdUnitStudent, error)
+	GetLessonDays(ctx context.Context, from, to string) ([]hollihop.EdUnitDays, error)
 }
 
 // Guard rejects a run that would deactivate too many people at once — the
@@ -123,6 +125,7 @@ type FetchCounts struct {
 	Groups      int `json:"groups"`
 	Students    int `json:"students"`
 	Enrollments int `json:"enrollments"`
+	LessonDays  int `json:"lesson_days"`
 }
 
 // Run status values, as stored in sync_runs.status.
@@ -207,7 +210,13 @@ func (r *Runner) run(ctx context.Context, rep *Report, since string, opts Option
 	if f.enrollments, err = r.Source.GetEdUnitStudents(ctx); err != nil {
 		return err
 	}
-	rep.Fetched = FetchCounts{len(f.teachers), len(f.units), len(f.students), len(f.enrollments)}
+	today := dateIn(r.now(), r.Location)
+	daysFrom, daysTo := today.AddDate(0, 0, -lessons.WindowBack), today.AddDate(0, 0, lessons.WindowForward)
+	if f.lessonDays, err = r.Source.GetLessonDays(ctx, daysFrom.Format(time.DateOnly), daysTo.Format(time.DateOnly)); err != nil {
+		return err
+	}
+	days, daySkips := buildLessonDays(f.lessonDays)
+	rep.Fetched = FetchCounts{len(f.teachers), len(f.units), len(f.students), len(f.enrollments), len(days)}
 	rep.StudentsNow = now
 
 	// An empty answer for data that is never empty is a HolliHop problem,
@@ -217,8 +226,9 @@ func (r *Runner) run(ctx context.Context, rep *Report, since string, opts Option
 		return fmt.Errorf("HolliHop returned an empty list (%+v); refusing to apply", rep.Fetched)
 	}
 
-	snap, skipped := buildSnapshot(f, dateIn(r.now(), r.Location))
+	snap, skipped := buildSnapshot(f, today)
 	snap.StudentsComplete = rep.Mode == ModeFull
+	skipped = append(skipped, daySkips...)
 	rep.Skipped = skipped
 	for _, s := range skipped {
 		r.Log.Warn("sync skipped a HolliHop row", slog.String("row", s))
@@ -235,6 +245,13 @@ func (r *Runner) run(ctx context.Context, rep *Report, since string, opts Option
 	}
 	if err := r.Guard.Check(rep.People); err != nil && !opts.AllowMassChange {
 		return err // deferred rollback discards everything
+	}
+	// No lesson days at all over three weeks means a bad answer, not a
+	// school on holiday: keep the days we have rather than wipe them.
+	if len(days) == 0 {
+		r.Log.Warn("HolliHop returned no lesson days; keeping the stored ones")
+	} else if err := lessons.ApplyDays(ctx, tx, daysFrom, daysTo, days); err != nil {
+		return err
 	}
 	// The cursor moves only together with the data it describes.
 	if err := syncdb.New(tx).SetCursor(ctx, syncdb.SetCursorParams{Name: cursorStudents, Value: now}); err != nil {

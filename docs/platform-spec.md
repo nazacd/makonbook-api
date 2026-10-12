@@ -41,6 +41,8 @@ Access (except placement) is limited to people who are active in HolliHop.
 | D13 | **Late** = scanned after lesson start + 10 min. Teachers may correct marks for **24 h** after the lesson. | |
 | D14 | One account may be logged in on **several devices** at once; device binding applies only within an attendance session. | A stricter device policy may come later. |
 | D15 | **Force update**: the API exposes a minimum supported app version; older apps are blocked with an "update the app" screen. | Phase 1. |
+| D16 | Students see their own **attendance table** in the app. Marks come from **HolliHop** (synced read-only, so history before the app and admins' corrections are included), with **late** added from the app's scans. | Phase 2; see 8.7. |
+| D17 | **Billing**: teachers only decide present/absent. An absence is **billed by default**; only admins make it unbilled (when a student informs them), in HolliHop. The app never sends "not billed". | See 8.6. |
 
 ## 3. System overview
 
@@ -191,11 +193,18 @@ Rotation + device binding + teacher's live headcount. Geofencing only if abuse i
 - On finish (and on each later override), enqueue rows in `hollihop_outbox`. Worker sends `SetStudentPasses` batches:
   - present / late → `Pass=false`
   - absent → `Pass=true`
-  - `Payable = null` → **unchanged; billing stays with admins**.
+  - Billing (D17): teachers never set it. An absence is billed by default; only admins make it unbilled, in HolliHop. The app sends `Payable = null` (unchanged) — an untouched day is "present & payable" in HolliHop, so an absence should stay billed. **To verify in the test lesson**; if `null` leaves an absence unbilled, the app sends `Payable = true` for absences instead. Never `false`.
   - `Description = null` → admins' notes untouched.
   - `OverwriteAcceptedManually = false` → **an admin's manual entry always wins.**
 - Retries with backoff; "state will not be changed" counts as success; "set manually" is recorded and shown in admin panel, not retried.
 - Before go-live: verify key casing and behaviour on **one real lesson** with an admin watching in HolliHop.
+- Until then the writer runs in **dry-run** mode (`HOLLIHOP_WRITE_ENABLED=false`, the default): it logs and stores exactly what it would send, and sends nothing.
+
+### 8.7 Student attendance table (D16)
+- In the app, per group: a summary (lessons, present, late, absent) and a list of lesson days, newest first, each `present` / `late` / `absent` / `not marked yet`.
+- Source: HolliHop's per-student lesson days (`Pass`), synced read-only into `attendance_records`; `late` comes from the app's own marks for that student and date. HolliHop wins when they disagree (an admin corrected it).
+- Billing is not shown to students.
+- `GET /v1/me/attendance?group_id=&from=&to=`.
 
 ## 9. Practice tests (phase 3)
 
@@ -300,8 +309,12 @@ credentials(person_kind, person_id PK, username UNIQUE NULL, password_hash NULL,
 auth_sessions(id, token_hash UNIQUE, person_kind, person_id, device_id, created_at,
               last_seen_at, expires_at, revoked_at)
 
+-- built (phase 2, step 1)
+lesson_days(group_id FK, date, minutes, schedule_item_ids int[], PRIMARY KEY(group_id, date))
+            -- HolliHop's actual lesson dates (GetEdUnits?queryDays), today −7 … +14 days,
+            -- refreshed by every sync run; an empty answer keeps the stored days
+
 -- planned
-lesson_days(group_id, date, schedule_item_ids int[], minutes, PRIMARY KEY(group_id, date))
 admin_users(id, email UNIQUE, password_hash, totp_secret, role, created_at)
 
 attendance_sessions(id uuid PK, group_id, date, teacher_id, secret, opened_at,
@@ -311,6 +324,8 @@ attendance_marks(session_id, student_client_id, state, scanned_at NULL, device_i
                  source (scan|teacher), PRIMARY KEY(session_id, student_client_id))
 attendance_audit(id, session_id, student_client_id, actor_type, actor_id, from_state,
                  to_state, at)
+attendance_records(group_id, student_client_id, date, pass bool, synced_at,
+                   PRIMARY KEY(group_id, student_client_id, date))   -- HolliHop's marks, read-only
 hollihop_outbox(id, kind, payload jsonb, attempts, next_attempt_at, last_error,
                 done_at NULL)
 ```
@@ -343,7 +358,7 @@ PUT  /v1/attendance/sessions/{id}/marks/{client_id}   override
 
 # student
 POST /v1/attendance/scan               {session_id, window, sig, device_id}
-GET  /v1/me/attendance                 own history
+GET  /v1/me/attendance                 own attendance table (8.7)
 
 # practice (phase 3)
 GET  /v1/practice/tests                catalog
@@ -373,7 +388,7 @@ POST /v1/practice/attempts             idempotent by client UUID
 Go skeleton, DB, migrations, sync worker with guards, auth, OpenAPI; admin web (sync, data quality, people, reset); mobile: force-update check, login, forced password change, role shells, profile; placement data changes (section 10). Deploy to Hetzner.
 
 **Phase 2 — attendance**
-Lesson days, sessions, QR, scanning, overrides, outbox write-back, admin attendance pages.
+Lesson days, sessions, QR, scanning, overrides, outbox write-back (dry-run until the test lesson), student attendance table, admin attendance pages.
 
 **Phase 3 — practice tests**
 Authoring in admin, publishing, generic test engine on mobile, offline packages, attempts, teacher view.
@@ -381,4 +396,4 @@ Authoring in admin, publishing, generic test engine on mobile, offline packages,
 **Phase 4 — vocabulary.** **Phase 5 — parents.** Later: Telegram login/reset, push notifications.
 
 ## 20. Open items
-None at the moment — all earlier open items are recorded as D12–D15. Deferred on purpose: stricter device policy (D14), substitute-teacher handling without a HolliHop change (D12), Telegram, push notifications.
+None at the moment — all earlier open items are recorded as D12–D17. Deferred on purpose: stricter device policy (D14), substitute-teacher handling without a HolliHop change (D12), Telegram, push notifications.

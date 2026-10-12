@@ -34,3 +34,11 @@ sql:
         package: authdb
         out: internal/auth/authdb
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/lessons/queries.sql
+    gen:
+      go:
+        package: lessondb
+        out: internal/lessons/lessondb
+        sql_package: pgx/v5
