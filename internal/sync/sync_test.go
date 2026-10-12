@@ -122,6 +122,7 @@ type fakeSource struct {
 	enrollments []hollihop.EdUnitStudent
 	lessonDays  []hollihop.EdUnitDays
 	studentDays []hollihop.EdUnitStudentDays
+	daysErr     error
 	now         string
 	err         error
 
@@ -145,7 +146,7 @@ func (f *fakeSource) GetLessonDays(_ context.Context, from, to string) ([]hollih
 
 func (f *fakeSource) GetStudentDays(_ context.Context, from, to string) ([]hollihop.EdUnitStudentDays, error) {
 	f.gotRecs = append(f.gotRecs, [2]string{from, to})
-	return f.studentDays, nil
+	return f.studentDays, f.daysErr
 }
 
 func (f *fakeSource) GetStudents(_ context.Context, since string) ([]hollihop.Student, string, error) {
@@ -410,5 +411,15 @@ func TestRunMirrorsAttendanceRecords(t *testing.T) {
 	_ = pool.QueryRow(ctx, "SELECT count(*) FILTER (WHERE pass) FROM attendance_records").Scan(&absent)
 	if absent != 0 {
 		t.Errorf("correction not applied: %d absent", absent)
+	}
+
+	// HolliHop fails on attendance only: the run still succeeds, records stay.
+	src.daysErr = errors.New("status 500")
+	if _, err := r.Run(ctx, ModeIncremental, Options{}); err != nil {
+		t.Errorf("attendance failure failed the run: %v", err)
+	}
+	_ = pool.QueryRow(ctx, "SELECT count(*) FROM attendance_records").Scan(&stored)
+	if stored != 6 {
+		t.Errorf("records after a failed fetch: %d", stored)
 	}
 }

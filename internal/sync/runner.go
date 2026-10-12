@@ -227,8 +227,14 @@ func (r *Runner) run(ctx context.Context, rep *Report, since string, opts Option
 		back = attendance.RecordsBackFull
 	}
 	recordsFrom := today.AddDate(0, 0, -back)
+	// The attendance table is a convenience: if HolliHop fails on it, the
+	// people sync still goes ahead and the stored records stay as they are.
 	if f.studentDays, err = r.Source.GetStudentDays(ctx, recordsFrom.Format(time.DateOnly), today.Format(time.DateOnly)); err != nil {
-		return err
+		if ctx.Err() != nil {
+			return err
+		}
+		r.Log.Warn("fetch attendance records failed; keeping the stored ones", slog.Any("err", err))
+		f.studentDays = nil
 	}
 	records, recordSkips := buildRecords(f.studentDays)
 	rep.Fetched = FetchCounts{len(f.teachers), len(f.units), len(f.students), len(f.enrollments), len(days), len(records)}
