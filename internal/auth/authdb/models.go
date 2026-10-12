@@ -14,6 +14,40 @@ type AppSetting struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type AttendanceAudit struct {
+	ID              int64
+	SessionID       pgtype.UUID
+	StudentClientID int32
+	ActorKind       string
+	ActorID         pgtype.Int4
+	FromState       string
+	ToState         string
+	At              pgtype.Timestamptz
+}
+
+type AttendanceMark struct {
+	SessionID       pgtype.UUID
+	StudentClientID int32
+	State           string
+	Source          pgtype.Text
+	ScannedAt       pgtype.Timestamptz
+	DeviceID        pgtype.Text
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type AttendanceSession struct {
+	ID         pgtype.UUID
+	GroupID    int32
+	Date       pgtype.Date
+	TeacherID  int32
+	Secret     []byte
+	StartsAt   pgtype.Timestamptz
+	EndsAt     pgtype.Timestamptz
+	OpenedAt   pgtype.Timestamptz
+	FinishedAt pgtype.Timestamptz
+	FinishedBy pgtype.Text
+}
+
 type AuthSession struct {
 	ID         int64
 	TokenHash  []byte

@@ -1,0 +1,76 @@
+-- Attendance sessions, marks and their audit log (spec 8).
+
+-- name: SessionByLesson :one
+SELECT * FROM attendance_sessions WHERE group_id = @group_id AND date = @date;
+
+-- Returns no row if another request created the session first.
+-- name: CreateSession :one
+INSERT INTO attendance_sessions (group_id, date, teacher_id, secret, starts_at, ends_at, opened_at)
+VALUES (@group_id, @date, @teacher_id, @secret, @starts_at, @ends_at, @opened_at)
+ON CONFLICT (group_id, date) DO NOTHING
+RETURNING *;
+
+-- The roster (spec 5): enrollments current on the date and that weekday,
+-- of active students.
+-- name: InsertRoster :execrows
+INSERT INTO attendance_marks (session_id, student_client_id, updated_at)
+SELECT DISTINCT @session_id::uuid, e.student_client_id, @at::timestamptz
+FROM enrollments e
+JOIN students st ON st.client_id = e.student_client_id AND st.deactivated_at IS NULL
+WHERE e.group_id = @group_id
+  AND (e.begin_date IS NULL OR e.begin_date <= @date::date)
+  AND (e.end_date IS NULL OR e.end_date >= @date::date)
+  AND (e.weekdays = 0 OR e.weekdays & (1 << (extract(isodow FROM @date::date)::int - 1)) <> 0)
+ON CONFLICT DO NOTHING;
+
+-- name: GetSession :one
+SELECT s.*, g.name AS group_name
+FROM attendance_sessions s
+JOIN groups g ON g.id = s.group_id
+WHERE s.id = @id;
+
+-- name: SessionMarks :many
+SELECT m.student_client_id, m.state, m.source, m.scanned_at, st.first_name, st.last_name
+FROM attendance_marks m
+JOIN students st ON st.client_id = m.student_client_id
+WHERE m.session_id = @session_id
+ORDER BY st.last_name, st.first_name, m.student_client_id;
+
+-- name: GetMarkForUpdate :one
+SELECT state, source, device_id FROM attendance_marks
+WHERE session_id = @session_id AND student_client_id = @student_client_id
+FOR UPDATE;
+
+-- A scan only fills a pending mark of a session that is still open.
+-- name: ScanMark :execrows
+UPDATE attendance_marks m
+SET state = @state, source = 'scan', scanned_at = @at, device_id = @device_id, updated_at = @at
+FROM attendance_sessions s
+WHERE s.id = m.session_id AND s.finished_at IS NULL
+  AND m.session_id = @session_id AND m.student_client_id = @student_client_id AND m.state = 'pending';
+
+-- name: TeacherSetMark :exec
+UPDATE attendance_marks
+SET state = @state, source = 'teacher', updated_at = @at
+WHERE session_id = @session_id AND student_client_id = @student_client_id;
+
+-- name: FinishSession :execrows
+UPDATE attendance_sessions SET finished_at = @at, finished_by = @finished_by
+WHERE id = @id AND finished_at IS NULL;
+
+-- name: MarkPendingAbsent :many
+UPDATE attendance_marks SET state = 'absent', source = 'auto', updated_at = @at
+WHERE session_id = @session_id AND state = 'pending'
+RETURNING student_client_id;
+
+-- name: InsertAudit :exec
+INSERT INTO attendance_audit (session_id, student_client_id, actor_kind, actor_id, from_state, to_state, at)
+VALUES (@session_id, @student_client_id, @actor_kind, @actor_id, @from_state, @to_state, @at);
+
+-- name: InsertAbsentAudit :exec
+INSERT INTO attendance_audit (session_id, student_client_id, actor_kind, from_state, to_state, at)
+SELECT @session_id::uuid, unnest(@student_client_ids::int[]), 'system', 'pending', 'absent', @at::timestamptz;
+
+-- Open sessions whose lesson ended before cutoff: they finish on their own.
+-- name: DueSessions :many
+SELECT id FROM attendance_sessions WHERE finished_at IS NULL AND ends_at < @cutoff;

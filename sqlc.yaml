@@ -42,3 +42,11 @@ sql:
         package: lessondb
         out: internal/lessons/lessondb
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/attendance/queries.sql
+    gen:
+      go:
+        package: attendancedb
+        out: internal/attendance/attendancedb
+        sql_package: pgx/v5
