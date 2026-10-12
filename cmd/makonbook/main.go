@@ -191,8 +191,18 @@ func worker(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		slog.Duration("interval", cfg.SyncInterval),
 		slog.Duration("full_at", cfg.SyncFullAt),
 		slog.String("time_zone", cfg.Location.String()))
-	// Attendance sessions nobody finished close on their own (spec 8.1).
+	// Attendance sessions nobody finished close on their own (spec 8.1), and
+	// finished attendance is written back to HolliHop (8.6; dry run unless
+	// HOLLIHOP_WRITE_ENABLED).
 	go attendance.NewService(pool, lessons.NewService(pool, cfg.Location)).FinishLoop(ctx, time.Minute, log)
+	writer := &attendance.Writer{
+		Pool:          pool,
+		HolliHop:      hollihop.New(cfg.HolliHopBaseURL, cfg.HolliHopAuthKey),
+		Enabled:       cfg.HolliHopWriteEnabled,
+		AbsentPayable: cfg.HolliHopAbsentPayable,
+		Log:           log,
+	}
+	go writer.Loop(ctx, 30*time.Second)
 	return newRunner(cfg, pool, log).Loop(ctx, cfg.SyncInterval, cfg.SyncFullAt)
 }
 

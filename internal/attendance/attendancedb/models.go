@@ -102,6 +102,21 @@ type Group struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type HollihopOutbox struct {
+	ID              int64
+	SessionID       pgtype.UUID
+	GroupID         int32
+	StudentClientID int32
+	Date            pgtype.Date
+	Pass            bool
+	Status          string
+	Attempts        int32
+	NextAttemptAt   pgtype.Timestamptz
+	LastError       pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+	DoneAt          pgtype.Timestamptz
+}
+
 type LessonDay struct {
 	GroupID         int32
 	Date            pgtype.Date

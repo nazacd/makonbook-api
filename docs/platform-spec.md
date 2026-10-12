@@ -198,7 +198,8 @@ Rotation + device binding + teacher's live headcount. Geofencing only if abuse i
   - `OverwriteAcceptedManually = false` → **an admin's manual entry always wins.**
 - Retries with backoff; "state will not be changed" counts as success; "set manually" is recorded and shown in admin panel, not retried.
 - Before go-live: verify key casing and behaviour on **one real lesson** with an admin watching in HolliHop.
-- Until then the writer runs in **dry-run** mode (`HOLLIHOP_WRITE_ENABLED=false`, the default): it logs and stores exactly what it would send, and sends nothing.
+- Until then the writer runs in **dry-run** mode (`HOLLIHOP_WRITE_ENABLED=false`, the default): it logs exactly what it would send, marks the rows `dry_run`, and sends nothing. Dry-run rows are never sent later. `HOLLIHOP_ABSENT_PAYABLE=true` switches absences to `Payable=true` (D17), if the test lesson calls for it.
+- Built (phase 2, step 3): `hollihop_outbox` rows per student on finish; a later correction that flips present↔absent supersedes the unsent row and queues a new one (present↔late is the same in HolliHop and queues nothing). The worker sends due rows every 30 s in batches of 200, leasing them for 5 min; per-row results: `sent`, `unchanged`, `set_manually` (not retried), or retry with backoff 1 min … 1 h, `failed` after 10 attempts.
 
 ### 8.7 Student attendance table (D16)
 - In the app, per group: a summary (lessons, present, late, absent) and a list of lesson days, newest first, each `present` / `late` / `absent` / `not marked yet`.
@@ -328,8 +329,9 @@ admin_users(id, email UNIQUE, password_hash, totp_secret, role, created_at)
 
 attendance_records(group_id, student_client_id, date, pass bool, synced_at,
                    PRIMARY KEY(group_id, student_client_id, date))   -- HolliHop's marks, read-only
-hollihop_outbox(id, kind, payload jsonb, attempts, next_attempt_at, last_error,
-                done_at NULL)
+hollihop_outbox(id, session_id FK, group_id, student_client_id, date, pass,
+                status (pending|sent|unchanged|set_manually|dry_run|superseded|failed),
+                attempts, next_attempt_at, last_error, created_at, done_at)   -- built, step 3
 ```
 
 ## 16. Hosting & data

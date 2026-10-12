@@ -188,6 +188,27 @@ in `.env`. **Roll back:** set the previous sha and `docker compose up -d`
 (migrations only ever add; an older image runs fine on a newer schema unless
 the release notes say otherwise).
 
+## Attendance write-back to HolliHop
+
+The worker sends finished attendance to HolliHop (`SetStudentPasses`). It is
+**off** until one real lesson has been checked with an admin watching
+HolliHop: with `HOLLIHOP_WRITE_ENABLED=false` (the default) it only records
+what it would send. What it would have sent:
+
+```bash
+docker compose logs worker | grep "would_send"
+docker exec db psql -U postgres -d makonbook_api -c \
+  "SELECT status, count(*) FROM hollihop_outbox GROUP BY status;"
+```
+
+Going live: set `HOLLIHOP_WRITE_ENABLED=true` in `.env`, `docker compose up -d`.
+Only lessons finished from then on are sent (earlier ones stay `dry_run`).
+Rows HolliHop refuses because an admin set the day by hand end as
+`set_manually` — the admin's entry stands. If absences turn out unbilled in
+HolliHop, also set `HOLLIHOP_ABSENT_PAYABLE=true`.
+
+To stop writing at once: `HOLLIHOP_WRITE_ENABLED=false`, `docker compose up -d`.
+
 ## Everyday operations
 
 | Task | Command (in `/opt/makonbook-api`) |

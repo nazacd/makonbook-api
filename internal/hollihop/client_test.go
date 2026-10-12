@@ -164,3 +164,37 @@ func TestGetLessonDays(t *testing.T) {
 		t.Errorf("got %+v", got)
 	}
 }
+
+func TestSetStudentPasses(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/SetStudentPasses" || r.URL.Query().Get("authkey") != testKey ||
+			!strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+			t.Errorf("unexpected request %s %s %q", r.Method, r.URL.Path, r.Header.Get("Content-Type"))
+		}
+		var rows []map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&rows); err != nil {
+			t.Fatal(err)
+		}
+		// Payable is left out (unchanged) unless set; the manual-entry guard is explicit.
+		if _, has := rows[0]["Payable"]; has || rows[0]["OverwriteAcceptedManually"] != false || rows[0]["Pass"] != false || rows[0]["Date"] != "2026-10-12" {
+			t.Errorf("row 0 = %v", rows[0])
+		}
+		if rows[1]["Payable"] != true || rows[1]["Pass"] != true || rows[1]["EdUnitId"] != 100.0 || rows[1]["StudentClientId"] != 7.0 {
+			t.Errorf("row 1 = %v", rows[1])
+		}
+		_, _ = w.Write([]byte(`{"Errors":[{"errorType":"x","errorMessage":"The day info was set manually","Date":"2026-10-12T00:00:00","EdUnitId":100,"StudentClientId":7}]}`))
+	}))
+	defer srv.Close()
+
+	yes := true
+	errs, err := New(srv.URL, testKey).SetStudentPasses(t.Context(), []StudentPass{
+		{Date: "2026-10-12", EdUnitID: 100, StudentClientID: 6},
+		{Date: "2026-10-12", EdUnitID: 100, StudentClientID: 7, Pass: true, Payable: &yes},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(errs) != 1 || errs[0].Message != PassSetManually || errs[0].StudentClientID != 7 {
+		t.Errorf("errors = %+v", errs)
+	}
+}
