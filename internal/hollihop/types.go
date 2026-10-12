@@ -71,3 +71,18 @@ type EdUnitStudent struct {
 	Weekdays        int16  `json:"Weekdays"`
 	Status          string `json:"Status"`
 }
+
+// EdUnitDays is one row of GetEdUnits with queryDays: a group's lesson days in
+// the requested range.
+type EdUnitDays struct {
+	ID   int32       `json:"Id"`
+	Days []LessonDay `json:"Days"`
+}
+
+// LessonDay is one lesson of an EdUnit. Its times and teachers come from the
+// schedule items it names.
+type LessonDay struct {
+	Date            string  `json:"Date"`
+	Minutes         float64 `json:"Minutes"`
+	ScheduleItemIDs []int32 `json:"ScheduleItemIds"`
+}

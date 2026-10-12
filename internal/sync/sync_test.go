@@ -120,10 +120,12 @@ type fakeSource struct {
 	units       []hollihop.EdUnit
 	students    []hollihop.Student
 	enrollments []hollihop.EdUnitStudent
+	lessonDays  []hollihop.EdUnitDays
 	now         string
 	err         error
 
 	gotSince []string
+	gotDays  [][2]string
 }
 
 func (f *fakeSource) GetTeachers(context.Context) ([]hollihop.Teacher, error) {
@@ -132,6 +134,11 @@ func (f *fakeSource) GetTeachers(context.Context) ([]hollihop.Teacher, error) {
 func (f *fakeSource) GetEdUnits(context.Context) ([]hollihop.EdUnit, error) { return f.units, nil }
 func (f *fakeSource) GetEdUnitStudents(context.Context) ([]hollihop.EdUnitStudent, error) {
 	return f.enrollments, nil
+}
+
+func (f *fakeSource) GetLessonDays(_ context.Context, from, to string) ([]hollihop.EdUnitDays, error) {
+	f.gotDays = append(f.gotDays, [2]string{from, to})
+	return f.lessonDays, nil
 }
 
 func (f *fakeSource) GetStudents(_ context.Context, since string) ([]hollihop.Student, string, error) {
@@ -152,6 +159,10 @@ func newFixture(nStudents int) *fakeSource {
 		teachers: []hollihop.Teacher{{ID: 10, FirstName: "Ali", LastName: "Valiyev", Mobile: "+998901000010"}},
 		units: []hollihop.EdUnit{{ID: 100, Name: "G", LearningType: "GROUP", OfficeOrCompanyID: 3, OfficeOrCompanyName: "NOVZA",
 			ScheduleItems: []hollihop.ScheduleItem{{ID: 1, BeginDate: "2026-09-01", BeginTime: "14:00", EndTime: "15:30", Weekdays: 21, TeacherIDs: []int32{10}}}}},
+		lessonDays: []hollihop.EdUnitDays{{ID: 100, Days: []hollihop.LessonDay{
+			{Date: "2026-10-09", Minutes: 90, ScheduleItemIDs: []int32{1}},
+			{Date: "2026-10-12", Minutes: 90, ScheduleItemIDs: []int32{1}},
+		}}},
 	}
 	for i := int32(1); i <= int32(nStudents); i++ {
 		f.students = append(f.students, hollihop.Student{ID: 500 + i, ClientID: i, FirstName: "S", LastName: "S",
@@ -298,5 +309,60 @@ func TestRunsDoNotOverlap(t *testing.T) {
 	_, err = newRunner(pool, newFixture(3), &fakeNotifier{}).Run(ctx, ModeFull, Options{})
 	if !errors.Is(err, ErrAlreadyRunning) {
 		t.Errorf("err = %v, want ErrAlreadyRunning", err)
+	}
+}
+
+func lessonDates(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	var s string
+	err := pool.QueryRow(t.Context(), "SELECT coalesce(string_agg(to_char(date, 'MM-DD'), ',' ORDER BY date), '') FROM lesson_days").Scan(&s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestRunMirrorsLessonDays(t *testing.T) {
+	pool := testdb.New(t)
+	src := newFixture(3)
+	r := newRunner(pool, src, &fakeNotifier{})
+	ctx := t.Context()
+
+	// A day outside the window (or of a group the sync doesn't know) is ignored.
+	src.lessonDays = append(src.lessonDays, hollihop.EdUnitDays{ID: 999, Days: []hollihop.LessonDay{{Date: "2026-10-12", Minutes: 90}}})
+	src.lessonDays[0].Days = append(src.lessonDays[0].Days, hollihop.LessonDay{Date: "2026-12-01", Minutes: 90})
+	rep, err := r.Run(ctx, ModeFull, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := src.gotDays[0]; got != [2]string{"2026-10-03", "2026-10-24"} {
+		t.Errorf("asked for days %v", got)
+	}
+	if d := lessonDates(t, pool); d != "10-09,10-12" {
+		t.Errorf("lesson days = %q", d)
+	}
+	if rep.Fetched.LessonDays != 4 {
+		t.Errorf("fetched %d lesson days", rep.Fetched.LessonDays)
+	}
+
+	// The office cancels Monday and adds Tuesday.
+	src.lessonDays = []hollihop.EdUnitDays{{ID: 100, Days: []hollihop.LessonDay{
+		{Date: "2026-10-09", Minutes: 90, ScheduleItemIDs: []int32{1}},
+		{Date: "2026-10-13", Minutes: 60, ScheduleItemIDs: []int32{1}},
+	}}}
+	if _, err := r.Run(ctx, ModeIncremental, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if d := lessonDates(t, pool); d != "10-09,10-13" {
+		t.Errorf("after cancellation: lesson days = %q", d)
+	}
+
+	// An empty answer keeps what we have instead of wiping it.
+	src.lessonDays = nil
+	if _, err := r.Run(ctx, ModeIncremental, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if d := lessonDates(t, pool); d != "10-09,10-13" {
+		t.Errorf("after empty answer: lesson days = %q", d)
 	}
 }

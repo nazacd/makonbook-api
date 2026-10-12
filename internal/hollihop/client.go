@@ -91,6 +91,23 @@ func (c *Client) GetEdUnits(ctx context.Context) ([]EdUnit, error) {
 	return out, err
 }
 
+// GetLessonDays returns each group's lesson days between from and to
+// (inclusive, "2006-01-02"). Groups without lessons in the range may be left
+// out or come with no days.
+func (c *Client) GetLessonDays(ctx context.Context, from, to string) ([]EdUnitDays, error) {
+	var out []EdUnitDays
+	params := url.Values{"queryDays": {"true"}, "dateFrom": {from}, "dateTo": {to}}
+	err := c.paged(ctx, "GetEdUnits", params, func(body []byte) (int, error) {
+		var r struct{ EdUnits []EdUnitDays }
+		if err := json.Unmarshal(body, &r); err != nil {
+			return 0, err
+		}
+		out = append(out, r.EdUnits...)
+		return len(r.EdUnits), nil
+	})
+	return out, err
+}
+
 // GetStudents returns students of every status. With a non-empty
 // updatedSince (a value previously returned as `now`), only students whose
 // status, contacts or assignees changed since then are returned — HolliHop

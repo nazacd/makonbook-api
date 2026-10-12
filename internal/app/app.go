@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nazacd/makonbook-api/internal/auth"
+	"github.com/nazacd/makonbook-api/internal/lessons"
 	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
 	"github.com/nazacd/makonbook-api/internal/system"
@@ -33,7 +34,9 @@ func Handler(d Deps) http.Handler {
 	authSvc := auth.NewService(d.Pool, directory, auth.NewHasher())
 
 	system.NewHandler(systemdb.New(d.Pool), d.Pool).Register(mux)
-	auth.NewHandler(authSvc, d.Location, d.TrustProxy).Register(mux)
+	authHandler := auth.NewHandler(authSvc, d.Location, d.TrustProxy)
+	authHandler.Register(mux)
+	lessons.NewHandler(lessons.NewService(d.Pool, d.Location), d.Location, authHandler.Require).Register(mux)
 
 	return httpx.Chain(mux,
 		httpx.WithRequestContext(d.Log),

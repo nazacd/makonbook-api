@@ -309,8 +309,12 @@ credentials(person_kind, person_id PK, username UNIQUE NULL, password_hash NULL,
 auth_sessions(id, token_hash UNIQUE, person_kind, person_id, device_id, created_at,
               last_seen_at, expires_at, revoked_at)
 
+-- built (phase 2, step 1)
+lesson_days(group_id FK, date, minutes, schedule_item_ids int[], PRIMARY KEY(group_id, date))
+            -- HolliHop's actual lesson dates (GetEdUnits?queryDays), today −7 … +14 days,
+            -- refreshed by every sync run; an empty answer keeps the stored days
+
 -- planned
-lesson_days(group_id, date, schedule_item_ids int[], minutes, PRIMARY KEY(group_id, date))
 admin_users(id, email UNIQUE, password_hash, totp_secret, role, created_at)
 
 attendance_sessions(id uuid PK, group_id, date, teacher_id, secret, opened_at,

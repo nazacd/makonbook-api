@@ -68,6 +68,13 @@ type Group struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type LessonDay struct {
+	GroupID         int32
+	Date            pgtype.Date
+	Minutes         int32
+	ScheduleItemIds []int32
+}
+
 type Office struct {
 	ID        int32
 	Name      string

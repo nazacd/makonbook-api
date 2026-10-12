@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/nazacd/makonbook-api/internal/hollihop"
+	"github.com/nazacd/makonbook-api/internal/lessons"
 	"github.com/nazacd/makonbook-api/internal/people"
 )
 
@@ -15,6 +16,7 @@ type fetched struct {
 	units       []hollihop.EdUnit
 	students    []hollihop.Student
 	enrollments []hollihop.EdUnitStudent
+	lessonDays  []hollihop.EdUnitDays
 }
 
 // buildSnapshot converts HolliHop rows into a people.Snapshot. Rows with
@@ -105,6 +107,27 @@ func buildSnapshot(f fetched, today time.Time) (s people.Snapshot, skipped []str
 		s.Offices = append(s.Offices, o)
 	}
 	return s, skipped
+}
+
+// buildLessonDays converts GetEdUnits' Days; a day with an unparseable date
+// is skipped and described.
+func buildLessonDays(units []hollihop.EdUnitDays) (days []lessons.Day, skipped []string) {
+	for _, u := range units {
+		for _, d := range u.Days {
+			date, err := parseDate(d.Date)
+			if err != nil || date.IsZero() {
+				skipped = append(skipped, fmt.Sprintf("lesson day %q of group %d: bad date", d.Date, u.ID))
+				continue
+			}
+			days = append(days, lessons.Day{
+				GroupID:         u.ID,
+				Date:            date,
+				Minutes:         lessons.MinutesOf(d.Minutes),
+				ScheduleItemIDs: d.ScheduleItemIDs,
+			})
+		}
+	}
+	return days, skipped
 }
 
 func scheduleItem(it hollihop.ScheduleItem) (people.ScheduleItem, error) {
