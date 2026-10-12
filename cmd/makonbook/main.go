@@ -26,8 +26,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nazacd/makonbook-api/internal/app"
+	"github.com/nazacd/makonbook-api/internal/attendance"
 	"github.com/nazacd/makonbook-api/internal/auth"
 	"github.com/nazacd/makonbook-api/internal/hollihop"
+	"github.com/nazacd/makonbook-api/internal/lessons"
 	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/alert"
 	"github.com/nazacd/makonbook-api/internal/platform/config"
@@ -189,6 +191,8 @@ func worker(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		slog.Duration("interval", cfg.SyncInterval),
 		slog.Duration("full_at", cfg.SyncFullAt),
 		slog.String("time_zone", cfg.Location.String()))
+	// Attendance sessions nobody finished close on their own (spec 8.1).
+	go attendance.NewService(pool, lessons.NewService(pool, cfg.Location)).FinishLoop(ctx, time.Minute, log)
 	return newRunner(cfg, pool, log).Loop(ctx, cfg.SyncInterval, cfg.SyncFullAt)
 }
 

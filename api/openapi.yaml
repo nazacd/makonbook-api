@@ -221,6 +221,139 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /v1/attendance/sessions:
+    post:
+      summary: Start attendance for one of the teacher's lessons
+      description: |
+        Allowed from 15 minutes before the lesson until it ends, for lessons
+        with `attendance_enabled`. The roster is frozen now: enrollments
+        current that day and weekday, of active students. If the lesson
+        already has a session (opened earlier, on this or another device, by
+        any teacher of the lesson), that session is returned instead — any
+        time, so reopening the app never loses it.
+      operationId: openAttendance
+      tags: [attendance]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [group_id]
+              properties:
+                group_id: { type: integer }
+                date: { type: string, format: date, description: Defaults to today at the school }
+      responses:
+        "200": { $ref: "#/components/responses/AttendanceSession" }
+        "400": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404":
+          description: "`not_found` — not one of this teacher's lessons on that date"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`too_early` (message says when it opens), `lesson_over`, `attendance_disabled` (one-to-one or online)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/attendance/sessions/{id}:
+    get:
+      summary: A session's live state (poll every few seconds while open)
+      operationId: getAttendance
+      tags: [attendance]
+      security: [{ bearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/SessionID" }]
+      responses:
+        "200": { $ref: "#/components/responses/AttendanceSession" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /v1/attendance/sessions/{id}/finish:
+    post:
+      summary: Finish attendance; everyone still pending becomes absent
+      description: Idempotent. Sessions nobody finishes close on their own 15 minutes after the lesson ends.
+      operationId: finishAttendance
+      tags: [attendance]
+      security: [{ bearer: [] }]
+      parameters: [{ $ref: "#/components/parameters/SessionID" }]
+      responses:
+        "200": { $ref: "#/components/responses/AttendanceSession" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /v1/attendance/sessions/{id}/marks/{client_id}:
+    put:
+      summary: Teacher's correction of one student's mark
+      description: Allowed while open and until 24 hours after the lesson ends. Every change is audited.
+      operationId: setAttendanceMark
+      tags: [attendance]
+      security: [{ bearer: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/SessionID" }
+        - { name: client_id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [state]
+              properties:
+                state: { type: string, enum: [present, late, absent] }
+      responses:
+        "200": { $ref: "#/components/responses/AttendanceSession" }
+        "400": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`edit_window_closed`, `not_in_roster`, `forbidden`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /v1/attendance/scan:
+    post:
+      summary: A student checks in with the code from the teacher's QR
+      description: |
+        The QR carries `session_id`, `window` and `sig` (see `AttendanceQR`).
+        Present if scanned up to 10 minutes after the lesson starts, late
+        after that. Scanning again returns the existing mark with
+        `already: true`. One phone can check in only one student per session.
+      operationId: scanAttendance
+      tags: [attendance]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, window, sig, device_id]
+              properties:
+                session_id: { type: string, format: uuid }
+                window: { type: integer, format: int64 }
+                sig: { type: string }
+                device_id: { type: string, maxLength: 100 }
+      responses:
+        "200":
+          description: Checked in
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [state, already, group_name, at]
+                properties:
+                  state: { type: string, enum: [present, late] }
+                  already: { type: boolean }
+                  group_name: { type: string }
+                  at: { type: string, format: date-time }
+        "400": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`not_in_roster`, `forbidden` (not a student)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "409":
+          description: "`session_closed`, `device_already_used`, `marked_absent` (the teacher marked them absent)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_code` (not a MakonBook code, or forged), `code_expired` (scan the current one)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
 components:
   securitySchemes:
     bearer:
@@ -291,6 +424,15 @@ components:
         name: { type: string }
         discipline: { type: string, example: PRE SAT MATH }
         learning_type: { type: string, example: GROUP }
+        session:
+          description: The lesson's attendance session, once opened
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [id, status]
+              properties:
+                id: { type: string, format: uuid }
+                status: { type: string, enum: [open, finished] }
         office: { type: string, example: NOVZA }
         schedule:
           type: array
@@ -312,7 +454,7 @@ components:
 
     Lesson:
       type: object
-      required: [group_id, group_name, discipline, office, classroom, begin_time, end_time, starts_at, ends_at, students, attendance_enabled, learning_type]
+      required: [group_id, group_name, discipline, office, classroom, begin_time, end_time, starts_at, ends_at, students, attendance_enabled, learning_type, session]
       properties:
         group_id: { type: integer }
         group_name: { type: string }
@@ -326,6 +468,61 @@ components:
         students: { type: integer, description: "Roster size on this date: enrollments current that day, of active students" }
         attendance_enabled: { type: boolean }
         learning_type: { type: string, example: GROUP }
+
+    AttendanceSession:
+      type: object
+      required: [id, group_id, group_name, date, starts_at, ends_at, late_after, opened_at, finished_at, status, editable_until, counts, marks]
+      properties:
+        id: { type: string, format: uuid }
+        group_id: { type: integer }
+        group_name: { type: string }
+        date: { type: string, format: date }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        late_after: { type: string, format: date-time, description: Scans after this are late }
+        opened_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        status: { type: string, enum: [open, finished] }
+        editable_until: { type: string, format: date-time, description: Teacher corrections allowed until then }
+        qr: { $ref: "#/components/schemas/AttendanceQR" }
+        counts:
+          type: object
+          required: [total, present, late, absent, pending]
+          properties:
+            total: { type: integer }
+            present: { type: integer }
+            late: { type: integer }
+            absent: { type: integer }
+            pending: { type: integer }
+        marks:
+          type: array
+          items:
+            type: object
+            required: [client_id, first_name, last_name, state, source, scanned_at]
+            properties:
+              client_id: { type: integer }
+              first_name: { type: string }
+              last_name: { type: string }
+              state: { type: string, enum: [pending, present, late, absent] }
+              source: { type: [string, "null"], enum: [scan, teacher, auto, null] }
+              scanned_at: { type: [string, "null"], format: date-time }
+
+    AttendanceQR:
+      type: object
+      description: |
+        Present only while the session is open. The teacher's app draws a new
+        code every `window_seconds`:
+
+            window = floor(unix_seconds / 10)      (use server_time to correct the device clock)
+            sig    = first 16 chars of base64url_nopad(HMAC-SHA256(secret_bytes, "<id>:<window>"))
+
+        `secret` is base64url without padding; `<id>` is the session id as a
+        lowercase UUID string. The server accepts the current window ±1.
+      required: [secret, window_seconds, server_time]
+      properties:
+        secret: { type: string }
+        window_seconds: { type: integer, example: 10 }
+        server_time: { type: string, format: date-time }
 
     Status:
       type: object
@@ -370,13 +567,35 @@ components:
                 - weak_password
                 - invalid_username
                 - username_taken
+                - attendance_disabled
+                - too_early
+                - lesson_over
+                - session_closed
+                - invalid_code
+                - code_expired
+                - not_in_roster
+                - device_already_used
+                - marked_absent
+                - edit_window_closed
             message:
               type: string
               description: Human-readable explanation; may change.
             request_id:
               type: string
 
+  parameters:
+    SessionID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
   responses:
+    AttendanceSession:
+      description: The session as the teacher's screen shows it
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AttendanceSession" }
     Error:
       description: Error
       content:

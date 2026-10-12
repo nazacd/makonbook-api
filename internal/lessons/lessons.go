@@ -4,6 +4,7 @@ package lessons
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strings"
@@ -93,6 +94,14 @@ type Lesson struct {
 	Students     int32     `json:"students"` // roster size on this date
 	Attendance   bool      `json:"attendance_enabled"`
 	LearningType string    `json:"learning_type"`
+	// The lesson's attendance session, once a teacher opened one.
+	Session *SessionRef `json:"session"`
+}
+
+// SessionRef points at a lesson's attendance session.
+type SessionRef struct {
+	ID     string `json:"id"`
+	Status string `json:"status"` // "open" or "finished"
 }
 
 // Service answers lesson queries.
@@ -114,7 +123,15 @@ func (s *Service) TeacherLessons(ctx context.Context, teacherID int32, day time.
 	}
 	out := make([]Lesson, 0, len(rows))
 	for _, r := range rows {
+		var session *SessionRef
+		if r.SessionID.Valid {
+			session = &SessionRef{ID: uuidString(r.SessionID.Bytes), Status: "open"}
+			if r.SessionFinished {
+				session.Status = "finished"
+			}
+		}
 		out = append(out, Lesson{
+			Session:      session,
 			GroupID:      r.GroupID,
 			GroupName:    r.GroupName,
 			Discipline:   r.Discipline,
@@ -153,3 +170,8 @@ func clock(t pgtype.Time) string {
 }
 
 func date(t time.Time) pgtype.Date { return pgtype.Date{Time: t, Valid: true} }
+
+func uuidString(b [16]byte) string {
+	h := hex.EncodeToString(b[:])
+	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+}

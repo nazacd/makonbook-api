@@ -41,14 +41,17 @@ SELECT g.id AS group_id, g.name AS group_name, g.discipline, g.learning_type,
            AND (e.begin_date IS NULL OR e.begin_date <= d.date)
            AND (e.end_date IS NULL OR e.end_date >= d.date)
            AND (e.weekdays = 0 OR e.weekdays & (1 << (extract(isodow FROM d.date)::int - 1)) <> 0)
-       )::int AS students
+       )::int AS students,
+       a.id AS session_id,
+       (a.finished_at IS NOT NULL)::bool AS session_finished
 FROM lesson_days d
 JOIN groups g ON g.id = d.group_id AND g.removed_at IS NULL
 LEFT JOIN offices o ON o.id = g.office_id
 JOIN schedule_items s ON s.group_id = d.group_id AND s.id = ANY (d.schedule_item_ids)
+LEFT JOIN attendance_sessions a ON a.group_id = d.group_id AND a.date = d.date
 WHERE d.date = $1::date
   AND $2::int = ANY (s.teacher_ids)
-GROUP BY g.id, o.name, d.date, d.minutes
+GROUP BY g.id, o.name, d.date, d.minutes, a.id
 ORDER BY min(s.begin_time), g.name
 `
 
@@ -58,22 +61,26 @@ type TeacherLessonsParams struct {
 }
 
 type TeacherLessonsRow struct {
-	GroupID      int32
-	GroupName    string
-	Discipline   string
-	LearningType string
-	Office       string
-	Minutes      int32
-	BeginTime    pgtype.Time
-	EndTime      pgtype.Time
-	Classroom    string
-	Students     int32
+	GroupID         int32
+	GroupName       string
+	Discipline      string
+	LearningType    string
+	Office          string
+	Minutes         int32
+	BeginTime       pgtype.Time
+	EndTime         pgtype.Time
+	Classroom       string
+	Students        int32
+	SessionID       pgtype.UUID
+	SessionFinished bool
 }
 
 // A teacher's lessons on a date: lesson days whose schedule items name the
 // teacher (a substitute who isn't on the schedule item has none, spec D12).
 // students is the roster size: enrollments current on that date, on that
-// weekday, of active students (spec 5).
+// weekday, of active students (spec 5). session_* describe the lesson's
+// attendance session, if one was opened (read-only here; the attendance
+// feature owns that table).
 func (q *Queries) TeacherLessons(ctx context.Context, arg TeacherLessonsParams) ([]TeacherLessonsRow, error) {
 	rows, err := q.db.Query(ctx, teacherLessons, arg.Date, arg.TeacherID)
 	if err != nil {
@@ -94,6 +101,8 @@ func (q *Queries) TeacherLessons(ctx context.Context, arg TeacherLessonsParams) 
 			&i.EndTime,
 			&i.Classroom,
 			&i.Students,
+			&i.SessionID,
+			&i.SessionFinished,
 		); err != nil {
 			return nil, err
 		}

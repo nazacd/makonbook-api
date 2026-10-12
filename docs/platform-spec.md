@@ -174,9 +174,9 @@ full|incremental` runs one by hand.
 6. Teacher taps **Finish** (or it auto-finishes at lesson end + 15 min). Results are queued for HolliHop.
 
 ### 8.2 QR token
-- `window = floor(unix_time / 10)`; `sig = base64url(HMAC-SHA256(session_secret, session_id ‖ window))[:16]`.
-- Teacher device receives the secret at session start and computes codes **locally** (keeps working if the teacher's connection drops).
-- Server accepts `window ∈ {current, current − 1}`.
+- `window = floor(unix_time / 10)`; `sig = base64url_nopad(HMAC-SHA256(session_secret, "<session_id>:<window>"))[:16]`, session id as a lowercase UUID string (exact format: `api/openapi.yaml`, `AttendanceQR`).
+- Teacher device receives the secret at session start and computes codes **locally** (keeps working if the teacher's connection drops). It also gets `server_time`, to correct its own clock.
+- Server accepts `window ∈ {current − 1, current, current + 1}` (the +1 absorbs a teacher clock a few seconds fast): a code is good for 20–30 s.
 
 ### 8.3 Scan validation (all must pass)
 signature valid · window fresh · session open · student in session roster · student not already marked · **this device hasn't checked in a different student in this session** · student account active.
@@ -314,16 +314,18 @@ lesson_days(group_id FK, date, minutes, schedule_item_ids int[], PRIMARY KEY(gro
             -- HolliHop's actual lesson dates (GetEdUnits?queryDays), today −7 … +14 days,
             -- refreshed by every sync run; an empty answer keeps the stored days
 
+-- built (phase 2, step 2)
+attendance_sessions(id uuid PK, group_id FK, date, teacher_id FK, secret bytea, starts_at, ends_at,
+                    opened_at, finished_at NULL, finished_by (teacher|auto), UNIQUE(group_id, date))
+attendance_marks(session_id FK, student_client_id FK, state (pending|present|late|absent),
+                 source (scan|teacher|auto) NULL, scanned_at NULL, device_id NULL, updated_at,
+                 PRIMARY KEY(...), UNIQUE(session_id, device_id))   -- one row per roster student
+attendance_audit(id, session_id, student_client_id, actor_kind (student|teacher|system), actor_id NULL,
+                 from_state, to_state, at)                         -- every change
+
 -- planned
 admin_users(id, email UNIQUE, password_hash, totp_secret, role, created_at)
 
-attendance_sessions(id uuid PK, group_id, date, teacher_id, secret, opened_at,
-                    finished_at NULL)
-attendance_roster(session_id, student_client_id, PRIMARY KEY(...))
-attendance_marks(session_id, student_client_id, state, scanned_at NULL, device_id NULL,
-                 source (scan|teacher), PRIMARY KEY(session_id, student_client_id))
-attendance_audit(id, session_id, student_client_id, actor_type, actor_id, from_state,
-                 to_state, at)
 attendance_records(group_id, student_client_id, date, pass bool, synced_at,
                    PRIMARY KEY(group_id, student_client_id, date))   -- HolliHop's marks, read-only
 hollihop_outbox(id, kind, payload jsonb, attempts, next_attempt_at, last_error,
