@@ -35,6 +35,13 @@ type AttendanceMark struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+type AttendanceRecord struct {
+	GroupID         int32
+	StudentClientID int32
+	Date            pgtype.Date
+	Pass            bool
+}
+
 type AttendanceSession struct {
 	ID         pgtype.UUID
 	GroupID    int32

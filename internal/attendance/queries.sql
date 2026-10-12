@@ -120,3 +120,42 @@ WHERE id = @id AND status = 'pending';
 -- name: RetryRow :exec
 UPDATE hollihop_outbox SET next_attempt_at = @retry_at::timestamptz, last_error = @last_error
 WHERE id = @id AND status = 'pending';
+
+-- HolliHop's attendance, read-only (spec 8.7) --------------------------------
+
+-- name: DeleteRecordsBetween :exec
+DELETE FROM attendance_records WHERE date BETWEEN @date_from::date AND @date_to::date;
+
+-- Rows for students MakonBook doesn't store (never active) are skipped.
+-- name: InsertRecord :batchexec
+INSERT INTO attendance_records (group_id, student_client_id, date, pass)
+SELECT @group_id::int, @client_id::int, @day::date, @pass::bool
+WHERE EXISTS (SELECT 1 FROM students st WHERE st.client_id = @client_id::int)
+ON CONFLICT (student_client_id, group_id, date) DO UPDATE SET pass = excluded.pass;
+
+-- A student's table: HolliHop's marks before today, plus the app's own marks
+-- (late, and today's lesson before HolliHop has it). HolliHop wins where both
+-- exist, except that the app adds "late" to a lesson HolliHop counts attended.
+-- name: StudentAttendance :many
+WITH app AS (
+    SELECT s.group_id, s.date, m.state
+    FROM attendance_marks m
+    JOIN attendance_sessions s ON s.id = m.session_id
+    WHERE m.student_client_id = @client_id::int AND m.state <> 'pending'
+      AND s.date BETWEEN @date_from::date AND @today::date
+)
+SELECT coalesce(r.group_id, app.group_id)::int AS group_id,
+       coalesce(r.date, app.date)::date AS date,
+       (CASE
+            WHEN r.pass IS NULL THEN app.state
+            WHEN r.pass THEN 'absent'
+            WHEN app.state = 'late' THEN 'late'
+            ELSE 'present'
+        END)::text AS state
+FROM (SELECT ar.group_id, ar.date, ar.pass FROM attendance_records ar
+      WHERE ar.student_client_id = @client_id::int AND ar.date >= @date_from::date AND ar.date < @today::date) r
+FULL JOIN app ON app.group_id = r.group_id AND app.date = r.date
+ORDER BY 2 DESC, 1;
+
+-- name: GroupNames :many
+SELECT id, name, discipline FROM groups WHERE id = ANY (@ids::int[]);

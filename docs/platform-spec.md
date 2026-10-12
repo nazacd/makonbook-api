@@ -203,7 +203,7 @@ Rotation + device binding + teacher's live headcount. Geofencing only if abuse i
 
 ### 8.7 Student attendance table (D16)
 - In the app, per group: a summary (lessons, present, late, absent) and a list of lesson days, newest first, each `present` / `late` / `absent` / `not marked yet`.
-- Source: HolliHop's per-student lesson days (`Pass`), synced read-only into `attendance_records`; `late` comes from the app's own marks for that student and date. HolliHop wins when they disagree (an admin corrected it).
+- Source: HolliHop's per-student lesson days (`GetEdUnitStudents?queryDays`, `Pass`), synced read-only into `attendance_records` — 120 days back on the nightly full run, the last 7 days every 15 minutes. Past lessons use HolliHop's mark (a lesson nobody marked counts as attended there); the app adds `late`, and today's lessons come from the app until HolliHop has them. HolliHop wins when they disagree (an admin corrected it). Built (phase 2).
 - Billing is not shown to students.
 - `GET /v1/me/attendance?group_id=&from=&to=`.
 
@@ -327,8 +327,8 @@ attendance_audit(id, session_id, student_client_id, actor_kind (student|teacher|
 -- planned
 admin_users(id, email UNIQUE, password_hash, totp_secret, role, created_at)
 
-attendance_records(group_id, student_client_id, date, pass bool, synced_at,
-                   PRIMARY KEY(group_id, student_client_id, date))   -- HolliHop's marks, read-only
+attendance_records(group_id, student_client_id FK, date, pass bool,
+                   PRIMARY KEY(student_client_id, group_id, date))   -- HolliHop's marks, read-only (built)
 hollihop_outbox(id, session_id FK, group_id, student_client_id, date, pass,
                 status (pending|sent|unchanged|set_manually|dry_run|superseded|failed),
                 attempts, next_attempt_at, last_error, created_at, done_at)   -- built, step 3

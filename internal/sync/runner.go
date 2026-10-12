@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/nazacd/makonbook-api/internal/attendance"
 	"github.com/nazacd/makonbook-api/internal/hollihop"
 	"github.com/nazacd/makonbook-api/internal/lessons"
 	"github.com/nazacd/makonbook-api/internal/people"
@@ -57,6 +58,7 @@ type Source interface {
 	GetStudents(ctx context.Context, updatedSince string) ([]hollihop.Student, string, error)
 	GetEdUnitStudents(ctx context.Context) ([]hollihop.EdUnitStudent, error)
 	GetLessonDays(ctx context.Context, from, to string) ([]hollihop.EdUnitDays, error)
+	GetStudentDays(ctx context.Context, from, to string) ([]hollihop.EdUnitStudentDays, error)
 }
 
 // Guard rejects a run that would deactivate too many people at once — the
@@ -126,6 +128,9 @@ type FetchCounts struct {
 	Students    int `json:"students"`
 	Enrollments int `json:"enrollments"`
 	LessonDays  int `json:"lesson_days"`
+	// HolliHop's per-student marks: 120 days back on full runs, 7 on
+	// incremental ones.
+	AttendanceRecords int `json:"attendance_records"`
 }
 
 // Run status values, as stored in sync_runs.status.
@@ -216,7 +221,17 @@ func (r *Runner) run(ctx context.Context, rep *Report, since string, opts Option
 		return err
 	}
 	days, daySkips := buildLessonDays(f.lessonDays)
-	rep.Fetched = FetchCounts{len(f.teachers), len(f.units), len(f.students), len(f.enrollments), len(days)}
+
+	back := attendance.RecordsBackIncremental
+	if rep.Mode == ModeFull {
+		back = attendance.RecordsBackFull
+	}
+	recordsFrom := today.AddDate(0, 0, -back)
+	if f.studentDays, err = r.Source.GetStudentDays(ctx, recordsFrom.Format(time.DateOnly), today.Format(time.DateOnly)); err != nil {
+		return err
+	}
+	records, recordSkips := buildRecords(f.studentDays)
+	rep.Fetched = FetchCounts{len(f.teachers), len(f.units), len(f.students), len(f.enrollments), len(days), len(records)}
 	rep.StudentsNow = now
 
 	// An empty answer for data that is never empty is a HolliHop problem,
@@ -229,6 +244,7 @@ func (r *Runner) run(ctx context.Context, rep *Report, since string, opts Option
 	snap, skipped := buildSnapshot(f, today)
 	snap.StudentsComplete = rep.Mode == ModeFull
 	skipped = append(skipped, daySkips...)
+	skipped = append(skipped, recordSkips...)
 	rep.Skipped = skipped
 	for _, s := range skipped {
 		r.Log.Warn("sync skipped a HolliHop row", slog.String("row", s))
@@ -251,6 +267,12 @@ func (r *Runner) run(ctx context.Context, rep *Report, since string, opts Option
 	if len(days) == 0 {
 		r.Log.Warn("HolliHop returned no lesson days; keeping the stored ones")
 	} else if err := lessons.ApplyDays(ctx, tx, daysFrom, daysTo, days); err != nil {
+		return err
+	}
+	// Likewise for attendance records.
+	if len(records) == 0 {
+		r.Log.Warn("HolliHop returned no attendance records; keeping the stored ones")
+	} else if err := attendance.ApplyRecords(ctx, tx, recordsFrom, today, records); err != nil {
 		return err
 	}
 	// The cursor moves only together with the data it describes.

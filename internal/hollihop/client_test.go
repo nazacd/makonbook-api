@@ -198,3 +198,24 @@ func TestSetStudentPasses(t *testing.T) {
 		t.Errorf("errors = %+v", errs)
 	}
 }
+
+func TestGetStudentDays(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if r.URL.Path != "/GetEdUnitStudents" || q.Get("queryDays") != "true" || q.Get("statuses") != "Normal" ||
+			q.Get("dateFrom") != "2026-10-03" || q.Get("dateTo") != "2026-10-10" {
+			t.Errorf("unexpected request %s %v", r.URL.Path, q)
+		}
+		_, _ = w.Write([]byte(`{"EdUnitStudents":[{"EdUnitId":100,"StudentClientId":7,"BeginDate":"2026-09-01","Days":[
+			{"Date":"2026-10-07","Pass":false,"Payable":true,"Minutes":90},{"Date":"2026-10-09","Pass":true}]}]}`))
+	}))
+	defer srv.Close()
+
+	got, err := New(srv.URL, testKey).GetStudentDays(t.Context(), "2026-10-03", "2026-10-10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].StudentClientID != 7 || len(got[0].Days) != 2 || !got[0].Days[1].Pass {
+		t.Errorf("got %+v", got)
+	}
+}

@@ -43,6 +43,33 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/attendance/sessions/{id}/finish", h.require(h.teacher(h.finish)))
 	mux.HandleFunc("PUT /v1/attendance/sessions/{id}/marks/{client_id}", h.require(h.teacher(h.setMark)))
 	mux.HandleFunc("POST /v1/attendance/scan", h.require(h.scan))
+	mux.HandleFunc("GET /v1/me/attendance", h.require(h.myAttendance))
+}
+
+type myAttendanceResponse struct {
+	From   string            `json:"from"`
+	To     string            `json:"to"`
+	Groups []GroupAttendance `json:"groups"`
+}
+
+// myAttendance is the student's own attendance table (spec 8.7).
+func (h *Handler) myAttendance(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	if p.Kind != people.KindStudent {
+		httpx.WriteError(w, r, http.StatusForbidden, httpx.CodeForbidden, "only students have an attendance table")
+		return
+	}
+	today, _ := h.day("")
+	groups, err := h.svc.StudentTable(r.Context(), p.ID, today)
+	if err != nil {
+		h.writeError(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, r, http.StatusOK, myAttendanceResponse{
+		From:   today.AddDate(0, 0, -RecordsBackFull).Format(time.DateOnly),
+		To:     today.Format(time.DateOnly),
+		Groups: groups,
+	})
 }
 
 // teacher lets only teachers through.

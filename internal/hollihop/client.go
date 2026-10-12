@@ -158,6 +158,22 @@ func (c *Client) GetEdUnitStudents(ctx context.Context) ([]EdUnitStudent, error)
 	return out, err
 }
 
+// GetStudentDays returns each enrollment's lesson days between from and to
+// (inclusive, "2006-01-02") with HolliHop's attendance marks.
+func (c *Client) GetStudentDays(ctx context.Context, from, to string) ([]EdUnitStudentDays, error) {
+	var out []EdUnitStudentDays
+	params := url.Values{"statuses": {"Normal"}, "queryDays": {"true"}, "dateFrom": {from}, "dateTo": {to}}
+	err := c.paged(ctx, "GetEdUnitStudents", params, func(body []byte) (int, error) {
+		var r struct{ EdUnitStudents []EdUnitStudentDays }
+		if err := json.Unmarshal(body, &r); err != nil {
+			return 0, err
+		}
+		out = append(out, r.EdUnitStudents...)
+		return len(r.EdUnitStudents), nil
+	})
+	return out, err
+}
+
 // paged calls method with skip/take until a page comes back short. decode
 // appends the page's rows and returns how many there were.
 func (c *Client) paged(ctx context.Context, method string, params url.Values, decode func([]byte) (int, error)) error {

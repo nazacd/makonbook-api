@@ -86,3 +86,18 @@ type LessonDay struct {
 	Minutes         float64 `json:"Minutes"`
 	ScheduleItemIDs []int32 `json:"ScheduleItemIds"`
 }
+
+// EdUnitStudentDays is one row of GetEdUnitStudents with queryDays: a
+// student's lesson days in one EdUnit within the requested range.
+type EdUnitStudentDays struct {
+	EdUnitID        int32        `json:"EdUnitId"`
+	StudentClientID int32        `json:"StudentClientId"`
+	Days            []StudentDay `json:"Days"`
+}
+
+// StudentDay is one lesson day of a student. A day nobody marked counts as
+// attended in HolliHop (Pass false).
+type StudentDay struct {
+	Date string `json:"Date"`
+	Pass bool   `json:"Pass"` // true = absent
+}
