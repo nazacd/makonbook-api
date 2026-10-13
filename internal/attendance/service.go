@@ -52,6 +52,7 @@ var (
 	ErrMarkedAbsent     = errors.New("the teacher marked this student absent")
 	ErrEditWindowClosed = errors.New("marks can only be changed until 24 hours after the lesson")
 	ErrBadState         = errors.New("state must be present, late or absent")
+	ErrSetByAdmin       = errors.New("the office corrected this mark; ask them to change it")
 )
 
 // TooEarlyError: attendance opens OpensBefore the lesson starts.
@@ -97,8 +98,10 @@ type Mark struct {
 	FirstName string     `json:"first_name"`
 	LastName  string     `json:"last_name"`
 	State     string     `json:"state"`
-	Source    *string    `json:"source"` // "scan", "teacher", "auto"; null while pending
+	Source    *string    `json:"source"` // "scan", "teacher", "admin", "auto"; null while pending
 	ScannedAt *time.Time `json:"scanned_at"`
+	// Admin panel only: the latest write of this mark to HolliHop.
+	HolliHop *Write `json:"hollihop,omitempty"`
 }
 
 // ScanResult is what the student's screen shows after a scan.
@@ -205,25 +208,53 @@ func (s *Service) Finish(ctx context.Context, teacherID int32, sessionID string)
 }
 
 // SetMark is a teacher's correction (a dead phone, a mistake), allowed while
-// the session is open and until EditWindow after the lesson. Every change is
+// the session is open and until EditWindow after the lesson — except for a
+// mark the office already corrected, which stays theirs. Every change is
 // audited.
 func (s *Service) SetMark(ctx context.Context, teacherID int32, sessionID string, clientID int32, state string) (Session, error) {
-	if state != StatePresent && state != StateLate && state != StateAbsent {
+	if !validState(state) {
 		return Session{}, ErrBadState
 	}
 	id, err := s.authorize(ctx, teacherID, sessionID)
 	if err != nil {
 		return Session{}, err
 	}
-	now := s.now()
 	row, err := attendancedb.New(s.pool).GetSession(ctx, id)
 	if err != nil {
 		return Session{}, fmt.Errorf("load session: %w", err)
 	}
-	if now.After(row.EndsAt.Time.Add(EditWindow)) {
+	if s.now().After(row.EndsAt.Time.Add(EditWindow)) {
 		return Session{}, ErrEditWindowClosed
 	}
-	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	if err := s.setMark(ctx, id, clientID, state, Actor{Kind: ActorTeacher, ID: teacherID}); err != nil {
+		return Session{}, err
+	}
+	return s.get(ctx, id)
+}
+
+// Actor is who changes a mark.
+type Actor struct {
+	Kind string // ActorTeacher or ActorAdmin
+	ID   int32  // teacher id, or the admin's HolliHop employee/teacher id
+	// Admins only: HolliHop member type ("Employee", "Teacher") and name.
+	MemberType string
+	Name       string
+}
+
+const (
+	ActorTeacher = "teacher"
+	ActorAdmin   = "admin"
+)
+
+func validState(state string) bool {
+	return state == StatePresent || state == StateLate || state == StateAbsent
+}
+
+// setMark changes one mark, audits it and, once the session is finished,
+// queues the change for HolliHop.
+func (s *Service) setMark(ctx context.Context, id pgtype.UUID, clientID int32, state string, actor Actor) error {
+	now := s.now()
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		q := attendancedb.New(tx)
 		finished, err := q.IsFinished(ctx, id)
 		if err != nil {
@@ -239,13 +270,21 @@ func (s *Service) SetMark(ctx context.Context, teacherID int32, sessionID string
 		if mark.State == state {
 			return nil
 		}
-		if err := q.TeacherSetMark(ctx, attendancedb.TeacherSetMarkParams{State: state, At: ts(now), SessionID: id, StudentClientID: clientID}); err != nil {
+		if actor.Kind == ActorTeacher && mark.Source.String == ActorAdmin {
+			return ErrSetByAdmin
+		}
+		if err := q.SetMark(ctx, attendancedb.SetMarkParams{State: state, Source: pgtype.Text{String: actor.Kind, Valid: true}, At: ts(now), SessionID: id, StudentClientID: clientID}); err != nil {
 			return fmt.Errorf("set mark: %w", err)
 		}
-		if err := q.InsertAudit(ctx, attendancedb.InsertAuditParams{
-			SessionID: id, StudentClientID: clientID, ActorKind: "teacher", ActorID: pgtype.Int4{Int32: teacherID, Valid: true},
+		audit := attendancedb.InsertAuditParams{
+			SessionID: id, StudentClientID: clientID, ActorKind: actor.Kind, ActorID: pgtype.Int4{Int32: actor.ID, Valid: true},
 			FromState: mark.State, ToState: state, At: ts(now),
-		}); err != nil {
+		}
+		if actor.Kind == ActorAdmin {
+			audit.ActorMemberType = pgtype.Text{String: actor.MemberType, Valid: true}
+			audit.ActorName = pgtype.Text{String: actor.Name, Valid: true}
+		}
+		if err := q.InsertAudit(ctx, audit); err != nil {
 			return err
 		}
 		// After the session finished, a change between present/late and
@@ -258,10 +297,6 @@ func (s *Service) SetMark(ctx context.Context, teacherID int32, sessionID string
 		}
 		return q.EnqueueMark(ctx, attendancedb.EnqueueMarkParams{StudentClientID: clientID, Pass: state == StateAbsent, At: ts(now), SessionID: id})
 	})
-	if err != nil {
-		return Session{}, err
-	}
-	return s.get(ctx, id)
 }
 
 // Scan records a student's scan of the teacher's QR (spec 8.3).

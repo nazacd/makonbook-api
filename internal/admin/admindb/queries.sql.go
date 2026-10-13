@@ -78,6 +78,22 @@ func (q *Queries) GetAccess(ctx context.Context, arg GetAccessParams) (AdminAcce
 	return i, err
 }
 
+const getTeacher = `-- name: GetTeacher :one
+SELECT fired, (first_name || ' ' || last_name)::text AS name FROM teachers WHERE id = $1
+`
+
+type GetTeacherRow struct {
+	Fired bool
+	Name  string
+}
+
+func (q *Queries) GetTeacher(ctx context.Context, id int32) (GetTeacherRow, error) {
+	row := q.db.QueryRow(ctx, getTeacher, id)
+	var i GetTeacherRow
+	err := row.Scan(&i.Fired, &i.Name)
+	return i, err
+}
+
 const listAccess = `-- name: ListAccess :many
 SELECT member_type, member_id, name, super, office_ids, granted_at, last_login_at FROM admin_access ORDER BY super DESC, name, member_id
 `
@@ -100,6 +116,36 @@ func (q *Queries) ListAccess(ctx context.Context) ([]AdminAccess, error) {
 			&i.GrantedAt,
 			&i.LastLoginAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockSupers = `-- name: LockSupers :many
+SELECT member_type, member_id FROM admin_access WHERE super FOR UPDATE
+`
+
+type LockSupersRow struct {
+	MemberType string
+	MemberID   int32
+}
+
+// Locks the super admins, so two changes can't both remove "the other" one.
+func (q *Queries) LockSupers(ctx context.Context) ([]LockSupersRow, error) {
+	rows, err := q.db.Query(ctx, lockSupers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LockSupersRow
+	for rows.Next() {
+		var i LockSupersRow
+		if err := rows.Scan(&i.MemberType, &i.MemberID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -201,17 +247,6 @@ func (q *Queries) SessionAccess(ctx context.Context, arg SessionAccessParams) (A
 		&i.LastLoginAt,
 	)
 	return i, err
-}
-
-const teacherFired = `-- name: TeacherFired :one
-SELECT fired FROM teachers WHERE id = $1
-`
-
-func (q *Queries) TeacherFired(ctx context.Context, id int32) (bool, error) {
-	row := q.db.QueryRow(ctx, teacherFired, id)
-	var fired bool
-	err := row.Scan(&fired)
-	return fired, err
 }
 
 const upsertAccess = `-- name: UpsertAccess :one

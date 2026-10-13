@@ -86,7 +86,13 @@ func runAdmin(ctx context.Context, cfg config.Config, args []string, stdout io.W
 		return err
 	}
 	defer pool.Close()
-	svc := admin.NewService(pool, nil)
+	// HolliHop, when configured, checks that a granted employee exists and
+	// isn't fired, and supplies their name.
+	var hh admin.HolliHop
+	if cfg.HolliHopBaseURL != "" && cfg.HolliHopAuthKey != "" {
+		hh = hollihop.New(cfg.HolliHopBaseURL, cfg.HolliHopAuthKey)
+	}
+	svc := admin.NewService(pool, hh)
 	offices, err := svc.Offices(ctx)
 	if err != nil {
 		return err
@@ -158,7 +164,7 @@ func runAdmin(ctx context.Context, cfg config.Config, args []string, stdout io.W
 	}
 	a, err := svc.Grant(ctx, memberType(args[2]), int32(id), "", super, ids)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s %d: %w", args[2], id, err)
 	}
 	scope := "all branches (super admin)"
 	if !super {
@@ -168,6 +174,6 @@ func runAdmin(ctx context.Context, cfg config.Config, args []string, stdout io.W
 		}
 		scope = strings.Join(names, ", ")
 	}
-	fmt.Fprintf(stdout, "%s %d can now sign in to the admin panel with their HolliHop login: %s.\n", args[2], id, scope)
+	fmt.Fprintf(stdout, "%s %d (%s) can now sign in to the admin panel with their HolliHop login: %s.\n", args[2], id, a.Name, scope)
 	return nil
 }

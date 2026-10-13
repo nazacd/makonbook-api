@@ -43,6 +43,8 @@ type AttendanceAudit struct {
 	FromState       string
 	ToState         string
 	At              pgtype.Timestamptz
+	ActorMemberType pgtype.Text
+	ActorName       pgtype.Text
 }
 
 type AttendanceMark struct {

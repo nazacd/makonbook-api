@@ -165,7 +165,9 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", cfg.HTTPAddr, err)
 	}
-	deps := app.Deps{Pool: pool, Log: log, Location: cfg.Location, TrustProxy: cfg.TrustProxy, SecureCookies: cfg.Env == config.EnvProduction}
+	deps := app.Deps{Pool: pool, Log: log, Location: cfg.Location, TrustProxy: cfg.TrustProxy, SecureCookies: cfg.Env == config.EnvProduction,
+		HolliHopWriteEnabled: cfg.HolliHopWriteEnabled,
+	}
 	if cfg.HolliHopBaseURL != "" && cfg.HolliHopAuthKey != "" {
 		deps.HolliHop = hollihop.New(cfg.HolliHopBaseURL, cfg.HolliHopAuthKey)
 	} else {

@@ -40,6 +40,7 @@ const (
 
 type Handler struct {
 	svc        *Service
+	panel      Panel
 	trustProxy bool
 	secure     bool
 	byIP       *ratelimit.Limiter
@@ -48,9 +49,10 @@ type Handler struct {
 
 // NewHandler: secureCookie should be true everywhere but local development
 // over plain HTTP.
-func NewHandler(svc *Service, trustProxy, secureCookie bool) *Handler {
+func NewHandler(svc *Service, panel Panel, trustProxy, secureCookie bool) *Handler {
 	return &Handler{
 		svc:        svc,
+		panel:      panel,
 		trustProxy: trustProxy,
 		secure:     secureCookie,
 		byIP:       ratelimit.New(ipLimit, window),
@@ -62,6 +64,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/admin/login", h.login)
 	mux.HandleFunc("POST /v1/admin/logout", h.Require(h.logout))
 	mux.HandleFunc("GET /v1/admin/me", h.Require(h.me))
+	h.registerPanel(mux)
 }
 
 type ctxKey struct{}

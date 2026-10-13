@@ -215,3 +215,26 @@ ORDER BY group_id, begin_time;
 
 -- name: TeacherNames :many
 SELECT id, first_name, last_name FROM teachers WHERE id = ANY (@ids::int[]);
+
+-- Open data-quality issues for the admin panel (spec 13), in the admin's
+-- branches: students by their HolliHop offices or their groups' branches,
+-- teachers by the branches they teach in. People with no branch at all are
+-- visible to super admins only.
+-- name: OpenIssues :many
+SELECT i.id, i.person_kind, i.person_id, i.kind, i.detail, i.first_seen_at,
+       coalesce(st.first_name, t.first_name, '')::text AS first_name,
+       coalesce(st.last_name, t.last_name, '')::text AS last_name,
+       coalesce(st.phone_raw, t.phone_raw, '')::text AS phone_raw
+FROM data_quality_issues i
+LEFT JOIN students st ON i.person_kind = 'student' AND st.client_id = i.person_id
+LEFT JOIN teachers t ON i.person_kind = 'teacher' AND t.id = i.person_id
+WHERE i.resolved_at IS NULL
+  AND (@all_offices::bool
+       OR (i.person_kind = 'student' AND (
+              st.office_ids && @office_ids::int[]
+              OR EXISTS (SELECT 1 FROM enrollments e JOIN groups g ON g.id = e.group_id
+                         WHERE e.student_client_id = i.person_id AND g.office_id = ANY (@office_ids::int[]))))
+       OR (i.person_kind = 'teacher' AND EXISTS (
+              SELECT 1 FROM schedule_items s JOIN groups g ON g.id = s.group_id AND g.removed_at IS NULL
+              WHERE i.person_id = ANY (s.teacher_ids) AND g.office_id = ANY (@office_ids::int[]))))
+ORDER BY i.kind, i.person_kind, 8, 7;

@@ -29,6 +29,9 @@ type Deps struct {
 	// SecureCookies marks cookies Secure (HTTPS only); off only for local
 	// development over plain HTTP.
 	SecureCookies bool
+	// HolliHopWriteEnabled: attendance is really written to HolliHop (the
+	// worker's setting), so the admin panel can say when it's a dry run.
+	HolliHopWriteEnabled bool
 }
 
 // Handler builds the complete HTTP handler: every feature's routes behind the
@@ -45,8 +48,13 @@ func Handler(d Deps) http.Handler {
 	authHandler.Register(mux)
 	lessonsSvc := lessons.NewService(d.Pool, d.Location)
 	lessons.NewHandler(lessonsSvc, d.Location, authHandler.Require).Register(mux)
-	attendance.NewHandler(attendance.NewService(d.Pool, lessonsSvc), d.Location, authHandler.Require).Register(mux)
-	admin.NewHandler(admin.NewService(d.Pool, d.HolliHop), d.TrustProxy, d.SecureCookies).Register(mux)
+	attendanceSvc := attendance.NewService(d.Pool, lessonsSvc)
+	attendance.NewHandler(attendanceSvc, d.Location, authHandler.Require).Register(mux)
+	panel := admin.Panel{
+		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory,
+		Location: d.Location, WriteEnabled: d.HolliHopWriteEnabled,
+	}
+	admin.NewHandler(admin.NewService(d.Pool, d.HolliHop), panel, d.TrustProxy, d.SecureCookies).Register(mux)
 
 	return httpx.Chain(mux,
 		httpx.WithRequestContext(d.Log),

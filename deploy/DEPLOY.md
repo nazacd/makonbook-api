@@ -225,6 +225,8 @@ docker compose run --rm api admin list
 docker compose run --rm api admin revoke employee 456  # their sessions end at once
 ```
 
+Once a super admin can sign in, they can also manage the list from the panel
+(and the API refuses to remove or demote the last super admin).
 `grant` again with other options changes someone's access. A fired employee
 or teacher is refused at sign-in even while still on the list.
 

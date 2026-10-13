@@ -35,8 +35,12 @@ WHERE s.token_hash = @token_hash AND s.revoked_at IS NULL AND s.expires_at > @no
 -- name: RevokeSession :exec
 UPDATE admin_sessions SET revoked_at = @at WHERE token_hash = @token_hash AND revoked_at IS NULL;
 
--- name: TeacherFired :one
-SELECT fired FROM teachers WHERE id = @id;
+-- name: GetTeacher :one
+SELECT fired, (first_name || ' ' || last_name)::text AS name FROM teachers WHERE id = @id;
+
+-- Locks the super admins, so two changes can't both remove "the other" one.
+-- name: LockSupers :many
+SELECT member_type, member_id FROM admin_access WHERE super FOR UPDATE;
 
 -- name: Offices :many
 SELECT id, name FROM offices ORDER BY name;

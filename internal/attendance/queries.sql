@@ -24,9 +24,12 @@ WHERE e.group_id = @group_id
 ON CONFLICT DO NOTHING;
 
 -- name: GetSession :one
-SELECT s.*, g.name AS group_name
+SELECT s.*, g.name AS group_name, g.office_id, coalesce(o.name, '')::text AS office,
+       (t.first_name || ' ' || t.last_name)::text AS teacher_name
 FROM attendance_sessions s
 JOIN groups g ON g.id = s.group_id
+LEFT JOIN offices o ON o.id = g.office_id
+JOIN teachers t ON t.id = s.teacher_id
 WHERE s.id = @id;
 
 -- name: SessionMarks :many
@@ -49,9 +52,10 @@ FROM attendance_sessions s
 WHERE s.id = m.session_id AND s.finished_at IS NULL
   AND m.session_id = @session_id AND m.student_client_id = @student_client_id AND m.state = 'pending';
 
--- name: TeacherSetMark :exec
+-- A teacher's or an admin's correction (source says whose).
+-- name: SetMark :exec
 UPDATE attendance_marks
-SET state = @state, source = 'teacher', updated_at = @at
+SET state = @state, source = @source, updated_at = @at
 WHERE session_id = @session_id AND student_client_id = @student_client_id;
 
 -- name: FinishSession :execrows
@@ -64,8 +68,8 @@ WHERE session_id = @session_id AND state = 'pending'
 RETURNING student_client_id;
 
 -- name: InsertAudit :exec
-INSERT INTO attendance_audit (session_id, student_client_id, actor_kind, actor_id, from_state, to_state, at)
-VALUES (@session_id, @student_client_id, @actor_kind, @actor_id, @from_state, @to_state, @at);
+INSERT INTO attendance_audit (session_id, student_client_id, actor_kind, actor_id, actor_member_type, actor_name, from_state, to_state, at)
+VALUES (@session_id, @student_client_id, @actor_kind, @actor_id, sqlc.narg('actor_member_type'), sqlc.narg('actor_name'), @from_state, @to_state, @at);
 
 -- name: InsertAbsentAudit :exec
 INSERT INTO attendance_audit (session_id, student_client_id, actor_kind, from_state, to_state, at)
@@ -159,3 +163,100 @@ ORDER BY 2 DESC, 1;
 
 -- name: GroupNames :many
 SELECT id, name, discipline FROM groups WHERE id = ANY (@ids::int[]);
+
+-- Admin panel (spec 13): always filtered to the admin's branches ------------
+
+-- Who changed which mark, and when.
+-- name: SessionHistory :many
+SELECT a.student_client_id, coalesce(st.first_name || ' ' || st.last_name, '')::text AS student_name,
+       a.actor_kind, a.from_state, a.to_state, a.at,
+       (CASE a.actor_kind
+            WHEN 'student' THEN coalesce(st.first_name || ' ' || st.last_name, '')
+            WHEN 'teacher' THEN coalesce(t.first_name || ' ' || t.last_name, '')
+            WHEN 'admin' THEN coalesce(a.actor_name, '')
+            ELSE ''
+        END)::text AS actor_name
+FROM attendance_audit a
+LEFT JOIN students st ON st.client_id = a.student_client_id
+LEFT JOIN teachers t ON a.actor_kind = 'teacher' AND t.id = a.actor_id
+WHERE a.session_id = @session_id
+ORDER BY a.at, a.id;
+
+-- The latest write-back of each student of a session.
+-- name: SessionWrites :many
+SELECT DISTINCT ON (student_client_id) student_client_id, status, last_error
+FROM hollihop_outbox
+WHERE session_id = @session_id
+ORDER BY student_client_id, id DESC;
+
+-- Teachers' corrections per teacher, for lessons in a date range. made_present
+-- counts absent or not-scanned students a teacher marked present or late:
+-- the change worth a second look.
+-- name: CorrectionsByTeacher :many
+SELECT t.id AS teacher_id, (t.first_name || ' ' || t.last_name)::text AS teacher_name,
+       count(*)::int AS corrections,
+       count(*) FILTER (WHERE a.from_state IN ('pending', 'absent') AND a.to_state IN ('present', 'late'))::int AS made_present,
+       count(DISTINCT a.session_id)::int AS lessons_corrected,
+       (SELECT count(*) FROM attendance_sessions s2 JOIN groups g2 ON g2.id = s2.group_id
+         WHERE s2.teacher_id = t.id AND s2.date BETWEEN @date_from::date AND @date_to::date
+           AND (@all_offices::bool OR g2.office_id = ANY (@office_ids::int[])))::int AS lessons_opened
+FROM attendance_audit a
+JOIN attendance_sessions s ON s.id = a.session_id
+JOIN groups g ON g.id = s.group_id
+JOIN teachers t ON t.id = a.actor_id
+WHERE a.actor_kind = 'teacher'
+  AND s.date BETWEEN @date_from::date AND @date_to::date
+  AND (@all_offices::bool OR g.office_id = ANY (@office_ids::int[]))
+GROUP BY t.id
+ORDER BY made_present DESC, corrections DESC, teacher_name;
+
+-- Teachers' and admins' changes, newest first. teacher_id 0 = everyone.
+-- name: Corrections :many
+SELECT a.id, a.at, a.actor_kind, a.from_state, a.to_state,
+       (CASE a.actor_kind
+            WHEN 'teacher' THEN coalesce(t.first_name || ' ' || t.last_name, '')
+            ELSE coalesce(a.actor_name, '')
+        END)::text AS actor_name,
+       s.id AS session_id, s.date, g.id AS group_id, g.name AS group_name,
+       a.student_client_id, coalesce(st.first_name || ' ' || st.last_name, '')::text AS student_name
+FROM attendance_audit a
+JOIN attendance_sessions s ON s.id = a.session_id
+JOIN groups g ON g.id = s.group_id
+LEFT JOIN teachers t ON a.actor_kind = 'teacher' AND t.id = a.actor_id
+LEFT JOIN students st ON st.client_id = a.student_client_id
+WHERE a.actor_kind IN ('teacher', 'admin')
+  AND s.date BETWEEN @date_from::date AND @date_to::date
+  AND (@all_offices::bool OR g.office_id = ANY (@office_ids::int[]))
+  AND (@teacher_id::int = 0 OR (a.actor_kind = 'teacher' AND a.actor_id = @teacher_id::int))
+ORDER BY a.at DESC, a.id DESC
+LIMIT 500;
+
+-- name: WriteCounts :many
+SELECT o.status, count(*)::int AS count
+FROM hollihop_outbox o
+JOIN groups g ON g.id = o.group_id
+WHERE (@all_offices::bool OR g.office_id = ANY (@office_ids::int[]))
+GROUP BY o.status;
+
+-- name: Writes :many
+SELECT o.id, o.session_id, o.date, o.pass, o.status, o.attempts, o.last_error, o.created_at, o.done_at,
+       g.id AS group_id, g.name AS group_name,
+       o.student_client_id, coalesce(st.first_name || ' ' || st.last_name, '')::text AS student_name
+FROM hollihop_outbox o
+JOIN groups g ON g.id = o.group_id
+LEFT JOIN students st ON st.client_id = o.student_client_id
+WHERE o.status = ANY (@statuses::text[])
+  AND (@all_offices::bool OR g.office_id = ANY (@office_ids::int[]))
+ORDER BY o.id DESC
+LIMIT 500;
+
+-- A failed write goes back to the queue, unless a newer one for the same
+-- mark replaced it.
+-- name: RequeueFailed :execrows
+UPDATE hollihop_outbox o
+SET status = 'pending', attempts = 0, next_attempt_at = @at, done_at = NULL
+FROM groups g
+WHERE o.id = @id AND o.status = 'failed' AND g.id = o.group_id
+  AND (@all_offices::bool OR g.office_id = ANY (@office_ids::int[]))
+  AND NOT EXISTS (SELECT 1 FROM hollihop_outbox n
+                  WHERE n.session_id = o.session_id AND n.student_client_id = o.student_client_id AND n.id > o.id);

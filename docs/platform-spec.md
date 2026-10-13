@@ -185,7 +185,7 @@ signature valid · window fresh · session open · student in session roster · 
 Device id: random UUID generated on first launch, kept in secure storage.
 
 ### 8.4 States
-`present` (scanned before start + 10 min), `late` (scanned after; app-only, HolliHop has no "late"), `absent` (no scan at finish). Teacher can override any student (dead phone etc.) until **24 h after the lesson**; every override is stored in `attendance_audit` (who, when, from→to) and visible to admins.
+`present` (scanned before start + 10 min), `late` (scanned after; app-only, HolliHop has no "late"), `absent` (no scan at finish). Teacher can override any student (dead phone etc.) until **24 h after the lesson**; every override is stored in `attendance_audit` (who, when, from→to) and visible to admins. **Admins** correct marks of their branches from the panel at any time (source `admin`, audited with their name); a mark the office corrected can't be changed back by the teacher (`set_by_admin`).
 
 ### 8.5 Anti-cheat stance
 Rotation + device binding + teacher's live headcount. Geofencing only if abuse is observed. Teacher overrides are the main fraud vector → audit log + admin report "overrides per teacher". Parents' reports (phase 5) are a secondary check.
@@ -244,12 +244,20 @@ Sync `StudentAgents` mobiles; one parent account ↔ many children; see attendan
 
 ## 13. Admin web (React)
 
-Vite + React + TypeScript + TanStack Query + client generated from `api/openapi.yaml`. Served as static files by the edge nginx (`admin.makonbook.uz`). Lives in `web/admin/` in this repo so it shares the OpenAPI contract.
+Vite + React + TypeScript + TanStack Query + client generated from `api/openapi.yaml`. Lives in `web/admin/` in this repo so it shares the OpenAPI contract, and ships in the API's image: `admin.makonbook.uz` serves the page and passes `/v1/admin/*` to the API, so page and API share one origin (no CORS).
 
-**Access (D18).** Sign-in with the HolliHop login and password; the session is an HttpOnly, SameSite=Strict cookie (`mb_admin`, 12 h) and every change also needs the `X-MakonBook-Admin` header, which another site's page can't add — so the cookie alone is never enough (CSRF). Sign-in is rate-limited per network and per login name. A branch admin sees and changes only lessons, groups and people of their offices; a super admin sees all and manages the access list. Access is managed with `makonbook admin find|offices|list|grant|revoke` until the panel has a page for it.
+**Access (D18).** Sign-in with the HolliHop login and password; the session is an HttpOnly, SameSite=Strict cookie (`mb_admin`, 12 h) and every change also needs the `X-MakonBook-Admin` header, which another site's page can't add — so the cookie alone is never enough (CSRF). Sign-in is rate-limited per network and per login name. A branch admin sees and changes only lessons, groups and people of their offices; a super admin sees all and manages the access list. Super admins manage the list in the panel (`/v1/admin/access`, HolliHop staff search) or with `makonbook admin find|offices|list|grant|revoke`; the last super admin can't be removed or demoted.
 
 Phase 1 pages: login · sync status & run history (approve guarded runs) · **data quality** (blank/invalid/duplicate phones, teachers without phone) · students / teachers / groups (read-only mirror) · reset password · revoke sessions.
 Phase 2: attendance by group/date · teacher override report · HolliHop write errors.
+
+**Built (API, phase 2 step 4)** — every endpoint filters by the admin's branches in SQL (`internal/platform/scope`); another branch's row is "not found":
+- `GET /v1/admin/lessons?date=&office_id=` — every lesson that day, with teachers and attendance counts.
+- `GET /v1/admin/attendance/sessions/{id}` — marks, every change (`history`), and each mark's HolliHop write status. `PUT …/marks/{client_id}` — admin correction (8.4).
+- `GET /v1/admin/reports/corrections?from=&to=&teacher_id=` — per teacher: lessons opened, corrections, `made_present` (absent or not scanned → present/late); plus the 500 newest changes.
+- `GET /v1/admin/hollihop/writes?status=` — counts by status and failed / set-manually writes; `POST …/{id}/retry` re-queues a failed one. Shows whether writing is on (dry run).
+- `GET /v1/admin/data-quality` — open phone issues of their branches' students and teachers.
+- Super admins: `GET /v1/admin/access`, `PUT|DELETE /v1/admin/access/{employee|teacher}/{id}`, `GET /v1/admin/staff?q=`.
 Phase 3: content authoring (9.4).
 
 ## 14. Backend architecture (Go)
@@ -376,7 +384,14 @@ POST /v1/practice/attempts             idempotent by client UUID
 POST /v1/admin/login                   {login, password} → HolliHop checks; access list; sets mb_admin
 POST /v1/admin/logout
 GET  /v1/admin/me                      name, super, branches they can see
-/v1/admin/...                          attendance, corrections, sync runs, data quality, people, content
+GET  /v1/admin/lessons?date=           lessons of their branches, with attendance counts
+GET  /v1/admin/attendance/sessions/{id}            marks, history, HolliHop write status
+PUT  /v1/admin/attendance/sessions/{id}/marks/{client_id}   admin correction, any time
+GET  /v1/admin/reports/corrections     teachers' corrections
+GET  /v1/admin/hollihop/writes         write-back status; POST …/{id}/retry
+GET  /v1/admin/data-quality            phone issues
+GET|PUT|DELETE /v1/admin/access…       access list (super admins); GET /v1/admin/staff?q=
+/v1/admin/...                          later: sync runs, people, reset, content
 ```
 
 ## 18. Mobile app changes

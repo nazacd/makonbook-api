@@ -444,6 +444,77 @@ func (q *Queries) MarkStudentsMissing(ctx context.Context, presentIds []int32) (
 	return result.RowsAffected(), nil
 }
 
+const openIssues = `-- name: OpenIssues :many
+SELECT i.id, i.person_kind, i.person_id, i.kind, i.detail, i.first_seen_at,
+       coalesce(st.first_name, t.first_name, '')::text AS first_name,
+       coalesce(st.last_name, t.last_name, '')::text AS last_name,
+       coalesce(st.phone_raw, t.phone_raw, '')::text AS phone_raw
+FROM data_quality_issues i
+LEFT JOIN students st ON i.person_kind = 'student' AND st.client_id = i.person_id
+LEFT JOIN teachers t ON i.person_kind = 'teacher' AND t.id = i.person_id
+WHERE i.resolved_at IS NULL
+  AND ($1::bool
+       OR (i.person_kind = 'student' AND (
+              st.office_ids && $2::int[]
+              OR EXISTS (SELECT 1 FROM enrollments e JOIN groups g ON g.id = e.group_id
+                         WHERE e.student_client_id = i.person_id AND g.office_id = ANY ($2::int[]))))
+       OR (i.person_kind = 'teacher' AND EXISTS (
+              SELECT 1 FROM schedule_items s JOIN groups g ON g.id = s.group_id AND g.removed_at IS NULL
+              WHERE i.person_id = ANY (s.teacher_ids) AND g.office_id = ANY ($2::int[]))))
+ORDER BY i.kind, i.person_kind, 8, 7
+`
+
+type OpenIssuesParams struct {
+	AllOffices bool
+	OfficeIds  []int32
+}
+
+type OpenIssuesRow struct {
+	ID          int64
+	PersonKind  string
+	PersonID    int32
+	Kind        string
+	Detail      string
+	FirstSeenAt pgtype.Timestamptz
+	FirstName   string
+	LastName    string
+	PhoneRaw    string
+}
+
+// Open data-quality issues for the admin panel (spec 13), in the admin's
+// branches: students by their HolliHop offices or their groups' branches,
+// teachers by the branches they teach in. People with no branch at all are
+// visible to super admins only.
+func (q *Queries) OpenIssues(ctx context.Context, arg OpenIssuesParams) ([]OpenIssuesRow, error) {
+	rows, err := q.db.Query(ctx, openIssues, arg.AllOffices, arg.OfficeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OpenIssuesRow
+	for rows.Next() {
+		var i OpenIssuesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.PersonKind,
+			&i.PersonID,
+			&i.Kind,
+			&i.Detail,
+			&i.FirstSeenAt,
+			&i.FirstName,
+			&i.LastName,
+			&i.PhoneRaw,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const reactivateStudents = `-- name: ReactivateStudents :many
 UPDATE students
 SET deactivated_at = NULL, activated_at = now(), updated_at = now()

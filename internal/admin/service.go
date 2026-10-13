@@ -23,19 +23,24 @@ import (
 
 	"github.com/nazacd/makonbook-api/internal/admin/admindb"
 	"github.com/nazacd/makonbook-api/internal/hollihop"
+	"github.com/nazacd/makonbook-api/internal/platform/scope"
 )
 
 // SessionTTL: an admin session lasts one working day, then they sign in again.
 const SessionTTL = 12 * time.Hour
 
 var (
-	ErrBadCredentials = errors.New("wrong HolliHop login or password")
-	ErrNotAdmin       = errors.New("this HolliHop account has no access to the admin panel")
-	ErrUnavailable    = errors.New("HolliHop isn't answering; try again in a minute")
-	ErrUnauthorized   = errors.New("not signed in")
-	ErrNotFound       = errors.New("no such admin")
-	ErrInvalid        = errors.New("a branch admin needs at least one branch")
-	ErrUnknownTeacher = errors.New("no such teacher in MakonBook (only teachers with classes are synced)")
+	ErrBadCredentials  = errors.New("wrong HolliHop login or password")
+	ErrNotAdmin        = errors.New("this HolliHop account has no access to the admin panel")
+	ErrUnavailable     = errors.New("HolliHop isn't answering; try again in a minute")
+	ErrUnauthorized    = errors.New("not signed in")
+	ErrNotFound        = errors.New("no such admin")
+	ErrInvalid         = errors.New("a branch admin needs at least one branch")
+	ErrUnknownTeacher  = errors.New("no such teacher in MakonBook (only teachers with classes are synced)")
+	ErrUnknownEmployee = errors.New("no such employee in HolliHop")
+	ErrFired           = errors.New("fired in HolliHop")
+	ErrLastSuper       = errors.New("this is the last super admin; make someone else super admin first")
+	ErrUnknownOffice   = errors.New("no such branch")
 )
 
 // Member types, as HolliHop reports them.
@@ -48,6 +53,7 @@ const (
 type HolliHop interface {
 	CheckLogin(ctx context.Context, login, password string) (hollihop.Member, error)
 	GetEmployee(ctx context.Context, id int32) (hollihop.Employee, bool, error)
+	FindEmployees(ctx context.Context, term string) ([]hollihop.Employee, error)
 }
 
 // Principal is a signed-in admin.
@@ -59,21 +65,16 @@ type Principal struct {
 	OfficeIDs  []int32 // ignored for super admins
 }
 
-// SeesAll reports whether the admin sees every branch.
-func (p Principal) SeesAll() bool { return p.Super }
+// Scope is the branches the admin may see and change.
+func (p Principal) Scope() scope.Offices {
+	if p.Super {
+		return scope.Offices{All: true}
+	}
+	return scope.Offices{IDs: p.OfficeIDs}
+}
 
 // CanSeeOffice reports whether the admin may see and change lessons of an office.
-func (p Principal) CanSeeOffice(officeID int32) bool {
-	if p.Super {
-		return true
-	}
-	for _, id := range p.OfficeIDs {
-		if id == officeID {
-			return true
-		}
-	}
-	return false
-}
+func (p Principal) CanSeeOffice(officeID int32) bool { return p.Scope().Has(officeID) }
 
 type Service struct {
 	pool     *pgxpool.Pool
@@ -144,11 +145,11 @@ func (s *Service) Login(ctx context.Context, login, password string) (token stri
 // now is still staff — an admin may teach nothing.
 func (s *Service) gone(ctx context.Context, m hollihop.Member) (bool, error) {
 	if m.Type == TypeTeacher {
-		gone, err := admindb.New(s.pool).TeacherFired(ctx, m.ID)
+		t, err := admindb.New(s.pool).GetTeacher(ctx, m.ID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return true, nil
 		}
-		return gone, err
+		return t.Fired, err
 	}
 	e, ok, err := s.hollihop.GetEmployee(ctx, m.ID)
 	if err != nil {
@@ -197,40 +198,129 @@ func (s *Service) Offices(ctx context.Context) ([]Office, error) {
 }
 
 // Grant gives (or changes) panel access. Super admins need no branches.
+// The person must exist and not be fired: teachers in our copy of HolliHop
+// (sign-in checks them there), employees in HolliHop itself when it's
+// configured. name, if empty, comes from there too.
 func (s *Service) Grant(ctx context.Context, memberType string, memberID int32, name string, super bool, officeIDs []int32) (admindb.AdminAccess, error) {
 	if memberType != TypeEmployee && memberType != TypeTeacher {
 		return admindb.AdminAccess{}, fmt.Errorf("member type must be %s or %s", TypeEmployee, TypeTeacher)
 	}
+	if super {
+		officeIDs = []int32{}
+	}
 	if !super && len(officeIDs) == 0 {
 		return admindb.AdminAccess{}, ErrInvalid
 	}
-	if officeIDs == nil {
-		officeIDs = []int32{}
+	if err := s.checkOffices(ctx, officeIDs); err != nil {
+		return admindb.AdminAccess{}, err
 	}
-	// Sign-in checks a teacher against our copy, so refuse one we don't have
-	// now rather than at their first sign-in.
-	if memberType == TypeTeacher {
-		if _, err := admindb.New(s.pool).TeacherFired(ctx, memberID); errors.Is(err, pgx.ErrNoRows) {
+	switch memberType {
+	case TypeTeacher:
+		t, err := admindb.New(s.pool).GetTeacher(ctx, memberID)
+		if errors.Is(err, pgx.ErrNoRows) {
 			return admindb.AdminAccess{}, ErrUnknownTeacher
 		} else if err != nil {
 			return admindb.AdminAccess{}, fmt.Errorf("load teacher: %w", err)
 		}
+		if t.Fired {
+			return admindb.AdminAccess{}, ErrFired
+		}
+		if name == "" {
+			name = t.Name
+		}
+	case TypeEmployee:
+		if s.hollihop != nil {
+			e, ok, err := s.hollihop.GetEmployee(ctx, memberID)
+			if err != nil {
+				return admindb.AdminAccess{}, fmt.Errorf("%w (%w)", ErrUnavailable, err)
+			}
+			if !ok {
+				return admindb.AdminAccess{}, ErrUnknownEmployee
+			}
+			if e.Fired {
+				return admindb.AdminAccess{}, ErrFired
+			}
+			if name == "" {
+				name = strings.TrimSpace(e.FirstName + " " + e.LastName)
+			}
+		}
 	}
-	return admindb.New(s.pool).UpsertAccess(ctx, admindb.UpsertAccessParams{
-		MemberType: memberType, MemberID: memberID, Name: name, Super: super, OfficeIds: officeIDs,
+
+	var a admindb.AdminAccess
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := admindb.New(tx)
+		if !super {
+			if err := keepASuper(ctx, q, memberType, memberID); err != nil {
+				return err
+			}
+		}
+		var err error
+		a, err = q.UpsertAccess(ctx, admindb.UpsertAccessParams{
+			MemberType: memberType, MemberID: memberID, Name: name, Super: super, OfficeIds: officeIDs,
+		})
+		return err
 	})
+	return a, err
 }
 
 // Revoke takes panel access away; their sessions end with it.
 func (s *Service) Revoke(ctx context.Context, memberType string, memberID int32) error {
-	n, err := admindb.New(s.pool).DeleteAccess(ctx, admindb.DeleteAccessParams{MemberType: memberType, MemberID: memberID})
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := admindb.New(tx)
+		if err := keepASuper(ctx, q, memberType, memberID); err != nil {
+			return err
+		}
+		n, err := q.DeleteAccess(ctx, admindb.DeleteAccessParams{MemberType: memberType, MemberID: memberID})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
+}
+
+// keepASuper refuses to take super admin away from the last one, which
+// would leave nobody able to manage the list from the panel.
+func keepASuper(ctx context.Context, q *admindb.Queries, memberType string, memberID int32) error {
+	supers, err := q.LockSupers(ctx)
+	if err != nil {
+		return fmt.Errorf("load super admins: %w", err)
+	}
+	if len(supers) == 1 && supers[0].MemberType == memberType && supers[0].MemberID == memberID {
+		return ErrLastSuper
+	}
+	return nil
+}
+
+func (s *Service) checkOffices(ctx context.Context, ids []int32) error {
+	all, err := s.Offices(ctx)
 	if err != nil {
 		return err
 	}
-	if n == 0 {
-		return ErrNotFound
+	known := make(map[int32]bool, len(all))
+	for _, o := range all {
+		known[o.ID] = true
+	}
+	for _, id := range ids {
+		if !known[id] {
+			return fmt.Errorf("%w: %d", ErrUnknownOffice, id)
+		}
 	}
 	return nil
+}
+
+// FindStaff searches HolliHop's employees, to grant one access.
+func (s *Service) FindStaff(ctx context.Context, term string) ([]hollihop.Employee, error) {
+	if s.hollihop == nil {
+		return nil, ErrUnavailable
+	}
+	found, err := s.hollihop.FindEmployees(ctx, term)
+	if err != nil {
+		return nil, fmt.Errorf("%w (%w)", ErrUnavailable, err)
+	}
+	return found, nil
 }
 
 // List returns the access list.

@@ -9,14 +9,24 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/nazacd/makonbook-api/internal/attendance"
 	"github.com/nazacd/makonbook-api/internal/hollihop"
+	"github.com/nazacd/makonbook-api/internal/lessons"
 	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
 	"github.com/nazacd/makonbook-api/internal/platform/testdb"
 )
+
+var tashkent, _ = time.LoadLocation("Asia/Tashkent")
+
+func day(s string) time.Time {
+	t, _ := time.Parse(time.DateOnly, s)
+	return t
+}
 
 // fakeHolliHop: login "<name>" with password "pw-<name>".
 type fakeHolliHop struct {
@@ -34,6 +44,16 @@ func (f *fakeHolliHop) CheckLogin(_ context.Context, login, password string) (ho
 		return hollihop.Member{}, hollihop.ErrBadCredentials
 	}
 	return m, nil
+}
+
+func (f *fakeHolliHop) FindEmployees(_ context.Context, term string) ([]hollihop.Employee, error) {
+	var out []hollihop.Employee
+	for _, e := range f.employees {
+		if strings.Contains(e.FirstName+" "+e.LastName, term) {
+			out = append(out, e)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeHolliHop) GetEmployee(_ context.Context, id int32) (hollihop.Employee, bool, error) {
@@ -55,14 +75,35 @@ func setup(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	item := func(id int32, teacher int32) people.ScheduleItem {
+		return people.ScheduleItem{ID: id, BeginTime: 14 * time.Hour, EndTime: 15 * time.Hour, Weekdays: 1, TeacherIDs: []int32{teacher}}
+	}
 	_, err = people.Apply(t.Context(), tx, people.Snapshot{
 		Today:            time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC),
 		StudentsComplete: true,
 		Offices:          []people.Office{{ID: 3, Name: "NOVZA"}, {ID: 4, Name: "MINOR"}, {ID: 5, Name: "CHILONZOR"}},
 		// The sync stores only teachers with classes.
-		Groups: []people.Group{{ID: 100, Name: "SAT MATH", LearningType: "GROUP", OfficeID: 5,
-			Schedule: []people.ScheduleItem{{ID: 1, BeginTime: 14 * time.Hour, EndTime: 15 * time.Hour, Weekdays: 1, TeacherIDs: []int32{10}}}}},
-		Teachers: []people.Teacher{{ID: 10, FirstName: "Ali", LastName: "Valiyev", PhoneRaw: "+998901000010"}},
+		Groups: []people.Group{
+			{ID: 100, Name: "SAT MATH", LearningType: "GROUP", OfficeID: 5, Schedule: []people.ScheduleItem{item(1, 10)}},
+			{ID: 101, Name: "SAT ENGLISH", LearningType: "GROUP", OfficeID: 3, Schedule: []people.ScheduleItem{item(2, 11)}},
+		},
+		Teachers: []people.Teacher{
+			{ID: 10, FirstName: "Ali", LastName: "Valiyev", PhoneRaw: "+998901000010"},
+			{ID: 11, FirstName: "Bek", LastName: "Tursunov"}, // no phone: an issue in NOVZA
+		},
+		// Phone problems: one student in NOVZA, one in CHILONZOR.
+		Students: []people.Student{
+			{ClientID: 1, FirstName: "Aziz", LastName: "Karimov", StatusID: people.StatusStudying, OfficeIDs: []int32{3}},
+			{ClientID: 2, FirstName: "Dilya", LastName: "Saidova", PhoneRaw: "123", StatusID: people.StatusStudying, OfficeIDs: []int32{5}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	monday := day("2026-10-12")
+	err = lessons.ApplyDays(t.Context(), tx, monday, monday, []lessons.Day{
+		{GroupID: 100, Date: monday, Minutes: 60, ScheduleItemIDs: []int32{1}},
+		{GroupID: 101, Date: monday, Minutes: 60, ScheduleItemIDs: []int32{2}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +121,10 @@ func setup(t *testing.T) *env {
 			"teacher": {ID: 10, Type: TypeTeacher, FirstName: "Ali", LastName: "Valiyev"},
 			"student": {ID: 77, Type: "Student"},
 		},
-		employees: map[int32]hollihop.Employee{1: {ID: 1}, 2: {ID: 2}, 3: {ID: 3, Fired: true}, 4: {ID: 4}},
+		employees: map[int32]hollihop.Employee{
+			1: {ID: 1, FirstName: "Boss", LastName: "B"}, 2: {ID: 2, FirstName: "Nodira", LastName: "N"},
+			3: {ID: 3, FirstName: "Former", LastName: "F"}, 4: {ID: 4, FirstName: "Recep", LastName: "R", Position: "Receptionist"},
+		},
 	}
 	svc := NewService(pool, hh)
 	for _, g := range []struct {
@@ -98,8 +142,14 @@ func setup(t *testing.T) *env {
 			t.Fatal(err)
 		}
 	}
+	hh.employees[3] = hollihop.Employee{ID: 3, Fired: true} // fired after being given access
+
+	lessonsSvc := lessons.NewService(pool, tashkent)
+	panel := Panel{
+		Lessons: lessonsSvc, Attendance: attendance.NewService(pool, lessonsSvc), People: people.NewDirectory(pool), Location: tashkent,
+	}
 	mux := http.NewServeMux()
-	NewHandler(svc, false, false).Register(mux)
+	NewHandler(svc, panel, false, false).Register(mux)
 	srv := httptest.NewServer(httpx.Chain(mux, httpx.WithRequestContext(slog.New(slog.NewTextHandler(io.Discard, nil)))))
 	t.Cleanup(srv.Close)
 	return &env{t: t, srv: srv, svc: svc, hh: hh}
@@ -250,10 +300,10 @@ func TestSignInRateLimit(t *testing.T) {
 
 func TestPrincipalScope(t *testing.T) {
 	branch := Principal{OfficeIDs: []int32{3, 4}}
-	if !branch.CanSeeOffice(3) || branch.CanSeeOffice(5) || branch.SeesAll() {
+	if !branch.CanSeeOffice(3) || branch.CanSeeOffice(5) || branch.Scope().All {
 		t.Error("branch admin scope")
 	}
-	if super := (Principal{Super: true}); !super.CanSeeOffice(5) || !super.SeesAll() {
+	if super := (Principal{Super: true}); !super.CanSeeOffice(5) || !super.Scope().All {
 		t.Error("super admin scope")
 	}
 }
