@@ -43,6 +43,7 @@ Access (except placement) is limited to people who are active in HolliHop.
 | D15 | **Force update**: the API exposes a minimum supported app version; older apps are blocked with an "update the app" screen. | Phase 1. |
 | D16 | Students see their own **attendance table** in the app. Marks come from **HolliHop** (synced read-only, so history before the app and admins' corrections are included), with **late** added from the app's scans. | Phase 2; see 8.7. |
 | D17 | **Billing**: teachers only decide present/absent. An absence is **billed by default**; only admins make it unbilled (when a student informs them), in HolliHop. The app never sends "not billed". | See 8.6. |
+| D18 | **Admin sign-in uses HolliHop credentials.** HolliHop checks the login and password (`GetMemberAuthKey`); MakonBook stores neither, nor the key HolliHop returns. HolliHop has no roles, so an **access list** in our DB says who may use the panel: **super admins** (every branch, manage the list) or **branch admins** limited to any set of offices — enforced in every admin query, not only in the page. Fired staff are refused at sign-in; removing someone from the list ends their sessions at once. | First grant is a server command (`makonbook admin grant`). |
 
 ## 3. System overview
 
@@ -245,6 +246,8 @@ Sync `StudentAgents` mobiles; one parent account ↔ many children; see attendan
 
 Vite + React + TypeScript + TanStack Query + client generated from `api/openapi.yaml`. Served as static files by the edge nginx (`admin.makonbook.uz`). Lives in `web/admin/` in this repo so it shares the OpenAPI contract.
 
+**Access (D18).** Sign-in with the HolliHop login and password; the session is an HttpOnly, SameSite=Strict cookie (`mb_admin`, 12 h) and every change also needs the `X-MakonBook-Admin` header, which another site's page can't add — so the cookie alone is never enough (CSRF). Sign-in is rate-limited per network and per login name. A branch admin sees and changes only lessons, groups and people of their offices; a super admin sees all and manages the access list. Access is managed with `makonbook admin find|offices|list|grant|revoke` until the panel has a page for it.
+
 Phase 1 pages: login · sync status & run history (approve guarded runs) · **data quality** (blank/invalid/duplicate phones, teachers without phone) · students / teachers / groups (read-only mirror) · reset password · revoke sessions.
 Phase 2: attendance by group/date · teacher override report · HolliHop write errors.
 Phase 3: content authoring (9.4).
@@ -369,8 +372,11 @@ GET  /v1/practice/tests                catalog
 GET  /v1/practice/tests/{id}/package   → signed URL to versioned package
 POST /v1/practice/attempts             idempotent by client UUID
 
-# admin
-/v1/admin/...                          sync runs, data quality, people, reset, attendance, content
+# admin (cookie session, D18)
+POST /v1/admin/login                   {login, password} → HolliHop checks; access list; sets mb_admin
+POST /v1/admin/logout
+GET  /v1/admin/me                      name, super, branches they can see
+/v1/admin/...                          attendance, corrections, sync runs, data quality, people, content
 ```
 
 ## 18. Mobile app changes

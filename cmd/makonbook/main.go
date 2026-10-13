@@ -53,7 +53,7 @@ commands:
   reset-password student|teacher <id>
                             back to the default password (last 4 digits of the phone),
                             unlock the account and log out everywhere
-`
+` + adminUsage
 
 var errUsage = errors.New("invalid usage")
 
@@ -106,6 +106,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return worker(ctx, cfg, log)
 	case "sync":
 		return syncOnce(ctx, cfg, log, hhsync.Mode(sub), len(args) == 3, stdout)
+	case "admin":
+		return runAdmin(ctx, cfg, args, stdout)
 	case "reset-password":
 		id, _ := strconv.ParseInt(arg, 10, 32) // validated in validArgs
 		return resetPassword(ctx, cfg, sub, int32(id), stdout)
@@ -125,6 +127,8 @@ func validArgs(args []string) bool {
 	case len(args) == 3 && args[0] == "reset-password":
 		_, err := strconv.ParseInt(args[2], 10, 32)
 		return (args[1] == people.KindStudent || args[1] == people.KindTeacher) && err == nil
+	case len(args) >= 2 && args[0] == "admin":
+		return validAdminArgs(args)
 	case (len(args) == 2 || len(args) == 3) && args[0] == "sync":
 		modeOK := args[1] == string(hhsync.ModeFull) || args[1] == string(hhsync.ModeIncremental)
 		return modeOK && (len(args) == 2 || args[2] == "--allow-mass-change")
@@ -161,7 +165,13 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", cfg.HTTPAddr, err)
 	}
-	handler := app.Handler(app.Deps{Pool: pool, Log: log, Location: cfg.Location, TrustProxy: cfg.TrustProxy})
+	deps := app.Deps{Pool: pool, Log: log, Location: cfg.Location, TrustProxy: cfg.TrustProxy, SecureCookies: cfg.Env == config.EnvProduction}
+	if cfg.HolliHopBaseURL != "" && cfg.HolliHopAuthKey != "" {
+		deps.HolliHop = hollihop.New(cfg.HolliHopBaseURL, cfg.HolliHopAuthKey)
+	} else {
+		log.Warn("HOLLIHOP_BASE_URL/HOLLIHOP_AUTHKEY not set: admin sign-in is unavailable")
+	}
+	handler := app.Handler(deps)
 	return httpx.Serve(ctx, ln, handler, log, cfg.ShutdownTimeout)
 }
 

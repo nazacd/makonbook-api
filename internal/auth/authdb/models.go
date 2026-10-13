@@ -8,6 +8,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AdminAccess struct {
+	MemberType  string
+	MemberID    int32
+	Name        string
+	Super       bool
+	OfficeIds   []int32
+	GrantedAt   pgtype.Timestamptz
+	LastLoginAt pgtype.Timestamptz
+}
+
+type AdminSession struct {
+	ID         int64
+	TokenHash  []byte
+	MemberType string
+	MemberID   int32
+	CreatedAt  pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	RevokedAt  pgtype.Timestamptz
+}
+
 type AppSetting struct {
 	Key       string
 	Value     []byte

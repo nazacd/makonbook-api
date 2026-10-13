@@ -17,6 +17,13 @@ info:
     everything else answers 403 `password_change_required`. Any 401 means the
     session is gone (logout, password changed elsewhere, person no longer
     active): send the user back to the login screen.
+
+    Admin panel (`/v1/admin/*`): admins sign in with their HolliHop login and
+    password, which HolliHop checks; MakonBook stores neither. The session is
+    an HttpOnly `mb_admin` cookie (SameSite=Strict, 12 h). Every admin request
+    that changes something — and the sign-in itself — must carry the
+    `X-MakonBook-Admin` header (any value); without it the answer is 403
+    `forbidden`. Branch admins only ever see their own branches' data.
 servers:
   - url: http://localhost:8080
     description: Local development
@@ -407,13 +414,110 @@ paths:
           description: "`invalid_code` (not a MakonBook code, or forged), `code_expired` (scan the current one)"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/admin/login:
+    post:
+      summary: Admin sign-in with HolliHop credentials
+      description: |
+        HolliHop checks the login and password; then the person must be on
+        the admin access list and not fired. Sets the `mb_admin` cookie.
+      operationId: adminLogin
+      tags: [admin]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminLoginRequest" }
+      responses:
+        "200":
+          description: Signed in
+          headers:
+            Set-Cookie: { schema: { type: string }, description: "`mb_admin` session cookie" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminProfile" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401":
+          description: "`invalid_credentials` — HolliHop refused the login or password"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "403":
+          description: "`not_admin` (right credentials, but no panel access, or fired), `forbidden` (no `X-MakonBook-Admin` header)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429":
+          description: "`rate_limited` — 20 attempts per network or 5 per login name in 15 min. `Retry-After` gives seconds."
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "503":
+          description: "`unavailable` — HolliHop isn't answering"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/admin/logout:
+    post:
+      summary: End this admin session
+      operationId: adminLogout
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
+      responses:
+        "204": { description: Signed out; the cookie is cleared }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/me:
+    get:
+      summary: The signed-in admin and the branches they can see
+      operationId: adminMe
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminProfile" }
+        "401": { $ref: "#/components/responses/Error" }
+
 components:
   securitySchemes:
     bearer:
       type: http
       scheme: bearer
+    adminCookie:
+      type: apiKey
+      in: cookie
+      name: mb_admin
 
   schemas:
+    AdminLoginRequest:
+      type: object
+      required: [login, password]
+      properties:
+        login: { type: string, maxLength: 100, description: HolliHop login }
+        password: { type: string, maxLength: 256 }
+
+    AdminProfile:
+      type: object
+      required: [name, member_type, member_id, super, offices]
+      properties:
+        name: { type: string }
+        member_type: { type: string, enum: [Employee, Teacher], description: As HolliHop reports it }
+        member_id: { type: integer, description: HolliHop employee or teacher id }
+        super: { type: boolean, description: Sees every branch and manages the access list }
+        offices:
+          type: array
+          description: The branches this admin can see (all of them, for a super admin).
+          items: { $ref: "#/components/schemas/Office" }
+
+    Office:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: integer, description: HolliHop office id }
+        name: { type: string }
+
     LoginRequest:
       type: object
       required: [login, password]
@@ -630,6 +734,7 @@ components:
                 - device_already_used
                 - marked_absent
                 - edit_window_closed
+                - not_admin
             message:
               type: string
               description: Human-readable explanation; may change.
@@ -637,6 +742,12 @@ components:
               type: string
 
   parameters:
+    AdminCSRF:
+      name: X-MakonBook-Admin
+      in: header
+      required: true
+      description: Any value. Proves the request comes from the admin panel's own page.
+      schema: { type: string }
     SessionID:
       name: id
       in: path

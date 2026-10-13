@@ -209,12 +209,43 @@ HolliHop, also set `HOLLIHOP_ABSENT_PAYABLE=true`.
 
 To stop writing at once: `HOLLIHOP_WRITE_ENABLED=false`, `docker compose up -d`.
 
+## Admin panel access
+
+Admins sign in with their **HolliHop login and password** (HolliHop checks
+them; MakonBook stores neither). Who may sign in is our own list — HolliHop
+has no roles. Super admins see every branch; branch admins only theirs.
+
+```bash
+docker compose run --rm api admin find Nodira          # HolliHop staff → employee id
+docker compose run --rm api admin offices              # branch ids and names
+docker compose run --rm api admin grant employee 123 --super
+docker compose run --rm api admin grant employee 456 --offices NOVZA,MINOR
+docker compose run --rm api admin grant teacher 789 --offices CHILONZOR
+docker compose run --rm api admin list
+docker compose run --rm api admin revoke employee 456  # their sessions end at once
+```
+
+`grant` again with other options changes someone's access. A fired employee
+or teacher is refused at sign-in even while still on the list.
+
+Check a sign-in (needs `jq`: `apt install jq`; the `X-MakonBook-Admin` header is required; type the
+password at the prompt, don't put it in shell history):
+
+```bash
+read -rp "HolliHop login: " L; read -rsp "Password: " P; echo
+curl -s -c /tmp/mb -H 'X-MakonBook-Admin: 1' -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg l "$L" --arg p "$P" '{login:$l,password:$p}')" \
+  https://api.makonbook.uz/v1/admin/login; unset P; echo
+curl -s -b /tmp/mb https://api.makonbook.uz/v1/admin/me; rm -f /tmp/mb
+```
+
 ## Everyday operations
 
 | Task | Command (in `/opt/makonbook-api`) |
 |---|---|
 | Logs | `docker compose logs -f api` / `worker` |
 | Someone forgot their password | `docker compose run --rm api reset-password student <client id>` |
+| Who can use the admin panel | `docker compose run --rm api admin list` |
 | Sync now | `docker compose run --rm api sync incremental` |
 | Sync blocked by the mass-change guard, change is real | `docker compose run --rm api sync full --allow-mass-change` |
 | Migration state | `docker compose run --rm api migrate status` |

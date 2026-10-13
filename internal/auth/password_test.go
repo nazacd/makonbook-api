@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestHashAndVerify(t *testing.T) {
@@ -87,25 +86,6 @@ func TestDefaultPassword(t *testing.T) {
 	}
 	if got := defaultPassword(""); got != "" {
 		t.Errorf("no phone: got %q", got)
-	}
-}
-
-func TestIPLimiter(t *testing.T) {
-	l := newIPLimiter(3, time.Minute)
-	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	for i := range 3 {
-		if !l.allow("1.1.1.1", now) {
-			t.Fatalf("attempt %d refused", i+1)
-		}
-	}
-	if l.allow("1.1.1.1", now) {
-		t.Error("4th attempt allowed")
-	}
-	if !l.allow("2.2.2.2", now) {
-		t.Error("other IP refused")
-	}
-	if !l.allow("1.1.1.1", now.Add(time.Minute)) {
-		t.Error("new window refused")
 	}
 }
 

@@ -101,3 +101,23 @@ type StudentDay struct {
 	Date string `json:"Date"`
 	Pass bool   `json:"Pass"` // true = absent
 }
+
+// Member is who a HolliHop login belongs to (GetMemberAuthKey). The auth
+// key HolliHop also returns is deliberately not decoded: MakonBook never
+// keeps or uses a person's HolliHop key.
+type Member struct {
+	ID        int32  `json:"Id"`
+	Type      string `json:"Type"` // Employee, Teacher, Student, CompanyMember
+	FirstName string `json:"FirstName"`
+	LastName  string `json:"LastName"`
+}
+
+// Employee is one row of GetEmployees (staff other than teachers).
+type Employee struct {
+	ID        int32    `json:"Id"`
+	FirstName string   `json:"FirstName"`
+	LastName  string   `json:"LastName"`
+	Position  string   `json:"Position"`
+	Fired     bool     `json:"Fired"`
+	Offices   []Office `json:"Offices"`
+}
