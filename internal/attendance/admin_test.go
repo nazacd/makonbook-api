@@ -188,7 +188,8 @@ func TestOfficeLessons(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Not listed: 104 (no teacher), 102 (one-to-one, nobody on the list,
-	// old schedule) and 106 (emptied). 105 is new: listed, with nobody.
+	// old schedule), 106 (emptied) and 107 (online, not even as an issue).
+	// 105 is new: listed, with nobody.
 	var ids []int32
 	for _, l := range list {
 		ids = append(ids, l.GroupID)

@@ -5,11 +5,12 @@ import { Empty, ErrorNotice, Loading, OfficeSelect, Stat, useOfficeParam } from 
 import { addDays, isDate, longDate, schoolToday } from '../lib/dates';
 import { useNow } from '../lib/now';
 
-type Phase = 'taken' | 'open' | 'missed' | 'upcoming' | 'individual' | 'online' | 'empty';
+type Phase = 'taken' | 'open' | 'missed' | 'upcoming' | 'individual' | 'empty';
 
 function phaseOf(l: Lesson, now: number): Phase {
-  // Attendance for these stays in HolliHop.
-  if (!l.attendance_enabled) return l.learning_type === 'GROUP' ? 'online' : 'individual';
+  // Individual and pair lessons: attendance stays in HolliHop. (Online
+  // lessons never reach the panel.)
+  if (!l.attendance_enabled) return 'individual';
   if (l.session) return l.session.status === 'open' ? 'open' : 'taken';
   // Only newly opened groups come with nobody on the list; nothing to take.
   if (l.students === 0) return 'empty';
@@ -22,7 +23,6 @@ const PHASE: Record<Phase, { label: string; tone: string }> = {
   missed: { label: 'Not taken', tone: 'warning' },
   upcoming: { label: 'Upcoming', tone: '' },
   individual: { label: 'Individual', tone: 'plain' },
-  online: { label: 'Online', tone: 'plain' },
   empty: { label: 'No students', tone: 'plain' },
 };
 
