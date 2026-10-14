@@ -124,6 +124,7 @@ func setup(t *testing.T) *env {
 		employees: map[int32]hollihop.Employee{
 			1: {ID: 1, FirstName: "Boss", LastName: "B"}, 2: {ID: 2, FirstName: "Nodira", LastName: "N"},
 			3: {ID: 3, FirstName: "Former", LastName: "F"}, 4: {ID: 4, FirstName: "Recep", LastName: "R", Position: "Receptionist"},
+			5: {ID: 5, FirstName: "Second", LastName: "Super"},
 		},
 	}
 	svc := NewService(pool, hh)

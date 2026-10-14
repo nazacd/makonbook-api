@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"slices"
 	"testing"
 )
@@ -97,40 +98,82 @@ func TestAccessManagement(t *testing.T) {
 	if status, _, _ := e.do("PUT", "/v1/admin/access/employee/4", boss, map[string]any{"office_ids": []int{99}}, true); status != 400 {
 		t.Errorf("unknown branch: %d", status)
 	}
-	if status, body, _ := e.do("PUT", "/v1/admin/access/employee/3", boss, map[string]any{"super": true}, true); status != 422 || code(body) != "fired" {
+	if status, body, _ := e.do("PUT", "/v1/admin/access/employee/3", boss, map[string]any{"office_ids": []int{3}}, true); status != 422 || code(body) != "fired" {
 		t.Errorf("fired: %d %v", status, body)
 	}
-	if status, _, _ := e.do("PUT", "/v1/admin/access/employee/55", boss, map[string]any{"super": true}, true); status != 404 {
+	if status, _, _ := e.do("PUT", "/v1/admin/access/employee/55", boss, map[string]any{"office_ids": []int{3}}, true); status != 404 {
 		t.Errorf("unknown employee: %d", status)
 	}
-	if status, _, _ := e.do("PUT", "/v1/admin/access/teacher/55", boss, map[string]any{"super": true}, true); status != 404 {
+	if status, _, _ := e.do("PUT", "/v1/admin/access/teacher/55", boss, map[string]any{"office_ids": []int{3}}, true); status != 404 {
 		t.Errorf("unknown teacher: %d", status)
 	}
-	if status, _, _ := e.do("PUT", "/v1/admin/access/student/1", boss, map[string]any{"super": true}, true); status != 404 {
+	if status, _, _ := e.do("PUT", "/v1/admin/access/student/1", boss, map[string]any{"office_ids": []int{3}}, true); status != 404 {
 		t.Errorf("student: %d", status)
 	}
-	if status, _, _ := e.do("PUT", "/v1/admin/access/employee/4", boss, map[string]any{"super": true}, false); status != 403 {
+	if status, _, _ := e.do("PUT", "/v1/admin/access/employee/4", boss, map[string]any{"office_ids": []int{3}}, false); status != 403 {
 		t.Errorf("grant without CSRF header: %d", status)
 	}
 
-	// The last super admin can't be demoted or removed…
-	if status, body, _ := e.do("PUT", "/v1/admin/access/employee/1", boss, map[string]any{"office_ids": []int{3}}, true); status != 409 || code(body) != "last_super_admin" {
-		t.Errorf("demote the last super admin: %d %v", status, body)
+	// Super admins are out of the panel's reach: nobody becomes one there,
+	// and no super admin — another one, or yourself — is changed or removed.
+	if _, err := e.svc.Grant(t.Context(), TypeEmployee, 5, "Second Super", true, nil); err != nil { // the server command
+		t.Fatal(err)
 	}
-	if status, body, _ := e.do("DELETE", "/v1/admin/access/employee/1", boss, nil, true); status != 409 || code(body) != "last_super_admin" {
-		t.Errorf("remove the last super admin: %d %v", status, body)
+	for _, tc := range []struct {
+		what, method, path string
+		body               any
+	}{
+		{"make a super admin", "PUT", "/v1/admin/access/employee/4", map[string]any{"super": true}},
+		{"demote another super admin", "PUT", "/v1/admin/access/employee/5", map[string]any{"office_ids": []int{3}}},
+		{"remove another super admin", "DELETE", "/v1/admin/access/employee/5", nil},
+		{"demote yourself", "PUT", "/v1/admin/access/employee/1", map[string]any{"office_ids": []int{3}}},
+		{"remove yourself", "DELETE", "/v1/admin/access/employee/1", nil},
+	} {
+		if status, body, _ := e.do(tc.method, tc.path, boss, tc.body, true); status != 403 || code(body) != "super_admin_protected" {
+			t.Errorf("%s: %d %v", tc.what, status, body)
+		}
 	}
-	// …once there's another, they can.
-	if status, _, _ := e.do("PUT", "/v1/admin/access/employee/4", boss, map[string]any{"super": true}, true); status != 200 {
-		t.Errorf("second super admin: %d", status)
+	list, _ := e.svc.List(t.Context())
+	supers := 0
+	for _, a := range list {
+		if a.Super {
+			supers++
+		}
 	}
-	if status, _, _ := e.do("DELETE", "/v1/admin/access/employee/1", boss, nil, true); status != 200 {
-		t.Errorf("remove a super admin: %d", status)
+	if supers != 2 {
+		t.Errorf("super admins after the attempts: %d, want 2", supers)
 	}
-	if status, _, _ := e.do("GET", "/v1/admin/me", boss, nil, false); status != 401 {
+
+	// Branch admins can be removed; they're signed out at once.
+	if status, _, _ := e.do("DELETE", "/v1/admin/access/employee/2", boss, nil, true); status != 200 {
+		t.Errorf("remove a branch admin: %d", status)
+	}
+	if status, _, _ := e.do("GET", "/v1/admin/me", novza, nil, false); status != 401 {
 		t.Errorf("removed admin still signed in: %d", status)
 	}
-	if status, _, _ := e.do("DELETE", "/v1/admin/access/employee/1", "", nil, true); status != 401 {
+	if status, _, _ := e.do("DELETE", "/v1/admin/access/employee/2", boss, nil, true); status != 404 {
+		t.Errorf("remove twice: %d", status)
+	}
+	if status, _, _ := e.do("DELETE", "/v1/admin/access/employee/4", "", nil, true); status != 401 {
 		t.Errorf("signed out: %d", status)
+	}
+}
+
+// The server command can do what the panel can't, but never leaves the list
+// without a super admin.
+func TestServerGrant(t *testing.T) {
+	e := setup(t)
+	ctx := t.Context()
+	if err := e.svc.Revoke(ctx, TypeEmployee, 1); !errors.Is(err, ErrLastSuper) {
+		t.Errorf("remove the last super admin: %v", err)
+	}
+	if _, err := e.svc.Grant(ctx, TypeEmployee, 1, "", false, []int32{3}); !errors.Is(err, ErrLastSuper) {
+		t.Errorf("demote the last super admin: %v", err)
+	}
+	if _, err := e.svc.Grant(ctx, TypeEmployee, 4, "", true, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.Revoke(ctx, TypeEmployee, 1); err != nil {
+		t.Errorf("remove a super admin while another remains: %v", err)
 	}
 }

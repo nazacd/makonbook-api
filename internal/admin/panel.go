@@ -27,8 +27,8 @@ type Panel struct {
 
 // Error codes of the panel's pages (see api/openapi.yaml).
 const (
-	CodeLastSuper = "last_super_admin"
-	CodeFired     = "fired"
+	CodeSuperProtected = "super_admin_protected"
+	CodeFired          = "fired"
 )
 
 // maxReportDays bounds a report's date range.
@@ -286,6 +286,7 @@ func (h *Handler) accessList(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, r, http.StatusOK, accessResponse{Access: out})
 }
 
+// grantRequest: the panel only makes branch admins; super must be false.
 type grantRequest struct {
 	Super     bool    `json:"super"`
 	OfficeIDs []int32 `json:"office_ids"`
@@ -314,7 +315,11 @@ func (h *Handler) grant(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if _, err := h.svc.Grant(r.Context(), typ, id, "", req.Super, req.OfficeIDs); err != nil {
+	if req.Super {
+		h.accessError(w, r, ErrSuperProtected)
+		return
+	}
+	if _, err := h.svc.GrantBranch(r.Context(), typ, id, req.OfficeIDs); err != nil {
 		h.accessError(w, r, err)
 		return
 	}
@@ -327,7 +332,7 @@ func (h *Handler) revoke(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, "use /v1/admin/access/employee/{id} or /teacher/{id}")
 		return
 	}
-	if err := h.svc.Revoke(r.Context(), typ, id); err != nil {
+	if err := h.svc.RevokeBranch(r.Context(), typ, id); err != nil {
 		h.accessError(w, r, err)
 		return
 	}
@@ -340,8 +345,8 @@ func (h *Handler) accessError(w http.ResponseWriter, r *http.Request, err error)
 		httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, err.Error())
 	case errors.Is(err, ErrFired):
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeFired, err.Error())
-	case errors.Is(err, ErrLastSuper):
-		httpx.WriteError(w, r, http.StatusConflict, CodeLastSuper, err.Error())
+	case errors.Is(err, ErrSuperProtected):
+		httpx.WriteError(w, r, http.StatusForbidden, CodeSuperProtected, err.Error())
 	case errors.Is(err, ErrInvalid), errors.Is(err, ErrUnknownOffice):
 		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, err.Error())
 	case errors.Is(err, ErrUnavailable):

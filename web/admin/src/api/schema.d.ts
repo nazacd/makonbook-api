@@ -539,14 +539,18 @@ export interface paths {
         };
         get?: never;
         /**
-         * Give or change someone's panel access (super admins only)
-         * @description The name comes from HolliHop. A super admin needs no branches; a
-         *     branch admin at least one. The last super admin can't be made a
-         *     branch admin.
+         * Make someone a branch admin, or change their branches (super admins only)
+         * @description The name comes from HolliHop. The panel only manages branch admins:
+         *     it can't make anyone a super admin, nor change any super admin
+         *     (another one or yourself) — 403 `super_admin_protected`. Super admins
+         *     are managed on the server (`makonbook admin grant|revoke`).
          */
         put: operations["adminGrantAccess"];
         post?: never;
-        /** Take panel access away (super admins only); their sessions end at once */
+        /**
+         * Remove a branch admin (super admins only); their sessions end at once
+         * @description Super admins can't be removed in the panel (403 `super_admin_protected`), yourself included.
+         */
         delete: operations["adminRevokeAccess"];
         options?: never;
         head?: never;
@@ -915,7 +919,7 @@ export interface components {
                  * @description Stable machine-readable code.
                  * @enum {string}
                  */
-                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "last_super_admin" | "fired";
+                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired";
                 /** @description Human-readable explanation; may change. */
                 message: string;
                 request_id?: string;
@@ -1844,8 +1848,12 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    super?: boolean;
-                    office_ids?: number[];
+                    /**
+                     * @description Must be false or absent: super admins are made on the server
+                     * @constant
+                     */
+                    super?: false;
+                    office_ids: number[];
                 };
             };
         };
@@ -1853,9 +1861,8 @@ export interface operations {
             200: components["responses"]["AccessList"];
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
-            403: components["responses"]["Error"];
-            /** @description `not_found` — no such employee in HolliHop, or teacher in MakonBook */
-            404: {
+            /** @description `super_admin_protected` (a super admin, or `super: true`), `forbidden` (not a super admin, or no CSRF header) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1863,8 +1870,8 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `last_super_admin` */
-            409: {
+            /** @description `not_found` — no such employee in HolliHop, or teacher in MakonBook */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1904,15 +1911,6 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
-            /** @description `last_super_admin` */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Error"];
-                };
-            };
         };
     };
     adminFindStaff: {

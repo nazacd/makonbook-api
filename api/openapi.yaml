@@ -674,11 +674,12 @@ paths:
       - { name: member_type, in: path, required: true, schema: { type: string, enum: [employee, teacher] } }
       - { name: member_id, in: path, required: true, schema: { type: integer }, description: HolliHop employee or teacher id }
     put:
-      summary: Give or change someone's panel access (super admins only)
+      summary: Make someone a branch admin, or change their branches (super admins only)
       description: |
-        The name comes from HolliHop. A super admin needs no branches; a
-        branch admin at least one. The last super admin can't be made a
-        branch admin.
+        The name comes from HolliHop. The panel only manages branch admins:
+        it can't make anyone a super admin, nor change any super admin
+        (another one or yourself) — 403 `super_admin_protected`. Super admins
+        are managed on the server (`makonbook admin grant|revoke`).
       operationId: adminGrantAccess
       tags: [admin]
       security: [{ adminCookie: [] }]
@@ -690,26 +691,27 @@ paths:
           application/json:
             schema:
               type: object
+              required: [office_ids]
               properties:
-                super: { type: boolean }
-                office_ids: { type: array, items: { type: integer } }
+                super: { type: boolean, const: false, description: "Must be false or absent: super admins are made on the server" }
+                office_ids: { type: array, minItems: 1, items: { type: integer } }
       responses:
         "200": { $ref: "#/components/responses/AccessList" }
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
-        "403": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`super_admin_protected` (a super admin, or `super: true`), `forbidden` (not a super admin, or no CSRF header)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "404":
           description: "`not_found` — no such employee in HolliHop, or teacher in MakonBook"
-          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
-        "409":
-          description: "`last_super_admin`"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "422":
           description: "`fired` in HolliHop"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "503": { $ref: "#/components/responses/Error" }
     delete:
-      summary: Take panel access away (super admins only); their sessions end at once
+      summary: Remove a branch admin (super admins only); their sessions end at once
+      description: Super admins can't be removed in the panel (403 `super_admin_protected`), yourself included.
       operationId: adminRevokeAccess
       tags: [admin]
       security: [{ adminCookie: [] }]
@@ -720,9 +722,6 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
-        "409":
-          description: "`last_super_admin`"
-          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
   /v1/admin/staff:
     get:
@@ -1156,7 +1155,7 @@ components:
                 - edit_window_closed
                 - not_admin
                 - set_by_admin
-                - last_super_admin
+                - super_admin_protected
                 - fired
             message:
               type: string

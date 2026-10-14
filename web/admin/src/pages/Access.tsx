@@ -12,8 +12,8 @@ const memberOf = (a: Access): Member => ({ type: a.member_type === 'Teacher' ? '
 function grantError(error: unknown): string {
   if (error instanceof ApiError) {
     switch (error.code) {
-      case 'last_super_admin':
-        return 'They’re the last super admin. Make someone else super admin first.';
+      case 'super_admin_protected':
+        return 'Super admins can’t be changed or removed in the panel; that’s done on the server.';
       case 'fired':
         return 'HolliHop lists this person as fired.';
       case 'not_found':
@@ -47,11 +47,14 @@ export function AccessPage() {
       <div className="page-head">
         <div>
           <h1>Admins</h1>
-          <p className="muted">They sign in with their own HolliHop login. Branch admins see only their branches.</p>
+          <p className="muted">
+            They sign in with their own HolliHop login. Branch admins see only their branches. Super admins are added and
+            removed on the server, not here.
+          </p>
         </div>
         {editing === null && (
           <button className="btn" onClick={() => setEditing('new')}>
-            Add admin
+            Add branch admin
           </button>
         )}
       </div>
@@ -114,14 +117,18 @@ export function AccessPage() {
                     </td>
                     <td className="small muted">{a.last_login_at ? dateTime(a.last_login_at) : 'Never'}</td>
                     <td className="nowrap" style={{ textAlign: 'right' }}>
-                      <span className="toolbar" style={{ justifyContent: 'flex-end' }}>
-                        <button className="btn secondary small" onClick={() => setEditing(memberOf(a))}>
-                          Change
-                        </button>
-                        <button className="btn danger small" disabled={revoke.isPending} onClick={() => remove(a)}>
-                          Remove
-                        </button>
-                      </span>
+                      {a.super ? (
+                        <span className="small faint">Managed on the server</span>
+                      ) : (
+                        <span className="toolbar" style={{ justifyContent: 'flex-end' }}>
+                          <button className="btn secondary small" onClick={() => setEditing(memberOf(a))}>
+                            Change
+                          </button>
+                          <button className="btn danger small" disabled={revoke.isPending} onClick={() => remove(a)}>
+                            Remove
+                          </button>
+                        </span>
+                      )}
                     </td>
                   </tr>
                 );
@@ -153,11 +160,10 @@ function AccessForm({
   onDone: () => void;
 }) {
   const [picked, setPicked] = useState<Member | null>(member);
-  const [isSuper, setSuper] = useState(initial?.super ?? false);
   const [officeIds, setOfficeIds] = useState<number[]>(initial?.offices.map((o) => o.id) ?? []);
   const grant = useGrant();
 
-  const valid = picked !== null && (isSuper || officeIds.length > 0);
+  const valid = picked !== null && officeIds.length > 0;
   const toggle = (id: number) => setOfficeIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
 
   return (
@@ -165,10 +171,10 @@ function AccessForm({
       className="panel"
       onSubmit={(e) => {
         e.preventDefault();
-        if (picked && valid) grant.mutate({ member: picked, super: isSuper, officeIds }, { onSuccess: onDone });
+        if (picked && valid) grant.mutate({ member: picked, officeIds }, { onSuccess: onDone });
       }}>
       <div className="card-head" style={{ margin: 0 }}>
-        <h2>{member ? `Change ${member.name || 'access'}` : 'Add an admin'}</h2>
+        <h2>{member ? `Change ${member.name || 'access'}` : 'Add a branch admin'}</h2>
         <button type="button" className="btn link" onClick={onDone}>
           Cancel
         </button>
@@ -177,31 +183,16 @@ function AccessForm({
       {!member && <PersonPicker picked={picked} onPick={setPicked} />}
 
       <div className="field">
-        <label>Access</label>
+        <label>Branches</label>
         <div className="checks">
-          <label className="check">
-            <input type="radio" name="kind" checked={!isSuper} onChange={() => setSuper(false)} /> Branch admin
-          </label>
-          <label className="check">
-            <input type="radio" name="kind" checked={isSuper} onChange={() => setSuper(true)} /> Super admin — every branch, manages
-            admins
-          </label>
+          {offices.map((o) => (
+            <label key={o.id} className="check">
+              <input type="checkbox" checked={officeIds.includes(o.id)} onChange={() => toggle(o.id)} /> {o.name}
+            </label>
+          ))}
         </div>
+        {officeIds.length === 0 && <span className="small faint">Pick at least one branch.</span>}
       </div>
-
-      {!isSuper && (
-        <div className="field">
-          <label>Branches</label>
-          <div className="checks">
-            {offices.map((o) => (
-              <label key={o.id} className="check">
-                <input type="checkbox" checked={officeIds.includes(o.id)} onChange={() => toggle(o.id)} /> {o.name}
-              </label>
-            ))}
-          </div>
-          {officeIds.length === 0 && <span className="small faint">Pick at least one branch.</span>}
-        </div>
-      )}
 
       {grant.isError && <div className="field-error" role="alert">{grantError(grant.error)}</div>}
 

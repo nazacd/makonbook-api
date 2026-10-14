@@ -52,6 +52,23 @@ func (q *Queries) DeleteAccess(ctx context.Context, arg DeleteAccessParams) (int
 	return result.RowsAffected(), nil
 }
 
+const deleteBranchAccess = `-- name: DeleteBranchAccess :execrows
+DELETE FROM admin_access WHERE member_type = $1 AND member_id = $2 AND NOT super
+`
+
+type DeleteBranchAccessParams struct {
+	MemberType string
+	MemberID   int32
+}
+
+func (q *Queries) DeleteBranchAccess(ctx context.Context, arg DeleteBranchAccessParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteBranchAccess, arg.MemberType, arg.MemberID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getAccess = `-- name: GetAccess :one
 
 SELECT member_type, member_id, name, super, office_ids, granted_at, last_login_at FROM admin_access WHERE member_type = $1 AND member_id = $2
@@ -272,6 +289,45 @@ func (q *Queries) UpsertAccess(ctx context.Context, arg UpsertAccessParams) (Adm
 		arg.MemberID,
 		arg.Name,
 		arg.Super,
+		arg.OfficeIds,
+	)
+	var i AdminAccess
+	err := row.Scan(
+		&i.MemberType,
+		&i.MemberID,
+		&i.Name,
+		&i.Super,
+		&i.OfficeIds,
+		&i.GrantedAt,
+		&i.LastLoginAt,
+	)
+	return i, err
+}
+
+const upsertBranchAccess = `-- name: UpsertBranchAccess :one
+INSERT INTO admin_access (member_type, member_id, name, super, office_ids)
+VALUES ($1, $2, $3, false, $4::int[])
+ON CONFLICT (member_type, member_id) DO UPDATE
+SET office_ids = excluded.office_ids,
+    name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE admin_access.name END
+WHERE NOT admin_access.super
+RETURNING member_type, member_id, name, super, office_ids, granted_at, last_login_at
+`
+
+type UpsertBranchAccessParams struct {
+	MemberType string
+	MemberID   int32
+	Name       string
+	OfficeIds  []int32
+}
+
+// The panel's grant: only ever a branch admin, and never over a super admin
+// (then no row comes back). Super admins are managed on the server.
+func (q *Queries) UpsertBranchAccess(ctx context.Context, arg UpsertBranchAccessParams) (AdminAccess, error) {
+	row := q.db.QueryRow(ctx, upsertBranchAccess,
+		arg.MemberType,
+		arg.MemberID,
+		arg.Name,
 		arg.OfficeIds,
 	)
 	var i AdminAccess
