@@ -143,6 +143,10 @@ func (s *Service) TeacherLessons(ctx context.Context, teacherID int32, day time.
 	return out, nil
 }
 
+// NewGroupDays: a group whose schedule began this recently, and that nobody
+// has attended yet, is newly opened — an empty list is expected there.
+const NewGroupDays = 30
+
 // OfficeLesson is a lesson as the admin panel lists it: any teacher's, with
 // the attendance counts once a session exists.
 type OfficeLesson struct {
@@ -150,6 +154,10 @@ type OfficeLesson struct {
 	OfficeID *int32      `json:"office_id"`
 	Teachers []string    `json:"teachers"`
 	Counts   *MarkCounts `json:"counts"` // null until attendance is opened
+	// NewGroup: opened recently and nobody attended yet. Only such groups
+	// are listed with no students; other empty groups are finished in
+	// practice and appear under GroupIssues instead.
+	NewGroup bool `json:"new_group"`
 }
 
 // MarkCounts counts a session's marks.
@@ -163,12 +171,17 @@ type MarkCounts struct {
 // OfficeLessons lists every lesson on day in the given branches, by branch
 // and start time.
 func (s *Service) OfficeLessons(ctx context.Context, offices scope.Offices, day time.Time) ([]OfficeLesson, error) {
-	rows, err := s.q.OfficeLessons(ctx, lessondb.OfficeLessonsParams{Date: date(day), AllOffices: offices.All, OfficeIds: offices.List()})
+	rows, err := s.q.OfficeLessons(ctx, lessondb.OfficeLessonsParams{
+		Date: date(day), AllOffices: offices.All, OfficeIds: offices.List(), NewGroupDays: NewGroupDays,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("office lessons: %w", err)
 	}
 	out := make([]OfficeLesson, 0, len(rows))
 	for _, r := range rows {
+		if r.Students == 0 && !r.NewGroup && !r.SessionID.Valid {
+			continue // nobody on the list of an old group: see GroupIssues
+		}
 		l := OfficeLesson{
 			Lesson: Lesson{
 				Session:      sessionRef(r.SessionID, r.SessionFinished),
@@ -186,6 +199,7 @@ func (s *Service) OfficeLessons(ctx context.Context, offices scope.Offices, day 
 				LearningType: r.LearningType,
 			},
 			Teachers: r.Teachers,
+			NewGroup: r.NewGroup,
 		}
 		if r.OfficeID.Valid {
 			id := r.OfficeID.Int32
@@ -200,6 +214,78 @@ func (s *Service) OfficeLessons(ctx context.Context, offices scope.Offices, day 
 		out = append(out, l)
 	}
 	return out, nil
+}
+
+// Group problems admins should fix in HolliHop.
+const (
+	// IssueNoTeacher: lessons are scheduled, but no teacher on the schedule
+	// can take attendance (none, or only fired or unknown ones).
+	IssueNoTeacher = "no_teacher"
+	// IssueNoStudents: lessons are scheduled for a group that isn't new, and
+	// nobody is on the list — in practice a finished group whose schedule
+	// was never closed.
+	IssueNoStudents = "no_students"
+)
+
+// GroupIssue is a group whose HolliHop entry needs an admin.
+type GroupIssue struct {
+	Kind          string   `json:"kind"` // IssueNoTeacher or IssueNoStudents
+	GroupID       int32    `json:"group_id"`
+	GroupName     string   `json:"group_name"`
+	OfficeID      *int32   `json:"office_id"`
+	Office        string   `json:"office"`
+	Individual    bool     `json:"individual"`    // one-to-one or pair, not a group lesson
+	Teachers      []string `json:"teachers"`      // who can take attendance (empty for no_teacher)
+	FiredTeacher  bool     `json:"fired_teacher"` // no_teacher: the schedule names only fired or unknown teachers
+	Students      int32    `json:"students"`      // on the list of the next lesson
+	NextLesson    string   `json:"next_lesson"`
+	ScheduleSince *string  `json:"schedule_since"` // the group's earliest schedule start
+	LastAttended  *string  `json:"last_attended"`  // last lesson anyone attended (HolliHop, last 120 days)
+}
+
+// GroupIssues lists groups with lessons from today on that need an admin in
+// HolliHop, by branch and name.
+func (s *Service) GroupIssues(ctx context.Context, offices scope.Offices, today time.Time) ([]GroupIssue, error) {
+	rows, err := s.q.GroupIssues(ctx, lessondb.GroupIssuesParams{Today: date(today), AllOffices: offices.All, OfficeIds: offices.List()})
+	if err != nil {
+		return nil, fmt.Errorf("group issues: %w", err)
+	}
+	out := []GroupIssue{}
+	for _, r := range rows {
+		since, last := dateString(r.ScheduleSince), dateString(r.LastAttended)
+		newGroup := last == nil && since != nil && !r.ScheduleSince.Time.Before(today.AddDate(0, 0, -NewGroupDays))
+		kind := ""
+		switch {
+		case len(r.Teachers) == 0:
+			kind = IssueNoTeacher
+		case r.Students == 0 && !newGroup:
+			kind = IssueNoStudents
+		default:
+			continue
+		}
+		is := GroupIssue{
+			Kind: kind, GroupID: r.GroupID, GroupName: r.GroupName, Office: r.Office,
+			Individual: r.LearningType != "GROUP", Teachers: r.Teachers, FiredTeacher: len(r.Teachers) == 0 && r.ScheduledTeachers > 0,
+			Students: r.Students, NextLesson: r.NextLesson.Time.Format(time.DateOnly), ScheduleSince: since, LastAttended: last,
+		}
+		if is.Teachers == nil {
+			is.Teachers = []string{}
+		}
+		if r.OfficeID.Valid {
+			id := r.OfficeID.Int32
+			is.OfficeID = &id
+		}
+		out = append(out, is)
+	}
+	return out, nil
+}
+
+func dateString(d pgtype.Date) *string {
+	if !d.Valid {
+		return nil
+	}
+	s := d.Time.Format(time.DateOnly)
+	return &s
 }
 
 func sessionRef(id pgtype.UUID, finished bool) *SessionRef {

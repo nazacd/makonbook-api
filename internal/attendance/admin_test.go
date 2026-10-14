@@ -2,6 +2,8 @@ package attendance
 
 import (
 	"errors"
+	"maps"
+	"slices"
 	"testing"
 	"time"
 
@@ -176,15 +178,28 @@ func TestOfficeLessons(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Group 106's student attended a lesson last week, then left.
+	if _, err := e.pool.Exec(ctx, `INSERT INTO attendance_records (group_id, student_client_id, date, pass) VALUES (106, 3, '2026-10-05', false)`); err != nil {
+		t.Fatal(err)
+	}
+
 	list, err := lessonsSvc.OfficeLessons(ctx, novza, monday)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Group 104 has lessons but no teacher: not listed.
-	if len(list) != 4 || list[0].GroupID != 103 || list[1].GroupID != 100 {
-		t.Fatalf("lessons: %+v", list)
+	// Not listed: 104 (no teacher), 102 (one-to-one, nobody on the list,
+	// old schedule) and 106 (emptied). 105 is new: listed, with nobody.
+	var ids []int32
+	for _, l := range list {
+		ids = append(ids, l.GroupID)
 	}
-	l := list[1]
+	if !slices.Equal(ids, []int32{103, 105, 100, 101}) {
+		t.Fatalf("lessons: %v", ids)
+	}
+	if list[1].Students != 0 || !list[1].NewGroup || list[0].NewGroup {
+		t.Errorf("new group flags: %+v / %+v", list[1], list[0])
+	}
+	l := list[2]
 	if len(l.Teachers) != 1 || l.Teachers[0] != "Ali Valiyev" || l.Session == nil || l.Counts == nil ||
 		l.Counts.Present != 1 || l.Counts.Pending != 3 || l.OfficeID == nil || *l.OfficeID != 3 {
 		t.Errorf("group 100: %+v counts %+v", l, l.Counts)
@@ -194,6 +209,39 @@ func TestOfficeLessons(t *testing.T) {
 	}
 	if list, _ := lessonsSvc.OfficeLessons(ctx, minor, monday); len(list) != 0 {
 		t.Errorf("MINOR sees NOVZA's lessons: %+v", list)
+	}
+
+	// What admins should fix: the groups the list left out, and why.
+	issues, err := lessonsSvc.GroupIssues(ctx, novza, monday)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[int32]string{}
+	for _, is := range issues {
+		got[is.GroupID] = is.Kind
+	}
+	want := map[int32]string{102: lessons.IssueNoStudents, 104: lessons.IssueNoTeacher, 106: lessons.IssueNoStudents}
+	if !maps.Equal(got, want) {
+		t.Errorf("issues: %v, want %v", got, want)
+	}
+	for _, is := range issues {
+		switch is.GroupID {
+		case 102:
+			if !is.Individual || is.Teachers[0] != "Ali Valiyev" {
+				t.Errorf("102: %+v", is)
+			}
+		case 106:
+			if is.LastAttended == nil || *is.LastAttended != "2026-10-05" || is.NextLesson != "2026-10-12" {
+				t.Errorf("106: %+v", is)
+			}
+		case 104:
+			if is.FiredTeacher || len(is.Teachers) != 0 {
+				t.Errorf("104: %+v", is)
+			}
+		}
+	}
+	if issues, _ := lessonsSvc.GroupIssues(ctx, minor, monday); len(issues) != 0 {
+		t.Errorf("MINOR sees NOVZA's issues: %+v", issues)
 	}
 }
 

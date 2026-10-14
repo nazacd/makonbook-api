@@ -494,8 +494,10 @@ paths:
         attendance. Lesson days are kept from the day the app went live, and
         known up to 14 days ahead. Only lessons someone can take attendance
         for are listed: at least one teacher on the schedule who is in
-        MakonBook and not fired (a lesson with no teacher in HolliHop is
-        almost always a finished group whose schedule was never closed).
+        MakonBook and not fired. A lesson with nobody on the list is listed
+        only for a newly opened group (`new_group`); otherwise the group is
+        finished in practice. Both kinds of left-out groups are listed by
+        `GET /v1/admin/data-quality` for admins to fix in HolliHop.
       operationId: adminLessons
       tags: [admin]
       security: [{ adminCookie: [] }]
@@ -641,8 +643,16 @@ paths:
 
   /v1/admin/data-quality:
     get:
-      summary: People who can't sign in until their phone is fixed in HolliHop
-      description: Students by their branches or their groups' branches; teachers by the branches they teach in.
+      summary: What admins should fix in HolliHop
+      description: |
+        `groups`: groups with lessons from today on that need an admin —
+        `no_teacher` (no teacher on the schedule who can take attendance) or
+        `no_students` (nobody on the list of a group that isn't new: in
+        practice finished, but its schedule was never closed). These are
+        left out of `GET /v1/admin/lessons`.
+        `issues`: people who can't sign in until their phone is fixed —
+        students by their branches or their groups' branches, teachers by the
+        branches they teach in.
       operationId: adminDataQuality
       tags: [admin]
       security: [{ adminCookie: [] }]
@@ -655,8 +665,9 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [issues]
+                required: [groups, issues]
                 properties:
+                  groups: { type: array, items: { $ref: "#/components/schemas/GroupIssue" } }
                   issues: { type: array, items: { $ref: "#/components/schemas/DataQualityIssue" } }
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
@@ -774,8 +785,11 @@ components:
       allOf:
         - $ref: "#/components/schemas/Lesson"
         - type: object
-          required: [office_id, teachers, counts]
+          required: [office_id, teachers, counts, new_group]
           properties:
+            new_group:
+              type: boolean
+              description: Opened within 30 days and nobody has attended yet; an empty list is expected.
             office_id: { type: [integer, "null"] }
             teachers: { type: array, items: { type: string } }
             counts:
@@ -872,6 +886,23 @@ components:
         error: { type: [string, "null"] }
         created_at: { type: string, format: date-time }
         done_at: { type: [string, "null"], format: date-time }
+
+    GroupIssue:
+      type: object
+      required: [kind, group_id, group_name, office_id, office, individual, teachers, fired_teacher, students, next_lesson, schedule_since, last_attended]
+      properties:
+        kind: { type: string, enum: [no_teacher, no_students] }
+        group_id: { type: integer }
+        group_name: { type: string }
+        office_id: { type: [integer, "null"] }
+        office: { type: string }
+        individual: { type: boolean, description: One-to-one or pair lessons, not a group }
+        teachers: { type: array, items: { type: string }, description: Teachers who can take attendance (empty for no_teacher) }
+        fired_teacher: { type: boolean, description: "no_teacher: the schedule names only fired or unknown teachers" }
+        students: { type: integer, description: On the list of the next lesson }
+        next_lesson: { type: string, format: date }
+        schedule_since: { type: [string, "null"], format: date }
+        last_attended: { type: [string, "null"], format: date, description: "Last lesson anyone attended (HolliHop marks, last 120 days)" }
 
     DataQualityIssue:
       type: object

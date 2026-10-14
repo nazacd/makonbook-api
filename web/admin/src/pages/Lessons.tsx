@@ -1,15 +1,17 @@
-import { useNavigate, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 
 import { useLessons, type Lesson } from '../api/hooks';
 import { Empty, ErrorNotice, Loading, OfficeSelect, Stat, useOfficeParam } from '../components/ui';
 import { addDays, isDate, longDate, schoolToday } from '../lib/dates';
 import { useNow } from '../lib/now';
 
-type Phase = 'taken' | 'open' | 'missed' | 'upcoming' | 'off';
+type Phase = 'taken' | 'open' | 'missed' | 'upcoming' | 'off' | 'empty';
 
 function phaseOf(l: Lesson, now: number): Phase {
   if (!l.attendance_enabled) return 'off';
   if (l.session) return l.session.status === 'open' ? 'open' : 'taken';
+  // Only newly opened groups come with nobody on the list; nothing to take.
+  if (l.students === 0) return 'empty';
   return now > Date.parse(l.ends_at) ? 'missed' : 'upcoming';
 }
 
@@ -19,6 +21,7 @@ const PHASE: Record<Phase, { label: string; tone: string }> = {
   missed: { label: 'Not taken', tone: 'warning' },
   upcoming: { label: 'Upcoming', tone: '' },
   off: { label: 'Not in the app', tone: 'plain' },
+  empty: { label: 'No students', tone: 'plain' },
 };
 
 // Every lesson of a day in the admin's branches, with how attendance went.
@@ -174,6 +177,10 @@ export function LessonsPage() {
               “Not taken”: the teacher didn’t start attendance in the app. Mark that lesson in HolliHop.
             </p>
           )}
+          <p className="small faint" style={{ margin: 0 }}>
+            Groups with no teacher, or finished groups still on HolliHop’s schedule, aren’t listed here: see{' '}
+            <Link to="/issues">HolliHop issues</Link>.
+          </p>
         </>
       )}
     </div>

@@ -224,13 +224,22 @@ func (h *Handler) retryWrite(w http.ResponseWriter, r *http.Request) {
 }
 
 type dataQualityResponse struct {
-	Issues []people.OpenIssue `json:"issues"`
+	Groups []lessons.GroupIssue `json:"groups"` // groups to fix in HolliHop
+	Issues []people.OpenIssue   `json:"issues"` // people who can't sign in
 }
 
+// dataQuality is what admins should fix in HolliHop: groups (no teacher,
+// or finished but never closed) and people's phone numbers.
 func (h *Handler) dataQuality(w http.ResponseWriter, r *http.Request) {
 	sc, ok := scopeOf(r)
 	if !ok {
 		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "office_id is a number")
+		return
+	}
+	today, _ := h.day("")
+	groups, err := h.panel.Lessons.GroupIssues(r.Context(), sc, today)
+	if err != nil {
+		h.internal(w, r, "group issues", err)
 		return
 	}
 	issues, err := h.panel.People.OpenIssues(r.Context(), sc)
@@ -238,7 +247,7 @@ func (h *Handler) dataQuality(w http.ResponseWriter, r *http.Request) {
 		h.internal(w, r, "data quality", err)
 		return
 	}
-	httpx.WriteJSON(w, r, http.StatusOK, dataQualityResponse{Issues: issues})
+	httpx.WriteJSON(w, r, http.StatusOK, dataQualityResponse{Groups: groups, Issues: issues})
 }
 
 // Access is one entry of the access list.

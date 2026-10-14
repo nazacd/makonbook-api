@@ -9,7 +9,7 @@ import { meKey } from './api/hooks';
 import { Shell } from './components/Shell';
 import { AccessPage } from './pages/Access';
 import { CorrectionsPage } from './pages/Corrections';
-import { DataQualityPage } from './pages/DataQuality';
+import { IssuesPage } from './pages/Issues';
 import { LessonsPage } from './pages/Lessons';
 import { SessionPage } from './pages/Session';
 import { WritesPage } from './pages/Writes';
@@ -43,7 +43,8 @@ const router = createBrowserRouter([
       { path: 'sessions/:id', element: <SessionPage /> },
       { path: 'corrections', element: <CorrectionsPage /> },
       { path: 'writes', element: <WritesPage /> },
-      { path: 'data-quality', element: <DataQualityPage /> },
+      { path: 'issues', element: <IssuesPage /> },
+      { path: 'data-quality', element: <Navigate to="/issues" replace /> },
       { path: 'access', element: <AccessPage /> },
       { path: '*', element: <Navigate to="/lessons" replace /> },
     ],
