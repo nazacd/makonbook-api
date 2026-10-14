@@ -64,6 +64,9 @@ func seed(t *testing.T, pool *pgxpool.Pool) {
 				Schedule: []people.ScheduleItem{item(3, 18*time.Hour, 19*time.Hour, 10)}},
 			{ID: 103, Name: "Other teacher's", Discipline: "SAT MATH", LearningType: "GROUP", OfficeID: 3,
 				Schedule: []people.ScheduleItem{item(4, 9*time.Hour, 10*time.Hour, 11)}},
+			// A finished group whose schedule was never closed: no teacher.
+			{ID: 104, Name: "No teacher", Discipline: "SAT MATH", LearningType: "GROUP", OfficeID: 3,
+				Schedule: []people.ScheduleItem{{ID: 5, BeginDate: day("2026-01-01"), BeginTime: 11 * time.Hour, EndTime: 12 * time.Hour, Weekdays: 1}}},
 		},
 		Teachers: []people.Teacher{
 			{ID: 10, FirstName: "Ali", LastName: "Valiyev", PhoneRaw: "+998901000010"},
@@ -94,6 +97,7 @@ func seed(t *testing.T, pool *pgxpool.Pool) {
 		{GroupID: 101, Date: monday, Minutes: 60, ScheduleItemIDs: []int32{2}},
 		{GroupID: 102, Date: monday, Minutes: 60, ScheduleItemIDs: []int32{3}},
 		{GroupID: 103, Date: monday, Minutes: 60, ScheduleItemIDs: []int32{4}},
+		{GroupID: 104, Date: monday, Minutes: 60, ScheduleItemIDs: []int32{5}},
 	})
 	if err != nil {
 		t.Fatal(err)

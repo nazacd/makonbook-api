@@ -492,7 +492,10 @@ paths:
       description: |
         By branch, then start time. `counts` appears once a teacher opened
         attendance. Lesson days are kept from the day the app went live, and
-        known up to 14 days ahead.
+        known up to 14 days ahead. Only lessons someone can take attendance
+        for are listed: at least one teacher on the schedule who is in
+        MakonBook and not fired (a lesson with no teacher in HolliHop is
+        almost always a finished group whose schedule was never closed).
       operationId: adminLessons
       tags: [admin]
       security: [{ adminCookie: [] }]
