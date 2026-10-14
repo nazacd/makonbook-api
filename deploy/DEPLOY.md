@@ -209,6 +209,25 @@ HolliHop, also set `HOLLIHOP_ABSENT_PAYABLE=true`.
 
 To stop writing at once: `HOLLIHOP_WRITE_ENABLED=false`, `docker compose up -d`.
 
+## Admin panel (admin.makonbook.uz)
+
+The panel is built into the API image; the API serves it on the host named
+in `ADMIN_HOST`, together with `/v1/admin/*`. Once:
+
+1. **DNS:** an `A` record `admin.makonbook.uz` → the VPS's IP (same as
+   `api.makonbook.uz`). Wait until `dig +short admin.makonbook.uz` shows it.
+2. **nginx and certificate:** as in step 4, with `deploy/nginx-admin.conf`
+   and `-d admin.makonbook.uz`: append PART 1, reload, issue the
+   certificate, append PART 2, reload. Check with
+   `curl -sI http://admin.makonbook.uz/ | head -1` (301) after PART 1.
+3. **Settings:** add `ADMIN_HOST=admin.makonbook.uz` to `.env`, then
+   `docker compose up -d`.
+4. Open https://admin.makonbook.uz and sign in with a HolliHop login that has
+   access (below).
+
+`curl -s https://admin.makonbook.uz/v1/admin/me` answers 401 (not signed in),
+and only the admin API is reachable on this host.
+
 ## Admin panel access
 
 Admins sign in with their **HolliHop login and password** (HolliHop checks

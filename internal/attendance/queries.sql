@@ -89,10 +89,11 @@ FROM attendance_marks m
 JOIN attendance_sessions s ON s.id = m.session_id
 WHERE m.session_id = @session_id AND m.state <> 'pending';
 
--- A correction after the session finished replaces anything not yet sent.
+-- A correction after the session finished replaces anything not yet sent,
+-- and a failed write it makes obsolete (so it no longer asks for a person).
 -- name: SupersedePending :exec
 UPDATE hollihop_outbox SET status = 'superseded', done_at = @at
-WHERE session_id = @session_id AND student_client_id = @student_client_id AND status = 'pending';
+WHERE session_id = @session_id AND student_client_id = @student_client_id AND status IN ('pending', 'failed');
 
 -- name: EnqueueMark :exec
 INSERT INTO hollihop_outbox (session_id, group_id, student_client_id, date, pass, created_at, next_attempt_at)

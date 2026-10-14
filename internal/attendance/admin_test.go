@@ -148,6 +148,17 @@ func TestAdminWrites(t *testing.T) {
 	if err := e.svc.RetryWrite(ctx, novza, failed); !errors.Is(err, ErrNotFound) {
 		t.Errorf("retrying a pending write: %v", err)
 	}
+
+	// A failed write that a later correction replaced no longer needs a person.
+	if _, err := e.pool.Exec(ctx, `UPDATE hollihop_outbox SET status = 'failed' WHERE id = $1`, failed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.AdminSetMark(ctx, novza, office, s.ID, 1, StatePresent); err != nil { // was absent
+		t.Fatal(err)
+	}
+	if _, rows, _ := e.svc.Writes(ctx, every, []string{"failed"}); len(rows) != 0 {
+		t.Errorf("replaced failed write still listed: %+v", rows)
+	}
 }
 
 func TestOfficeLessons(t *testing.T) {

@@ -55,3 +55,28 @@ jobs:
         with:
           go-version-file: go.mod
       - run: make check-generated
+
+  admin-web:
+    name: admin panel
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web/admin
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/admin/package-lock.json
+      - run: npm ci
+      # The API types are generated from api/openapi.yaml; fail if stale.
+      - run: npm run gen && git diff --exit-code src/api/schema.d.ts
+      - run: npm run lint
+      - run: npm run build
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      # Its own module (see web/admin/go.mod), so the API's tests skip it.
+      - run: go test .
+

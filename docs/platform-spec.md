@@ -258,6 +258,8 @@ Phase 2: attendance by group/date · teacher override report · HolliHop write e
 - `GET /v1/admin/hollihop/writes?status=` — counts by status and failed / set-manually writes; `POST …/{id}/retry` re-queues a failed one. Shows whether writing is on (dry run).
 - `GET /v1/admin/data-quality` — open phone issues of their branches' students and teachers.
 - Super admins: `GET /v1/admin/access`, `PUT|DELETE /v1/admin/access/{employee|teacher}/{id}`, `GET /v1/admin/staff?q=`.
+
+**Built (web, phase 2 step 5)** — `web/admin`: sign-in; Lessons (a day's lessons by branch, attendance status and counts); a lesson's attendance with per-student correction, how each mark was set, HolliHop status and history; Teacher corrections (per teacher, "made present" first; all changes); HolliHop writes (dry-run notice, counts, failed / set by hand, retry); Data quality; Admins (super admins: add from HolliHop staff search or by teacher id, change branches, remove). Branch filter on every page for admins with several branches. Served at `ADMIN_HOST` with a strict CSP; the page never sees the session cookie.
 Phase 3: content authoring (9.4).
 
 ## 14. Backend architecture (Go)

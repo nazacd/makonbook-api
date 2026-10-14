@@ -779,6 +779,7 @@ components:
             counts:
               type: [object, "null"]
               description: Null until a teacher opens attendance.
+              required: [present, late, absent, pending]
               properties:
                 present: { type: integer }
                 late: { type: integer }
@@ -1030,6 +1031,13 @@ components:
         students: { type: integer, description: "Roster size on this date: enrollments current that day, of active students" }
         attendance_enabled: { type: boolean }
         learning_type: { type: string, example: GROUP }
+        session:
+          type: [object, "null"]
+          description: The lesson's attendance, once a teacher started it.
+          required: [id, status]
+          properties:
+            id: { type: string, format: uuid }
+            status: { type: string, enum: [open, finished] }
 
     AttendanceSession:
       type: object
