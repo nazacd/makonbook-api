@@ -25,7 +25,7 @@ export function Shell() {
     <div className="shell">
       <aside className="sidebar">
         <div className="logo">
-          <img src="/favicon.svg" alt="" />
+          <img src="/logo.png" alt="" />
           MakonBook
         </div>
         <nav className="nav" aria-label="Main">

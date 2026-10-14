@@ -11,7 +11,7 @@ import (
 func TestHandler(t *testing.T) {
 	h := handler(fstest.MapFS{
 		"index.html":           {Data: []byte("<html>panel</html>")},
-		"favicon.svg":          {Data: []byte("<svg/>")},
+		"favicon.png":          {Data: []byte("PNG")},
 		"assets/index-abc.js":  {Data: []byte("console.log(1)")},
 		"assets/index-abc.css": {Data: []byte("body{}")},
 	})
@@ -24,7 +24,7 @@ func TestHandler(t *testing.T) {
 		{"GET", "/lessons", 200, "panel", "no-cache"},                // a page route: the page
 		{"GET", "/sessions/1234-5678", 200, "panel", "no-cache"},     // ditto
 		{"GET", "/assets/index-abc.js", 200, "console", "immutable"}, // hashed build file
-		{"GET", "/favicon.svg", 200, "<svg", "no-cache"},
+		{"GET", "/favicon.png", 200, "PNG", "no-cache"},
 		{"GET", "/assets/index-old.js", 404, "", ""}, // an old build's file: not the page
 		{"GET", "/../../etc/passwd", 400, "", ""},    // never outside the build
 		{"POST", "/lessons", 405, "", ""},

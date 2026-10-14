@@ -49,7 +49,7 @@ h2 { font-size: 16px; font-weight: 600; }
   padding: 20px 12px; border-right: 1px solid var(--line); background: var(--brand);
 }
 .logo { display: flex; align-items: center; gap: 10px; padding: 0 8px 18px; font-weight: 700; font-size: 15px; }
-.logo img { width: 28px; height: 28px; }
+.logo img { width: 32px; height: 32px; object-fit: contain; }
 .nav a {
   display: block; padding: 8px 10px; border-radius: var(--radius-sm);
   color: var(--text-2); font-weight: 500;
@@ -169,7 +169,7 @@ button.chip.selected { border-color: currentColor; }
 .signin form { width: 100%; max-width: 360px; display: grid; gap: 16px; }
 .signin .card { padding: 24px; display: grid; gap: 16px; }
 .signin-head { text-align: center; display: grid; gap: 10px; justify-items: center; margin-bottom: 8px; }
-.signin-head img { width: 48px; height: 48px; }
+.signin-head img { width: 96px; height: 96px; object-fit: contain; filter: drop-shadow(0 0 28px rgba(139, 92, 246, 0.55)); margin-bottom: 4px; }
 
 /* ---- History timeline ---- */
 .timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }

@@ -34,7 +34,7 @@ export function SignIn() {
     <div className="signin">
       <form onSubmit={submit} noValidate>
         <div className="signin-head">
-          <img src="/favicon.svg" alt="" />
+          <img src="/logo.png" alt="" />
           <h1>MakonBook Admin</h1>
           <p className="muted" style={{ margin: 0 }}>
             Sign in with your HolliHop login and password.
