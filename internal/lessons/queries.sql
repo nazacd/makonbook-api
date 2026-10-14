@@ -47,6 +47,10 @@ ORDER BY min(s.begin_time), g.name;
 
 -- Every lesson on a date in the admin's branches (spec 13), with its
 -- teachers and, once attendance was taken, the marks' counts (read-only).
+-- Only lessons someone can take attendance for: at least one teacher on the
+-- day's schedule is in MakonBook and not fired. A lesson with no teacher in
+-- HolliHop is almost always a finished group whose schedule was never
+-- closed there.
 -- name: OfficeLessons :many
 SELECT g.id AS group_id, g.name AS group_name, g.discipline, g.learning_type,
        g.office_id, coalesce(o.name, '')::text AS office,
@@ -56,7 +60,8 @@ SELECT g.id AS group_id, g.name AS group_name, g.discipline, g.learning_type,
        coalesce(string_agg(DISTINCT s.classroom, ', ') FILTER (WHERE s.classroom <> ''), '')::text AS classroom,
        (SELECT coalesce(array_agg(DISTINCT t.first_name || ' ' || t.last_name), '{}')
           FROM teachers t
-         WHERE t.id IN (SELECT unnest(si.teacher_ids) FROM schedule_items si
+         WHERE NOT t.fired
+           AND t.id IN (SELECT unnest(si.teacher_ids) FROM schedule_items si
                          WHERE si.group_id = g.id AND si.id = ANY (d.schedule_item_ids))
        )::text[] AS teachers,
        (SELECT count(*)
@@ -81,4 +86,6 @@ LEFT JOIN attendance_sessions a ON a.group_id = d.group_id AND a.date = d.date
 WHERE d.date = @date::date
   AND (@all_offices::bool OR g.office_id = ANY (@office_ids::int[]))
 GROUP BY g.id, o.name, d.date, d.minutes, d.schedule_item_ids, a.id
+HAVING EXISTS (SELECT 1 FROM schedule_items si JOIN teachers t ON t.id = ANY (si.teacher_ids)
+               WHERE si.group_id = g.id AND si.id = ANY (d.schedule_item_ids) AND NOT t.fired)
 ORDER BY coalesce(o.name, ''), min(s.begin_time), g.name;

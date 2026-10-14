@@ -252,7 +252,7 @@ Phase 1 pages: login · sync status & run history (approve guarded runs) · **da
 Phase 2: attendance by group/date · teacher override report · HolliHop write errors.
 
 **Built (API, phase 2 step 4)** — every endpoint filters by the admin's branches in SQL (`internal/platform/scope`); another branch's row is "not found":
-- `GET /v1/admin/lessons?date=&office_id=` — every lesson that day, with teachers and attendance counts.
+- `GET /v1/admin/lessons?date=&office_id=` — every lesson that day, with teachers and attendance counts. Lessons nobody can take attendance for (no teacher on the schedule in HolliHop, or only fired ones) are left out: in practice they're finished groups whose schedule was never closed.
 - `GET /v1/admin/attendance/sessions/{id}` — marks, every change (`history`), and each mark's HolliHop write status. `PUT …/marks/{client_id}` — admin correction (8.4).
 - `GET /v1/admin/reports/corrections?from=&to=&teacher_id=` — per teacher: lessons opened, corrections, `made_present` (absent or not scanned → present/late); plus the 500 newest changes.
 - `GET /v1/admin/hollihop/writes?status=` — counts by status and failed / set-manually writes; `POST …/{id}/retry` re-queues a failed one. Shows whether writing is on (dry run).

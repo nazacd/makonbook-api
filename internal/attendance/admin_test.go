@@ -180,6 +180,7 @@ func TestOfficeLessons(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Group 104 has lessons but no teacher: not listed.
 	if len(list) != 4 || list[0].GroupID != 103 || list[1].GroupID != 100 {
 		t.Fatalf("lessons: %+v", list)
 	}
