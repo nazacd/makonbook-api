@@ -948,7 +948,7 @@ func (q *Queries) StudentAttendance(ctx context.Context, arg StudentAttendancePa
 
 const supersedePending = `-- name: SupersedePending :exec
 UPDATE hollihop_outbox SET status = 'superseded', done_at = $1
-WHERE session_id = $2 AND student_client_id = $3 AND status = 'pending'
+WHERE session_id = $2 AND student_client_id = $3 AND status IN ('pending', 'failed')
 `
 
 type SupersedePendingParams struct {
@@ -957,7 +957,8 @@ type SupersedePendingParams struct {
 	StudentClientID int32
 }
 
-// A correction after the session finished replaces anything not yet sent.
+// A correction after the session finished replaces anything not yet sent,
+// and a failed write it makes obsolete (so it no longer asks for a person).
 func (q *Queries) SupersedePending(ctx context.Context, arg SupersedePendingParams) error {
 	_, err := q.db.Exec(ctx, supersedePending, arg.At, arg.SessionID, arg.StudentClientID)
 	return err

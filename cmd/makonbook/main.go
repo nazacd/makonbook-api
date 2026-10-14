@@ -167,6 +167,7 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	}
 	deps := app.Deps{Pool: pool, Log: log, Location: cfg.Location, TrustProxy: cfg.TrustProxy, SecureCookies: cfg.Env == config.EnvProduction,
 		HolliHopWriteEnabled: cfg.HolliHopWriteEnabled,
+		AdminHost:            cfg.AdminHost,
 	}
 	if cfg.HolliHopBaseURL != "" && cfg.HolliHopAuthKey != "" {
 		deps.HolliHop = hollihop.New(cfg.HolliHopBaseURL, cfg.HolliHopAuthKey)

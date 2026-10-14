@@ -46,6 +46,11 @@ type Config struct {
 	// would otherwise leave absences unbilled (spec D17). Never false.
 	HolliHopAbsentPayable bool
 
+	// AdminHost is the host name the admin panel is served on (e.g.
+	// admin.makonbook.uz); empty serves no panel. On that host only the
+	// panel and /v1/admin/* are reachable.
+	AdminHost string
+
 	// Optional Telegram alerts for sync failures. Both or neither.
 	TelegramBotToken    string
 	TelegramAlertChatID string
@@ -117,6 +122,11 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if cfg.HolliHopAbsentPayable, err = boolVar(getenv, "HOLLIHOP_ABSENT_PAYABLE"); err != nil {
 		errs = append(errs, err)
+	}
+
+	cfg.AdminHost = strings.ToLower(strings.TrimSpace(getenv("ADMIN_HOST")))
+	if strings.ContainsAny(cfg.AdminHost, "/: ") {
+		errs = append(errs, fmt.Errorf("ADMIN_HOST must be a bare host name like admin.makonbook.uz, got %q", cfg.AdminHost))
 	}
 
 	cfg.TelegramBotToken = getenv("TELEGRAM_BOT_TOKEN")
