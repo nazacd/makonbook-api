@@ -378,8 +378,10 @@ export interface paths {
          *     attendance. Lesson days are kept from the day the app went live, and
          *     known up to 14 days ahead. Only lessons someone can take attendance
          *     for are listed: at least one teacher on the schedule who is in
-         *     MakonBook and not fired (a lesson with no teacher in HolliHop is
-         *     almost always a finished group whose schedule was never closed).
+         *     MakonBook and not fired. A lesson with nobody on the list is listed
+         *     only for a newly opened group (`new_group`); otherwise the group is
+         *     finished in practice. Both kinds of left-out groups are listed by
+         *     `GET /v1/admin/data-quality` for admins to fix in HolliHop.
          */
         get: operations["adminLessons"];
         put?: never;
@@ -500,8 +502,15 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * People who can't sign in until their phone is fixed in HolliHop
-         * @description Students by their branches or their groups' branches; teachers by the branches they teach in.
+         * What admins should fix in HolliHop
+         * @description `groups`: groups with lessons from today on that need an admin —
+         *     `no_teacher` (no teacher on the schedule who can take attendance) or
+         *     `no_students` (nobody on the list of a group that isn't new: in
+         *     practice finished, but its schedule was never closed). These are
+         *     left out of `GET /v1/admin/lessons`.
+         *     `issues`: people who can't sign in until their phone is fixed —
+         *     students by their branches or their groups' branches, teachers by the
+         *     branches they teach in.
          */
         get: operations["adminDataQuality"];
         put?: never;
@@ -582,6 +591,8 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         AdminLesson: components["schemas"]["Lesson"] & {
+            /** @description Opened within 30 days and nobody has attended yet; an empty list is expected. */
+            new_group: boolean;
             office_id: number | null;
             teachers: string[];
             /** @description Null until a teacher opens attendance. */
@@ -667,6 +678,31 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             done_at: string | null;
+        };
+        GroupIssue: {
+            /** @enum {string} */
+            kind: "no_teacher" | "no_students";
+            group_id: number;
+            group_name: string;
+            office_id: number | null;
+            office: string;
+            /** @description One-to-one or pair lessons */
+            individual: boolean;
+            /** @description Teachers who can take attendance (empty for no_teacher) */
+            teachers: string[];
+            /** @description no_teacher: the schedule names only fired or unknown teachers */
+            fired_teacher: boolean;
+            /** @description On the list of the next lesson */
+            students: number;
+            /** Format: date */
+            next_lesson: string;
+            /** Format: date */
+            schedule_since: string | null;
+            /**
+             * Format: date
+             * @description Last lesson anyone attended (HolliHop marks, last 120 days)
+             */
+            last_attended: string | null;
         };
         DataQualityIssue: {
             id: number;
@@ -1812,6 +1848,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        groups: components["schemas"]["GroupIssue"][];
                         issues: components["schemas"]["DataQualityIssue"][];
                     };
                 };

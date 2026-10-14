@@ -32,7 +32,7 @@ export function Shell() {
           <NavLink to="/lessons">Lessons</NavLink>
           <NavLink to="/corrections">Teacher corrections</NavLink>
           <NavLink to="/writes">HolliHop writes</NavLink>
-          <NavLink to="/data-quality">Data quality</NavLink>
+          <NavLink to="/issues">HolliHop issues</NavLink>
           {p.super && <NavLink to="/access">Admins</NavLink>}
         </nav>
         <div className="sidebar-foot">

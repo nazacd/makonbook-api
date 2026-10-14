@@ -96,6 +96,7 @@ func setup(t *testing.T) *env {
 			{ClientID: 1, FirstName: "Aziz", LastName: "Karimov", StatusID: people.StatusStudying, OfficeIDs: []int32{3}},
 			{ClientID: 2, FirstName: "Dilya", LastName: "Saidova", PhoneRaw: "123", StatusID: people.StatusStudying, OfficeIDs: []int32{5}},
 		},
+		Enrollments: []people.Enrollment{{GroupID: 101, StudentClientID: 1}, {GroupID: 100, StudentClientID: 2}},
 	})
 	if err != nil {
 		t.Fatal(err)
