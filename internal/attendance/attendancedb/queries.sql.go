@@ -88,6 +88,160 @@ func (q *Queries) CompleteRow(ctx context.Context, arg CompleteRowParams) error 
 	return err
 }
 
+const corrections = `-- name: Corrections :many
+SELECT a.id, a.at, a.actor_kind, a.from_state, a.to_state,
+       (CASE a.actor_kind
+            WHEN 'teacher' THEN coalesce(t.first_name || ' ' || t.last_name, '')
+            ELSE coalesce(a.actor_name, '')
+        END)::text AS actor_name,
+       s.id AS session_id, s.date, g.id AS group_id, g.name AS group_name,
+       a.student_client_id, coalesce(st.first_name || ' ' || st.last_name, '')::text AS student_name
+FROM attendance_audit a
+JOIN attendance_sessions s ON s.id = a.session_id
+JOIN groups g ON g.id = s.group_id
+LEFT JOIN teachers t ON a.actor_kind = 'teacher' AND t.id = a.actor_id
+LEFT JOIN students st ON st.client_id = a.student_client_id
+WHERE a.actor_kind IN ('teacher', 'admin')
+  AND s.date BETWEEN $1::date AND $2::date
+  AND ($3::bool OR g.office_id = ANY ($4::int[]))
+  AND ($5::int = 0 OR (a.actor_kind = 'teacher' AND a.actor_id = $5::int))
+ORDER BY a.at DESC, a.id DESC
+LIMIT 500
+`
+
+type CorrectionsParams struct {
+	DateFrom   pgtype.Date
+	DateTo     pgtype.Date
+	AllOffices bool
+	OfficeIds  []int32
+	TeacherID  int32
+}
+
+type CorrectionsRow struct {
+	ID              int64
+	At              pgtype.Timestamptz
+	ActorKind       string
+	FromState       string
+	ToState         string
+	ActorName       string
+	SessionID       pgtype.UUID
+	Date            pgtype.Date
+	GroupID         int32
+	GroupName       string
+	StudentClientID int32
+	StudentName     string
+}
+
+// Teachers' and admins' changes, newest first. teacher_id 0 = everyone.
+func (q *Queries) Corrections(ctx context.Context, arg CorrectionsParams) ([]CorrectionsRow, error) {
+	rows, err := q.db.Query(ctx, corrections,
+		arg.DateFrom,
+		arg.DateTo,
+		arg.AllOffices,
+		arg.OfficeIds,
+		arg.TeacherID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CorrectionsRow
+	for rows.Next() {
+		var i CorrectionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.At,
+			&i.ActorKind,
+			&i.FromState,
+			&i.ToState,
+			&i.ActorName,
+			&i.SessionID,
+			&i.Date,
+			&i.GroupID,
+			&i.GroupName,
+			&i.StudentClientID,
+			&i.StudentName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const correctionsByTeacher = `-- name: CorrectionsByTeacher :many
+SELECT t.id AS teacher_id, (t.first_name || ' ' || t.last_name)::text AS teacher_name,
+       count(*)::int AS corrections,
+       count(*) FILTER (WHERE a.from_state IN ('pending', 'absent') AND a.to_state IN ('present', 'late'))::int AS made_present,
+       count(DISTINCT a.session_id)::int AS lessons_corrected,
+       (SELECT count(*) FROM attendance_sessions s2 JOIN groups g2 ON g2.id = s2.group_id
+         WHERE s2.teacher_id = t.id AND s2.date BETWEEN $1::date AND $2::date
+           AND ($3::bool OR g2.office_id = ANY ($4::int[])))::int AS lessons_opened
+FROM attendance_audit a
+JOIN attendance_sessions s ON s.id = a.session_id
+JOIN groups g ON g.id = s.group_id
+JOIN teachers t ON t.id = a.actor_id
+WHERE a.actor_kind = 'teacher'
+  AND s.date BETWEEN $1::date AND $2::date
+  AND ($3::bool OR g.office_id = ANY ($4::int[]))
+GROUP BY t.id
+ORDER BY made_present DESC, corrections DESC, teacher_name
+`
+
+type CorrectionsByTeacherParams struct {
+	DateFrom   pgtype.Date
+	DateTo     pgtype.Date
+	AllOffices bool
+	OfficeIds  []int32
+}
+
+type CorrectionsByTeacherRow struct {
+	TeacherID        int32
+	TeacherName      string
+	Corrections      int32
+	MadePresent      int32
+	LessonsCorrected int32
+	LessonsOpened    int32
+}
+
+// Teachers' corrections per teacher, for lessons in a date range. made_present
+// counts absent or not-scanned students a teacher marked present or late:
+// the change worth a second look.
+func (q *Queries) CorrectionsByTeacher(ctx context.Context, arg CorrectionsByTeacherParams) ([]CorrectionsByTeacherRow, error) {
+	rows, err := q.db.Query(ctx, correctionsByTeacher,
+		arg.DateFrom,
+		arg.DateTo,
+		arg.AllOffices,
+		arg.OfficeIds,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CorrectionsByTeacherRow
+	for rows.Next() {
+		var i CorrectionsByTeacherRow
+		if err := rows.Scan(
+			&i.TeacherID,
+			&i.TeacherName,
+			&i.Corrections,
+			&i.MadePresent,
+			&i.LessonsCorrected,
+			&i.LessonsOpened,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createSession = `-- name: CreateSession :one
 INSERT INTO attendance_sessions (group_id, date, teacher_id, secret, starts_at, ends_at, opened_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -261,24 +415,30 @@ func (q *Queries) GetMarkForUpdate(ctx context.Context, arg GetMarkForUpdatePara
 }
 
 const getSession = `-- name: GetSession :one
-SELECT s.id, s.group_id, s.date, s.teacher_id, s.secret, s.starts_at, s.ends_at, s.opened_at, s.finished_at, s.finished_by, g.name AS group_name
+SELECT s.id, s.group_id, s.date, s.teacher_id, s.secret, s.starts_at, s.ends_at, s.opened_at, s.finished_at, s.finished_by, g.name AS group_name, g.office_id, coalesce(o.name, '')::text AS office,
+       (t.first_name || ' ' || t.last_name)::text AS teacher_name
 FROM attendance_sessions s
 JOIN groups g ON g.id = s.group_id
+LEFT JOIN offices o ON o.id = g.office_id
+JOIN teachers t ON t.id = s.teacher_id
 WHERE s.id = $1
 `
 
 type GetSessionRow struct {
-	ID         pgtype.UUID
-	GroupID    int32
-	Date       pgtype.Date
-	TeacherID  int32
-	Secret     []byte
-	StartsAt   pgtype.Timestamptz
-	EndsAt     pgtype.Timestamptz
-	OpenedAt   pgtype.Timestamptz
-	FinishedAt pgtype.Timestamptz
-	FinishedBy pgtype.Text
-	GroupName  string
+	ID          pgtype.UUID
+	GroupID     int32
+	Date        pgtype.Date
+	TeacherID   int32
+	Secret      []byte
+	StartsAt    pgtype.Timestamptz
+	EndsAt      pgtype.Timestamptz
+	OpenedAt    pgtype.Timestamptz
+	FinishedAt  pgtype.Timestamptz
+	FinishedBy  pgtype.Text
+	GroupName   string
+	OfficeID    pgtype.Int4
+	Office      string
+	TeacherName string
 }
 
 func (q *Queries) GetSession(ctx context.Context, id pgtype.UUID) (GetSessionRow, error) {
@@ -296,6 +456,9 @@ func (q *Queries) GetSession(ctx context.Context, id pgtype.UUID) (GetSessionRow
 		&i.FinishedAt,
 		&i.FinishedBy,
 		&i.GroupName,
+		&i.OfficeID,
+		&i.Office,
+		&i.TeacherName,
 	)
 	return i, err
 }
@@ -347,8 +510,8 @@ func (q *Queries) InsertAbsentAudit(ctx context.Context, arg InsertAbsentAuditPa
 }
 
 const insertAudit = `-- name: InsertAudit :exec
-INSERT INTO attendance_audit (session_id, student_client_id, actor_kind, actor_id, from_state, to_state, at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO attendance_audit (session_id, student_client_id, actor_kind, actor_id, actor_member_type, actor_name, from_state, to_state, at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 `
 
 type InsertAuditParams struct {
@@ -356,6 +519,8 @@ type InsertAuditParams struct {
 	StudentClientID int32
 	ActorKind       string
 	ActorID         pgtype.Int4
+	ActorMemberType pgtype.Text
+	ActorName       pgtype.Text
 	FromState       string
 	ToState         string
 	At              pgtype.Timestamptz
@@ -367,6 +532,8 @@ func (q *Queries) InsertAudit(ctx context.Context, arg InsertAuditParams) error 
 		arg.StudentClientID,
 		arg.ActorKind,
 		arg.ActorID,
+		arg.ActorMemberType,
+		arg.ActorName,
 		arg.FromState,
 		arg.ToState,
 		arg.At,
@@ -453,6 +620,38 @@ func (q *Queries) MarkPendingAbsent(ctx context.Context, arg MarkPendingAbsentPa
 	return items, nil
 }
 
+const requeueFailed = `-- name: RequeueFailed :execrows
+UPDATE hollihop_outbox o
+SET status = 'pending', attempts = 0, next_attempt_at = $1, done_at = NULL
+FROM groups g
+WHERE o.id = $2 AND o.status = 'failed' AND g.id = o.group_id
+  AND ($3::bool OR g.office_id = ANY ($4::int[]))
+  AND NOT EXISTS (SELECT 1 FROM hollihop_outbox n
+                  WHERE n.session_id = o.session_id AND n.student_client_id = o.student_client_id AND n.id > o.id)
+`
+
+type RequeueFailedParams struct {
+	At         pgtype.Timestamptz
+	ID         int64
+	AllOffices bool
+	OfficeIds  []int32
+}
+
+// A failed write goes back to the queue, unless a newer one for the same
+// mark replaced it.
+func (q *Queries) RequeueFailed(ctx context.Context, arg RequeueFailedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, requeueFailed,
+		arg.At,
+		arg.ID,
+		arg.AllOffices,
+		arg.OfficeIds,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const retryRow = `-- name: RetryRow :exec
 UPDATE hollihop_outbox SET next_attempt_at = $1::timestamptz, last_error = $2
 WHERE id = $3 AND status = 'pending'
@@ -529,6 +728,63 @@ func (q *Queries) SessionByLesson(ctx context.Context, arg SessionByLessonParams
 	return i, err
 }
 
+const sessionHistory = `-- name: SessionHistory :many
+
+SELECT a.student_client_id, coalesce(st.first_name || ' ' || st.last_name, '')::text AS student_name,
+       a.actor_kind, a.from_state, a.to_state, a.at,
+       (CASE a.actor_kind
+            WHEN 'student' THEN coalesce(st.first_name || ' ' || st.last_name, '')
+            WHEN 'teacher' THEN coalesce(t.first_name || ' ' || t.last_name, '')
+            WHEN 'admin' THEN coalesce(a.actor_name, '')
+            ELSE ''
+        END)::text AS actor_name
+FROM attendance_audit a
+LEFT JOIN students st ON st.client_id = a.student_client_id
+LEFT JOIN teachers t ON a.actor_kind = 'teacher' AND t.id = a.actor_id
+WHERE a.session_id = $1
+ORDER BY a.at, a.id
+`
+
+type SessionHistoryRow struct {
+	StudentClientID int32
+	StudentName     string
+	ActorKind       string
+	FromState       string
+	ToState         string
+	At              pgtype.Timestamptz
+	ActorName       string
+}
+
+// Admin panel (spec 13): always filtered to the admin's branches ------------
+// Who changed which mark, and when.
+func (q *Queries) SessionHistory(ctx context.Context, sessionID pgtype.UUID) ([]SessionHistoryRow, error) {
+	rows, err := q.db.Query(ctx, sessionHistory, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SessionHistoryRow
+	for rows.Next() {
+		var i SessionHistoryRow
+		if err := rows.Scan(
+			&i.StudentClientID,
+			&i.StudentName,
+			&i.ActorKind,
+			&i.FromState,
+			&i.ToState,
+			&i.At,
+			&i.ActorName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const sessionMarks = `-- name: SessionMarks :many
 SELECT m.student_client_id, m.state, m.source, m.scanned_at, st.first_name, st.last_name
 FROM attendance_marks m
@@ -571,6 +827,66 @@ func (q *Queries) SessionMarks(ctx context.Context, sessionID pgtype.UUID) ([]Se
 		return nil, err
 	}
 	return items, nil
+}
+
+const sessionWrites = `-- name: SessionWrites :many
+SELECT DISTINCT ON (student_client_id) student_client_id, status, last_error
+FROM hollihop_outbox
+WHERE session_id = $1
+ORDER BY student_client_id, id DESC
+`
+
+type SessionWritesRow struct {
+	StudentClientID int32
+	Status          string
+	LastError       pgtype.Text
+}
+
+// The latest write-back of each student of a session.
+func (q *Queries) SessionWrites(ctx context.Context, sessionID pgtype.UUID) ([]SessionWritesRow, error) {
+	rows, err := q.db.Query(ctx, sessionWrites, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SessionWritesRow
+	for rows.Next() {
+		var i SessionWritesRow
+		if err := rows.Scan(&i.StudentClientID, &i.Status, &i.LastError); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setMark = `-- name: SetMark :exec
+UPDATE attendance_marks
+SET state = $1, source = $2, updated_at = $3
+WHERE session_id = $4 AND student_client_id = $5
+`
+
+type SetMarkParams struct {
+	State           string
+	Source          pgtype.Text
+	At              pgtype.Timestamptz
+	SessionID       pgtype.UUID
+	StudentClientID int32
+}
+
+// A teacher's or an admin's correction (source says whose).
+func (q *Queries) SetMark(ctx context.Context, arg SetMarkParams) error {
+	_, err := q.db.Exec(ctx, setMark,
+		arg.State,
+		arg.Source,
+		arg.At,
+		arg.SessionID,
+		arg.StudentClientID,
+	)
+	return err
 }
 
 const studentAttendance = `-- name: StudentAttendance :many
@@ -647,25 +963,109 @@ func (q *Queries) SupersedePending(ctx context.Context, arg SupersedePendingPara
 	return err
 }
 
-const teacherSetMark = `-- name: TeacherSetMark :exec
-UPDATE attendance_marks
-SET state = $1, source = 'teacher', updated_at = $2
-WHERE session_id = $3 AND student_client_id = $4
+const writeCounts = `-- name: WriteCounts :many
+SELECT o.status, count(*)::int AS count
+FROM hollihop_outbox o
+JOIN groups g ON g.id = o.group_id
+WHERE ($1::bool OR g.office_id = ANY ($2::int[]))
+GROUP BY o.status
 `
 
-type TeacherSetMarkParams struct {
-	State           string
-	At              pgtype.Timestamptz
-	SessionID       pgtype.UUID
-	StudentClientID int32
+type WriteCountsParams struct {
+	AllOffices bool
+	OfficeIds  []int32
 }
 
-func (q *Queries) TeacherSetMark(ctx context.Context, arg TeacherSetMarkParams) error {
-	_, err := q.db.Exec(ctx, teacherSetMark,
-		arg.State,
-		arg.At,
-		arg.SessionID,
-		arg.StudentClientID,
-	)
-	return err
+type WriteCountsRow struct {
+	Status string
+	Count  int32
+}
+
+func (q *Queries) WriteCounts(ctx context.Context, arg WriteCountsParams) ([]WriteCountsRow, error) {
+	rows, err := q.db.Query(ctx, writeCounts, arg.AllOffices, arg.OfficeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WriteCountsRow
+	for rows.Next() {
+		var i WriteCountsRow
+		if err := rows.Scan(&i.Status, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const writes = `-- name: Writes :many
+SELECT o.id, o.session_id, o.date, o.pass, o.status, o.attempts, o.last_error, o.created_at, o.done_at,
+       g.id AS group_id, g.name AS group_name,
+       o.student_client_id, coalesce(st.first_name || ' ' || st.last_name, '')::text AS student_name
+FROM hollihop_outbox o
+JOIN groups g ON g.id = o.group_id
+LEFT JOIN students st ON st.client_id = o.student_client_id
+WHERE o.status = ANY ($1::text[])
+  AND ($2::bool OR g.office_id = ANY ($3::int[]))
+ORDER BY o.id DESC
+LIMIT 500
+`
+
+type WritesParams struct {
+	Statuses   []string
+	AllOffices bool
+	OfficeIds  []int32
+}
+
+type WritesRow struct {
+	ID              int64
+	SessionID       pgtype.UUID
+	Date            pgtype.Date
+	Pass            bool
+	Status          string
+	Attempts        int32
+	LastError       pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+	DoneAt          pgtype.Timestamptz
+	GroupID         int32
+	GroupName       string
+	StudentClientID int32
+	StudentName     string
+}
+
+func (q *Queries) Writes(ctx context.Context, arg WritesParams) ([]WritesRow, error) {
+	rows, err := q.db.Query(ctx, writes, arg.Statuses, arg.AllOffices, arg.OfficeIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WritesRow
+	for rows.Next() {
+		var i WritesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.Date,
+			&i.Pass,
+			&i.Status,
+			&i.Attempts,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.DoneAt,
+			&i.GroupID,
+			&i.GroupName,
+			&i.StudentClientID,
+			&i.StudentName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

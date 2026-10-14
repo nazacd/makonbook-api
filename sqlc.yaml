@@ -50,3 +50,11 @@ sql:
         package: attendancedb
         out: internal/attendance/attendancedb
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/admin/queries.sql
+    gen:
+      go:
+        package: admindb
+        out: internal/admin/admindb
+        sql_package: pgx/v5

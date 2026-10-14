@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/nazacd/makonbook-api/internal/lessons/lessondb"
+	"github.com/nazacd/makonbook-api/internal/platform/scope"
 )
 
 // Window is how far around today the sync mirrors lesson days: back far
@@ -123,15 +124,8 @@ func (s *Service) TeacherLessons(ctx context.Context, teacherID int32, day time.
 	}
 	out := make([]Lesson, 0, len(rows))
 	for _, r := range rows {
-		var session *SessionRef
-		if r.SessionID.Valid {
-			session = &SessionRef{ID: uuidString(r.SessionID.Bytes), Status: "open"}
-			if r.SessionFinished {
-				session.Status = "finished"
-			}
-		}
 		out = append(out, Lesson{
-			Session:      session,
+			Session:      sessionRef(r.SessionID, r.SessionFinished),
 			GroupID:      r.GroupID,
 			GroupName:    r.GroupName,
 			Discipline:   r.Discipline,
@@ -147,6 +141,76 @@ func (s *Service) TeacherLessons(ctx context.Context, teacherID int32, day time.
 		})
 	}
 	return out, nil
+}
+
+// OfficeLesson is a lesson as the admin panel lists it: any teacher's, with
+// the attendance counts once a session exists.
+type OfficeLesson struct {
+	Lesson
+	OfficeID *int32      `json:"office_id"`
+	Teachers []string    `json:"teachers"`
+	Counts   *MarkCounts `json:"counts"` // null until attendance is opened
+}
+
+// MarkCounts counts a session's marks.
+type MarkCounts struct {
+	Present int32 `json:"present"`
+	Late    int32 `json:"late"`
+	Absent  int32 `json:"absent"`
+	Pending int32 `json:"pending"`
+}
+
+// OfficeLessons lists every lesson on day in the given branches, by branch
+// and start time.
+func (s *Service) OfficeLessons(ctx context.Context, offices scope.Offices, day time.Time) ([]OfficeLesson, error) {
+	rows, err := s.q.OfficeLessons(ctx, lessondb.OfficeLessonsParams{Date: date(day), AllOffices: offices.All, OfficeIds: offices.List()})
+	if err != nil {
+		return nil, fmt.Errorf("office lessons: %w", err)
+	}
+	out := make([]OfficeLesson, 0, len(rows))
+	for _, r := range rows {
+		l := OfficeLesson{
+			Lesson: Lesson{
+				Session:      sessionRef(r.SessionID, r.SessionFinished),
+				GroupID:      r.GroupID,
+				GroupName:    r.GroupName,
+				Discipline:   r.Discipline,
+				Office:       r.Office,
+				Classroom:    r.Classroom,
+				BeginTime:    clock(r.BeginTime),
+				EndTime:      clock(r.EndTime),
+				StartsAt:     s.at(day, r.BeginTime),
+				EndsAt:       s.at(day, r.EndTime),
+				Students:     r.Students,
+				Attendance:   AttendanceEnabled(r.LearningType, r.Office),
+				LearningType: r.LearningType,
+			},
+			Teachers: r.Teachers,
+		}
+		if r.OfficeID.Valid {
+			id := r.OfficeID.Int32
+			l.OfficeID = &id
+		}
+		if l.Teachers == nil {
+			l.Teachers = []string{}
+		}
+		if l.Session != nil {
+			l.Counts = &MarkCounts{Present: r.Present, Late: r.Late, Absent: r.Absent, Pending: r.Pending}
+		}
+		out = append(out, l)
+	}
+	return out, nil
+}
+
+func sessionRef(id pgtype.UUID, finished bool) *SessionRef {
+	if !id.Valid {
+		return nil
+	}
+	ref := &SessionRef{ID: uuidString(id.Bytes), Status: "open"}
+	if finished {
+		ref.Status = "finished"
+	}
+	return ref
 }
 
 // at is the instant of a school-time clock reading on a calendar date.

@@ -2,6 +2,7 @@ package hollihop
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -217,5 +218,49 @@ func TestGetStudentDays(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].StudentClientID != 7 || len(got[0].Days) != 2 || !got[0].Days[1].Pass {
 		t.Errorf("got %+v", got)
+	}
+}
+
+func TestCheckLogin(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/GetMemberAuthKey" || r.URL.Query().Get("authkey") != testKey {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("password") != "" {
+			t.Error("password sent in the URL")
+		}
+		switch r.PostForm.Get("password") {
+		case "right":
+			_, _ = w.Write([]byte(`{"Id":42,"Type":"Employee","AuthKey":"secret-key","FirstName":"Dilnoza","LastName":"R"}`))
+		case "wrong":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"Error":"Неверный логин или пароль."}`))
+		default:
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`<html>bad gateway</html>`))
+		}
+	}))
+	defer srv.Close()
+	c := New(srv.URL, testKey, WithRetry(3, time.Millisecond))
+
+	m, err := c.CheckLogin(t.Context(), "dilnoza", "right")
+	if err != nil || m.ID != 42 || m.Type != "Employee" {
+		t.Errorf("right password: %+v %v", m, err)
+	}
+	if _, err := c.CheckLogin(t.Context(), "dilnoza", "wrong"); !errors.Is(err, ErrBadCredentials) {
+		t.Errorf("wrong password: %v", err)
+	}
+	calls.Store(0)
+	_, err = c.CheckLogin(t.Context(), "dilnoza", "down")
+	if err == nil || errors.Is(err, ErrBadCredentials) || calls.Load() != 1 {
+		t.Errorf("HolliHop down: %v after %d calls (want one, no retry)", err, calls.Load())
+	}
+	if strings.Contains(err.Error(), testKey) {
+		t.Error("error leaks the auth key")
 	}
 }

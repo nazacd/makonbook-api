@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
+	"github.com/nazacd/makonbook-api/internal/platform/ratelimit"
 )
 
 // Error codes specific to auth (see api/openapi.yaml).
@@ -34,7 +35,7 @@ const (
 
 type Handler struct {
 	svc        *Service
-	limiter    *ipLimiter
+	limiter    *ratelimit.Limiter
 	trustProxy bool
 	location   *time.Location // school time zone, for "today"
 }
@@ -44,7 +45,7 @@ type Handler struct {
 func NewHandler(svc *Service, location *time.Location, trustProxy bool) *Handler {
 	return &Handler{
 		svc:        svc,
-		limiter:    newIPLimiter(ipLimit, loginWindow),
+		limiter:    ratelimit.New(ipLimit, loginWindow),
 		trustProxy: trustProxy,
 		location:   location,
 	}
@@ -114,7 +115,7 @@ type loginResponse struct {
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
-	if !h.limiter.allow(httpx.ClientIP(r, h.trustProxy), time.Now()) {
+	if !h.limiter.Allow(httpx.ClientIP(r, h.trustProxy), time.Now()) {
 		w.Header().Set("Retry-After", strconv.Itoa(int(loginWindow.Seconds())))
 		httpx.WriteError(w, r, http.StatusTooManyRequests, httpx.CodeRateLimited, "too many login attempts from this network, try again later")
 		return

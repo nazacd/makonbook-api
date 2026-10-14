@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/nazacd/makonbook-api/internal/people/peopledb"
+	"github.com/nazacd/makonbook-api/internal/platform/scope"
 )
 
 // ErrNotFound means no stored person matches.
@@ -211,4 +212,34 @@ func dateString(d pgtype.Date) string {
 		return ""
 	}
 	return d.Time.Format(time.DateOnly)
+}
+
+// OpenIssue is an open data-quality problem, as the admin panel lists it: a
+// person who can't sign in until an admin fixes their phone in HolliHop.
+type OpenIssue struct {
+	ID         int64     `json:"id"`
+	PersonKind string    `json:"person_kind"` // student or teacher
+	PersonID   int32     `json:"person_id"`   // HolliHop client id or teacher id
+	FirstName  string    `json:"first_name"`
+	LastName   string    `json:"last_name"`
+	Phone      string    `json:"phone"` // as typed in HolliHop
+	Kind       string    `json:"kind"`  // phone_missing, phone_invalid, phone_duplicate
+	Detail     string    `json:"detail"`
+	Since      time.Time `json:"since"`
+}
+
+// OpenIssues lists open data-quality issues in the given branches.
+func (d *Directory) OpenIssues(ctx context.Context, offices scope.Offices) ([]OpenIssue, error) {
+	rows, err := d.q.OpenIssues(ctx, peopledb.OpenIssuesParams{AllOffices: offices.All, OfficeIds: offices.List()})
+	if err != nil {
+		return nil, fmt.Errorf("open issues: %w", err)
+	}
+	out := make([]OpenIssue, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, OpenIssue{
+			ID: r.ID, PersonKind: r.PersonKind, PersonID: r.PersonID, FirstName: r.FirstName, LastName: r.LastName,
+			Phone: r.PhoneRaw, Kind: r.Kind, Detail: r.Detail, Since: r.FirstSeenAt.Time,
+		})
+	}
+	return out, nil
 }

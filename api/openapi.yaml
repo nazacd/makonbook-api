@@ -17,6 +17,13 @@ info:
     everything else answers 403 `password_change_required`. Any 401 means the
     session is gone (logout, password changed elsewhere, person no longer
     active): send the user back to the login screen.
+
+    Admin panel (`/v1/admin/*`): admins sign in with their HolliHop login and
+    password, which HolliHop checks; MakonBook stores neither. The session is
+    an HttpOnly `mb_admin` cookie (SameSite=Strict, 12 h). Every admin request
+    that changes something — and the sign-in itself — must carry the
+    `X-MakonBook-Admin` header (any value); without it the answer is 403
+    `forbidden`. Branch admins only ever see their own branches' data.
 servers:
   - url: http://localhost:8080
     description: Local development
@@ -283,7 +290,10 @@ paths:
   /v1/attendance/sessions/{id}/marks/{client_id}:
     put:
       summary: Teacher's correction of one student's mark
-      description: Allowed while open and until 24 hours after the lesson ends. Every change is audited.
+      description: |
+        Allowed while open and until 24 hours after the lesson ends, except
+        for a mark the office already corrected in the admin panel (409
+        `set_by_admin`). Every change is audited.
       operationId: setAttendanceMark
       tags: [attendance]
       security: [{ bearer: [] }]
@@ -306,6 +316,9 @@ paths:
           description: "`edit_window_closed`, `not_in_roster`, `forbidden`"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`set_by_admin` — the office corrected this mark; only they change it now"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
   /v1/me/attendance:
     get:
@@ -407,13 +420,509 @@ paths:
           description: "`invalid_code` (not a MakonBook code, or forged), `code_expired` (scan the current one)"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/admin/login:
+    post:
+      summary: Admin sign-in with HolliHop credentials
+      description: |
+        HolliHop checks the login and password; then the person must be on
+        the admin access list and not fired. Sets the `mb_admin` cookie.
+      operationId: adminLogin
+      tags: [admin]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminLoginRequest" }
+      responses:
+        "200":
+          description: Signed in
+          headers:
+            Set-Cookie: { schema: { type: string }, description: "`mb_admin` session cookie" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminProfile" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401":
+          description: "`invalid_credentials` — HolliHop refused the login or password"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "403":
+          description: "`not_admin` (right credentials, but no panel access, or fired), `forbidden` (no `X-MakonBook-Admin` header)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429":
+          description: "`rate_limited` — 20 attempts per network or 5 per login name in 15 min. `Retry-After` gives seconds."
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "503":
+          description: "`unavailable` — HolliHop isn't answering"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/admin/logout:
+    post:
+      summary: End this admin session
+      operationId: adminLogout
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
+      responses:
+        "204": { description: Signed out; the cookie is cleared }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/me:
+    get:
+      summary: The signed-in admin and the branches they can see
+      operationId: adminMe
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminProfile" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/lessons:
+    get:
+      summary: Every lesson on a date in the admin's branches
+      description: |
+        By branch, then start time. `counts` appears once a teacher opened
+        attendance. Lesson days are kept from the day the app went live, and
+        known up to 14 days ahead.
+      operationId: adminLessons
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date }, description: Defaults to today at the school }
+        - $ref: "#/components/parameters/OfficeFilter"
+      responses:
+        "200":
+          description: Lessons
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [date, lessons]
+                properties:
+                  date: { type: string, format: date }
+                  lessons: { type: array, items: { $ref: "#/components/schemas/AdminLesson" } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/attendance/sessions/{id}:
+    get:
+      summary: One lesson's attendance, with every change and the HolliHop write status
+      operationId: adminAttendanceSession
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/SessionID" }
+      responses:
+        "200": { $ref: "#/components/responses/AdminAttendanceSession" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404":
+          description: "`not_found` — no such session, or not in the admin's branches"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/admin/attendance/sessions/{id}/marks/{client_id}:
+    put:
+      summary: Admin's correction of one student's mark
+      description: |
+        Any time, while open or after it finished. Audited with the admin's
+        name; a changed present/absent is written to HolliHop again. The
+        teacher can't change the mark back afterwards. Billing isn't touched
+        here: an absence is billed unless an admin unbills it in HolliHop (D17).
+      operationId: adminSetAttendanceMark
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
+        - { $ref: "#/components/parameters/SessionID" }
+        - { name: client_id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [state]
+              properties:
+                state: { type: string, enum: [present, late, absent] }
+      responses:
+        "200": { $ref: "#/components/responses/AdminAttendanceSession" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404":
+          description: "`not_found` (session) or `not_in_roster`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/admin/reports/corrections:
+    get:
+      summary: Teachers' corrections of marks, for lessons in a date range
+      description: |
+        Per teacher: lessons they opened and how often they changed marks —
+        `made_present` counts absent or not-scanned students they marked
+        present or late, the change worth a second look. `changes` lists the
+        500 newest changes by teachers and admins.
+      operationId: adminCorrectionsReport
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date }, description: Defaults to 29 days before `to` }
+        - { name: to, in: query, schema: { type: string, format: date }, description: Defaults to today }
+        - { name: teacher_id, in: query, schema: { type: integer }, description: Only this teacher's changes }
+        - $ref: "#/components/parameters/OfficeFilter"
+      responses:
+        "200":
+          description: Report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CorrectionsReport" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/hollihop/writes:
+    get:
+      summary: Attendance written (or to be written) to HolliHop
+      description: |
+        `counts` covers every status; `writes` lists the 500 newest with the
+        requested statuses. `set_manually`: an admin had set that day by hand
+        in HolliHop, so the app's mark wasn't applied there.
+      operationId: adminHolliHopWrites
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - name: status
+          in: query
+          description: Comma-separated statuses; defaults to `failed,set_manually`.
+          schema: { type: string, example: "failed,set_manually" }
+        - $ref: "#/components/parameters/OfficeFilter"
+      responses:
+        "200":
+          description: Writes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [writing_enabled, counts, writes]
+                properties:
+                  writing_enabled: { type: boolean, description: "false: dry run — nothing is sent to HolliHop" }
+                  counts:
+                    type: object
+                    additionalProperties: { type: integer }
+                  writes: { type: array, items: { $ref: "#/components/schemas/HolliHopWrite" } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/hollihop/writes/{id}/retry:
+    post:
+      summary: Send a failed write again
+      operationId: adminRetryHolliHopWrite
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "204": { description: Queued }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404":
+          description: "`not_found` — not a failed write in the admin's branches, or a newer write replaced it"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/admin/data-quality:
+    get:
+      summary: People who can't sign in until their phone is fixed in HolliHop
+      description: Students by their branches or their groups' branches; teachers by the branches they teach in.
+      operationId: adminDataQuality
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/OfficeFilter"
+      responses:
+        "200":
+          description: Open issues
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [issues]
+                properties:
+                  issues: { type: array, items: { $ref: "#/components/schemas/DataQualityIssue" } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/access:
+    get:
+      summary: Who can use the admin panel (super admins only)
+      operationId: adminAccessList
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/AccessList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/access/{member_type}/{member_id}:
+    parameters:
+      - { name: member_type, in: path, required: true, schema: { type: string, enum: [employee, teacher] } }
+      - { name: member_id, in: path, required: true, schema: { type: integer }, description: HolliHop employee or teacher id }
+    put:
+      summary: Give or change someone's panel access (super admins only)
+      description: |
+        The name comes from HolliHop. A super admin needs no branches; a
+        branch admin at least one. The last super admin can't be made a
+        branch admin.
+      operationId: adminGrantAccess
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                super: { type: boolean }
+                office_ids: { type: array, items: { type: integer } }
+      responses:
+        "200": { $ref: "#/components/responses/AccessList" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404":
+          description: "`not_found` — no such employee in HolliHop, or teacher in MakonBook"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "409":
+          description: "`last_super_admin`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`fired` in HolliHop"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "503": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: Take panel access away (super admins only); their sessions end at once
+      operationId: adminRevokeAccess
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
+      responses:
+        "200": { $ref: "#/components/responses/AccessList" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`last_super_admin`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/admin/staff:
+    get:
+      summary: Search HolliHop's employees, to give one access (super admins only)
+      operationId: adminFindStaff
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 100 }, description: "Name, phone or email" }
+      responses:
+        "200":
+          description: Up to 50 employees
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [staff]
+                properties:
+                  staff:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, name, position, fired, offices]
+                      properties:
+                        id: { type: integer }
+                        name: { type: string }
+                        position: { type: string }
+                        fired: { type: boolean }
+                        offices: { type: array, items: { type: string } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
 components:
   securitySchemes:
     bearer:
       type: http
       scheme: bearer
+    adminCookie:
+      type: apiKey
+      in: cookie
+      name: mb_admin
 
   schemas:
+    AdminLesson:
+      allOf:
+        - $ref: "#/components/schemas/Lesson"
+        - type: object
+          required: [office_id, teachers, counts]
+          properties:
+            office_id: { type: [integer, "null"] }
+            teachers: { type: array, items: { type: string } }
+            counts:
+              type: [object, "null"]
+              description: Null until a teacher opens attendance.
+              properties:
+                present: { type: integer }
+                late: { type: integer }
+                absent: { type: integer }
+                pending: { type: integer }
+
+    AdminAttendanceSession:
+      allOf:
+        - $ref: "#/components/schemas/AttendanceSession"
+        - type: object
+          description: Never has `qr`; each mark has `hollihop`.
+          required: [office_id, office, opened_by, finished_by, history]
+          properties:
+            office_id: { type: [integer, "null"] }
+            office: { type: string }
+            opened_by: { type: string, description: The teacher who started attendance }
+            finished_by: { type: [string, "null"], enum: [teacher, auto, null] }
+            history:
+              type: array
+              description: Every change of a mark, oldest first.
+              items:
+                type: object
+                required: [client_id, student_name, actor_kind, actor_name, from, to, at]
+                properties:
+                  client_id: { type: integer }
+                  student_name: { type: string }
+                  actor_kind: { type: string, enum: [student, teacher, admin, system], description: "student = scanned; system = absent when attendance finished" }
+                  actor_name: { type: string }
+                  from: { type: string }
+                  to: { type: string }
+                  at: { type: string, format: date-time }
+
+    CorrectionsReport:
+      type: object
+      required: [from, to, teachers, changes]
+      properties:
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+        teachers:
+          type: array
+          items:
+            type: object
+            required: [teacher_id, teacher_name, lessons_opened, lessons_corrected, corrections, made_present]
+            properties:
+              teacher_id: { type: integer }
+              teacher_name: { type: string }
+              lessons_opened: { type: integer }
+              lessons_corrected: { type: integer }
+              corrections: { type: integer }
+              made_present: { type: integer }
+        changes:
+          type: array
+          items:
+            type: object
+            required: [id, at, actor_kind, actor_name, from, to, session_id, date, group_id, group_name, client_id, student_name]
+            properties:
+              id: { type: integer }
+              at: { type: string, format: date-time }
+              actor_kind: { type: string, enum: [teacher, admin] }
+              actor_name: { type: string }
+              from: { type: string }
+              to: { type: string }
+              session_id: { type: string, format: uuid }
+              date: { type: string, format: date }
+              group_id: { type: integer }
+              group_name: { type: string }
+              client_id: { type: integer }
+              student_name: { type: string }
+
+    WriteStatus:
+      type: string
+      enum: [pending, sent, unchanged, set_manually, dry_run, superseded, failed]
+
+    HolliHopWrite:
+      type: object
+      required: [id, session_id, date, group_id, group_name, client_id, student_name, absent, status, attempts, error, created_at, done_at]
+      properties:
+        id: { type: integer }
+        session_id: { type: string, format: uuid }
+        date: { type: string, format: date }
+        group_id: { type: integer }
+        group_name: { type: string }
+        client_id: { type: integer }
+        student_name: { type: string }
+        absent: { type: boolean }
+        status: { $ref: "#/components/schemas/WriteStatus" }
+        attempts: { type: integer }
+        error: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        done_at: { type: [string, "null"], format: date-time }
+
+    DataQualityIssue:
+      type: object
+      required: [id, person_kind, person_id, first_name, last_name, phone, kind, detail, since]
+      properties:
+        id: { type: integer }
+        person_kind: { type: string, enum: [student, teacher] }
+        person_id: { type: integer, description: HolliHop client id or teacher id }
+        first_name: { type: string }
+        last_name: { type: string }
+        phone: { type: string, description: As typed in HolliHop }
+        kind: { type: string, enum: [phone_missing, phone_invalid, phone_duplicate] }
+        detail: { type: string }
+        since: { type: string, format: date-time }
+
+    AdminAccess:
+      type: object
+      required: [member_type, member_id, name, super, offices, granted_at, last_login_at]
+      properties:
+        member_type: { type: string, enum: [Employee, Teacher] }
+        member_id: { type: integer }
+        name: { type: string }
+        super: { type: boolean }
+        offices: { type: array, items: { $ref: "#/components/schemas/Office" }, description: Empty for super admins }
+        granted_at: { type: string, format: date-time }
+        last_login_at: { type: [string, "null"], format: date-time }
+
+    AdminLoginRequest:
+      type: object
+      required: [login, password]
+      properties:
+        login: { type: string, maxLength: 100, description: HolliHop login }
+        password: { type: string, maxLength: 256 }
+
+    AdminProfile:
+      type: object
+      required: [name, member_type, member_id, super, offices]
+      properties:
+        name: { type: string }
+        member_type: { type: string, enum: [Employee, Teacher], description: As HolliHop reports it }
+        member_id: { type: integer, description: HolliHop employee or teacher id }
+        super: { type: boolean, description: Sees every branch and manages the access list }
+        offices:
+          type: array
+          description: The branches this admin can see (all of them, for a super admin).
+          items: { $ref: "#/components/schemas/Office" }
+
+    Office:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: integer, description: HolliHop office id }
+        name: { type: string }
+
     LoginRequest:
       type: object
       required: [login, password]
@@ -557,8 +1066,15 @@ components:
               first_name: { type: string }
               last_name: { type: string }
               state: { type: string, enum: [pending, present, late, absent] }
-              source: { type: [string, "null"], enum: [scan, teacher, auto, null] }
+              source: { type: [string, "null"], enum: [scan, teacher, admin, auto, null], description: "admin = corrected by the office in the admin panel" }
               scanned_at: { type: [string, "null"], format: date-time }
+              hollihop:
+                description: Admin panel only — where this mark's latest write to HolliHop stands.
+                type: object
+                required: [status, error]
+                properties:
+                  status: { $ref: "#/components/schemas/WriteStatus" }
+                  error: { type: [string, "null"] }
 
     AttendanceQR:
       type: object
@@ -630,6 +1146,10 @@ components:
                 - device_already_used
                 - marked_absent
                 - edit_window_closed
+                - not_admin
+                - set_by_admin
+                - last_super_admin
+                - fired
             message:
               type: string
               description: Human-readable explanation; may change.
@@ -637,6 +1157,17 @@ components:
               type: string
 
   parameters:
+    OfficeFilter:
+      name: office_id
+      in: query
+      description: Only this branch (one outside the admin's branches yields nothing).
+      schema: { type: integer }
+    AdminCSRF:
+      name: X-MakonBook-Admin
+      in: header
+      required: true
+      description: Any value. Proves the request comes from the admin panel's own page.
+      schema: { type: string }
     SessionID:
       name: id
       in: path
@@ -644,6 +1175,20 @@ components:
       schema: { type: string, format: uuid }
 
   responses:
+    AdminAttendanceSession:
+      description: The session as the admin panel shows it
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AdminAttendanceSession" }
+    AccessList:
+      description: The access list (after the change)
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [access]
+            properties:
+              access: { type: array, items: { $ref: "#/components/schemas/AdminAccess" } }
     AttendanceSession:
       description: The session as the teacher's screen shows it
       content:

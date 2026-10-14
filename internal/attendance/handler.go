@@ -24,6 +24,7 @@ const (
 	CodeDeviceUsed         = "device_already_used"
 	CodeMarkedAbsent       = "marked_absent"
 	CodeEditWindowClosed   = "edit_window_closed"
+	CodeSetByAdmin         = "set_by_admin"
 )
 
 type Handler struct {
@@ -194,6 +195,8 @@ func (h *Handler) writeError(w http.ResponseWriter, r *http.Request, err error) 
 		httpx.WriteError(w, r, http.StatusConflict, CodeMarkedAbsent, err.Error())
 	case errors.Is(err, ErrEditWindowClosed):
 		httpx.WriteError(w, r, http.StatusForbidden, CodeEditWindowClosed, err.Error())
+	case errors.Is(err, ErrSetByAdmin):
+		httpx.WriteError(w, r, http.StatusConflict, CodeSetByAdmin, err.Error())
 	case errors.Is(err, ErrBadState):
 		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, err.Error())
 	default:
