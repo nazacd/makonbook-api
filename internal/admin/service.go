@@ -41,6 +41,7 @@ var (
 	ErrFired           = errors.New("fired in HolliHop")
 	ErrLastSuper       = errors.New("this is the last super admin; make someone else super admin first")
 	ErrUnknownOffice   = errors.New("no such branch")
+	ErrSuperProtected  = errors.New("super admins are managed on the server, not in the panel")
 )
 
 // Member types, as HolliHop reports them.
@@ -197,57 +198,21 @@ func (s *Service) Offices(ctx context.Context) ([]Office, error) {
 	return out, nil
 }
 
-// Grant gives (or changes) panel access. Super admins need no branches.
-// The person must exist and not be fired: teachers in our copy of HolliHop
-// (sign-in checks them there), employees in HolliHop itself when it's
-// configured. name, if empty, comes from there too.
+// Grant gives (or changes) panel access; the server command's way, the only
+// one that can make, change or remove super admins. Super admins need no
+// branches. The person must exist and not be fired: teachers in our copy of
+// HolliHop (sign-in checks them there), employees in HolliHop itself when
+// it's configured. name, if empty, comes from there too.
 func (s *Service) Grant(ctx context.Context, memberType string, memberID int32, name string, super bool, officeIDs []int32) (admindb.AdminAccess, error) {
-	if memberType != TypeEmployee && memberType != TypeTeacher {
-		return admindb.AdminAccess{}, fmt.Errorf("member type must be %s or %s", TypeEmployee, TypeTeacher)
-	}
 	if super {
 		officeIDs = []int32{}
 	}
-	if !super && len(officeIDs) == 0 {
-		return admindb.AdminAccess{}, ErrInvalid
-	}
-	if err := s.checkOffices(ctx, officeIDs); err != nil {
+	name, err := s.checkGrant(ctx, memberType, memberID, name, super, officeIDs)
+	if err != nil {
 		return admindb.AdminAccess{}, err
 	}
-	switch memberType {
-	case TypeTeacher:
-		t, err := admindb.New(s.pool).GetTeacher(ctx, memberID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return admindb.AdminAccess{}, ErrUnknownTeacher
-		} else if err != nil {
-			return admindb.AdminAccess{}, fmt.Errorf("load teacher: %w", err)
-		}
-		if t.Fired {
-			return admindb.AdminAccess{}, ErrFired
-		}
-		if name == "" {
-			name = t.Name
-		}
-	case TypeEmployee:
-		if s.hollihop != nil {
-			e, ok, err := s.hollihop.GetEmployee(ctx, memberID)
-			if err != nil {
-				return admindb.AdminAccess{}, fmt.Errorf("%w (%w)", ErrUnavailable, err)
-			}
-			if !ok {
-				return admindb.AdminAccess{}, ErrUnknownEmployee
-			}
-			if e.Fired {
-				return admindb.AdminAccess{}, ErrFired
-			}
-			if name == "" {
-				name = strings.TrimSpace(e.FirstName + " " + e.LastName)
-			}
-		}
-	}
-
 	var a admindb.AdminAccess
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		q := admindb.New(tx)
 		if !super {
 			if err := keepASuper(ctx, q, memberType, memberID); err != nil {
@@ -263,7 +228,70 @@ func (s *Service) Grant(ctx context.Context, memberType string, memberID int32, 
 	return a, err
 }
 
-// Revoke takes panel access away; their sessions end with it.
+// GrantBranch is the panel's grant: it makes or changes a branch admin, and
+// never touches a super admin (ErrSuperProtected) — a super admin can't
+// demote, remove or create another, or themselves, from the panel.
+func (s *Service) GrantBranch(ctx context.Context, memberType string, memberID int32, officeIDs []int32) (admindb.AdminAccess, error) {
+	name, err := s.checkGrant(ctx, memberType, memberID, "", false, officeIDs)
+	if err != nil {
+		return admindb.AdminAccess{}, err
+	}
+	a, err := admindb.New(s.pool).UpsertBranchAccess(ctx, admindb.UpsertBranchAccessParams{
+		MemberType: memberType, MemberID: memberID, Name: name, OfficeIds: officeIDs,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return admindb.AdminAccess{}, ErrSuperProtected
+	}
+	return a, err
+}
+
+// checkGrant validates a grant and returns the person's name.
+func (s *Service) checkGrant(ctx context.Context, memberType string, memberID int32, name string, super bool, officeIDs []int32) (string, error) {
+	if memberType != TypeEmployee && memberType != TypeTeacher {
+		return "", fmt.Errorf("member type must be %s or %s", TypeEmployee, TypeTeacher)
+	}
+	if !super && len(officeIDs) == 0 {
+		return "", ErrInvalid
+	}
+	if err := s.checkOffices(ctx, officeIDs); err != nil {
+		return "", err
+	}
+	switch memberType {
+	case TypeTeacher:
+		t, err := admindb.New(s.pool).GetTeacher(ctx, memberID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrUnknownTeacher
+		} else if err != nil {
+			return "", fmt.Errorf("load teacher: %w", err)
+		}
+		if t.Fired {
+			return "", ErrFired
+		}
+		if name == "" {
+			name = t.Name
+		}
+	case TypeEmployee:
+		if s.hollihop != nil {
+			e, ok, err := s.hollihop.GetEmployee(ctx, memberID)
+			if err != nil {
+				return "", fmt.Errorf("%w (%w)", ErrUnavailable, err)
+			}
+			if !ok {
+				return "", ErrUnknownEmployee
+			}
+			if e.Fired {
+				return "", ErrFired
+			}
+			if name == "" {
+				name = strings.TrimSpace(e.FirstName + " " + e.LastName)
+			}
+		}
+	}
+	return name, nil
+}
+
+// Revoke takes panel access away (the server command); their sessions end
+// with it.
 func (s *Service) Revoke(ctx context.Context, memberType string, memberID int32) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		q := admindb.New(tx)
@@ -281,8 +309,24 @@ func (s *Service) Revoke(ctx context.Context, memberType string, memberID int32)
 	})
 }
 
+// RevokeBranch is the panel's revoke: branch admins only (ErrSuperProtected).
+func (s *Service) RevokeBranch(ctx context.Context, memberType string, memberID int32) error {
+	q := admindb.New(s.pool)
+	n, err := q.DeleteBranchAccess(ctx, admindb.DeleteBranchAccessParams{MemberType: memberType, MemberID: memberID})
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	if a, err := q.GetAccess(ctx, admindb.GetAccessParams{MemberType: memberType, MemberID: memberID}); err == nil && a.Super {
+		return ErrSuperProtected
+	}
+	return ErrNotFound
+}
+
 // keepASuper refuses to take super admin away from the last one, which
-// would leave nobody able to manage the list from the panel.
+// would leave nobody able to manage admins from the panel.
 func keepASuper(ctx context.Context, q *admindb.Queries, memberType string, memberID int32) error {
 	supers, err := q.LockSupers(ctx)
 	if err != nil {

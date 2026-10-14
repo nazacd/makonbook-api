@@ -136,11 +136,12 @@ type Member = { type: 'employee' | 'teacher'; id: number };
 export function useGrant() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ member, super: isSuper, officeIds }: { member: Member; super: boolean; officeIds: number[] }) =>
+    // The panel only makes branch admins; super admins are managed on the server.
+    mutationFn: ({ member, officeIds }: { member: Member; officeIds: number[] }) =>
       call(
         api.PUT('/v1/admin/access/{member_type}/{member_id}', {
           params: { header: CSRF, path: { member_type: member.type, member_id: member.id } },
-          body: { super: isSuper, office_ids: isSuper ? [] : officeIds },
+          body: { office_ids: officeIds },
         }),
       ),
     onSuccess: (list) => qc.setQueryData(['access'], list),
