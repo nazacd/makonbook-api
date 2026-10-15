@@ -60,7 +60,7 @@ func (c *Client) CheckLogin(ctx context.Context, login, password string) (Member
 		// Don't quote it: a 200 may carry the person's own HolliHop key.
 		return Member{}, errors.New("hollihop GetMemberAuthKey: unexpected 200 response")
 	default:
-		return Member{}, fmt.Errorf("hollihop GetMemberAuthKey: status %d: %s", resp.StatusCode, snippet(bytes.ReplaceAll(body, []byte(password), []byte("***"))))
+		return Member{}, fmt.Errorf("hollihop GetMemberAuthKey: %w", statusError(resp.StatusCode, bytes.ReplaceAll(body, []byte(password), []byte("***"))))
 	}
 }
 

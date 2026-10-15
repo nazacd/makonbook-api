@@ -264,12 +264,29 @@ func (c *Client) do(ctx context.Context, httpMethod, u string, reqBody []byte) (
 
 	if resp.StatusCode != http.StatusOK {
 		retry := resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests
-		return nil, retry, fmt.Errorf("status %d: %s", resp.StatusCode, snippet(body))
+		return nil, retry, statusError(resp.StatusCode, body)
 	}
 	if strings.Contains(string(body[:min(len(body), 512)]), "Requests limit is exceeded") {
 		return nil, true, errors.New("rate limit exceeded")
 	}
 	return body, false, nil
+}
+
+// statusError describes a failed response for logs and admin alerts. When
+// HolliHop is down its web server answers with an HTML page; quoting that
+// page tells nobody anything, so it is summarised instead.
+func statusError(code int, body []byte) error {
+	status := fmt.Sprintf("status %d %s", code, http.StatusText(code))
+	s := strings.TrimSpace(strings.TrimPrefix(string(body), "\ufeff"))
+	switch {
+	case strings.HasPrefix(s, "<") && code >= 500:
+		return fmt.Errorf("%s: HolliHop is down or under maintenance", status)
+	case strings.HasPrefix(s, "<"):
+		return fmt.Errorf("%s: HolliHop answered with a web page, not the API", status)
+	case s == "":
+		return errors.New(status)
+	}
+	return fmt.Errorf("%s: %s", status, snippet(body))
 }
 
 func snippet(b []byte) string {
