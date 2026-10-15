@@ -382,6 +382,8 @@ export interface paths {
          *     only for a newly opened group (`new_group`); otherwise the group is
          *     finished in practice. Both kinds of left-out groups are listed by
          *     `GET /v1/admin/data-quality` for admins to fix in HolliHop.
+         *     Online lessons (an online branch or learning type) are never listed,
+         *     here or in `data-quality`.
          */
         get: operations["adminLessons"];
         put?: never;

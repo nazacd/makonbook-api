@@ -70,6 +70,9 @@ func seed(t *testing.T, pool *pgxpool.Pool) {
 			// Opened recently too, but its students came and left: finished.
 			{ID: 106, Name: "Emptied", Discipline: "SAT MATH", LearningType: "GROUP", OfficeID: 3,
 				Schedule: []people.ScheduleItem{{ID: 7, BeginDate: day("2026-10-01"), BeginTime: 13 * time.Hour, EndTime: 14 * time.Hour, Weekdays: 1, TeacherIDs: []int32{11}}}},
+			// Online: never in the admin panel.
+			{ID: 107, Name: "Online one-to-one", Discipline: "SAT MATH", LearningType: "IV ONLINE", OfficeID: 3,
+				Schedule: []people.ScheduleItem{item(8, 19*time.Hour, 20*time.Hour, 10)}},
 			// A finished group whose schedule was never closed: no teacher.
 			{ID: 104, Name: "No teacher", Discipline: "SAT MATH", LearningType: "GROUP", OfficeID: 3,
 				Schedule: []people.ScheduleItem{{ID: 5, BeginDate: day("2026-01-01"), BeginTime: 11 * time.Hour, EndTime: 12 * time.Hour, Weekdays: 1}}},
@@ -87,6 +90,7 @@ func seed(t *testing.T, pool *pgxpool.Pool) {
 			{GroupID: 100, StudentClientID: 5, Weekdays: 1 | 4},
 			{GroupID: 101, StudentClientID: 1, Weekdays: 1},
 			{GroupID: 103, StudentClientID: 2, Weekdays: 1},
+			{GroupID: 107, StudentClientID: 4, Weekdays: 1},
 		},
 	}
 	tx, err := pool.Begin(t.Context())
@@ -106,6 +110,7 @@ func seed(t *testing.T, pool *pgxpool.Pool) {
 		{GroupID: 104, Date: monday, Minutes: 60, ScheduleItemIDs: []int32{5}},
 		{GroupID: 105, Date: monday, Minutes: 60, ScheduleItemIDs: []int32{6}},
 		{GroupID: 106, Date: monday, Minutes: 60, ScheduleItemIDs: []int32{7}},
+		{GroupID: 107, Date: monday, Minutes: 60, ScheduleItemIDs: []int32{8}},
 	})
 	if err != nil {
 		t.Fatal(err)

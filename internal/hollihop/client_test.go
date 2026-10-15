@@ -113,6 +113,22 @@ func TestDoesNotRetryClientErrors(t *testing.T) {
 	}
 }
 
+// When HolliHop is down its web server sends an HTML page; the error (which
+// reaches admins as a sync alert) says so instead of quoting the page.
+func TestErrorSummarisesHTMLPages(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("\ufeff<!DOCTYPE html>\n<html><head><title>Hollihop Schoolmaster</title></head></html>"))
+	}))
+	defer srv.Close()
+
+	_, err := New(srv.URL, testKey, WithRetry(1, time.Millisecond)).GetTeachers(t.Context())
+	want := "hollihop GetTeachers: status 503 Service Unavailable: HolliHop is down or under maintenance"
+	if err == nil || err.Error() != want {
+		t.Errorf("err = %v\nwant %s", err, want)
+	}
+}
+
 // Go's HTTP client puts the full URL — auth key included — into its errors.
 func TestErrorsNeverContainAuthKey(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))

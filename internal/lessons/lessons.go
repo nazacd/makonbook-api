@@ -36,6 +36,14 @@ const (
 // online lessons (spec D4).
 var excludedOffices = map[string]bool{"ONLINE": true}
 
+// Online reports whether a group's lessons are online: an online branch or
+// an online learning type ("ONLINE", "IV ONLINE"). The admin panel leaves
+// them out entirely.
+func Online(learningType, office string) bool {
+	return excludedOffices[strings.ToUpper(strings.TrimSpace(office))] ||
+		strings.Contains(strings.ToUpper(learningType), "ONLINE")
+}
+
 // AttendanceEnabled says whether a group's lessons take attendance in the app:
 // group lessons only, not one-to-one or online (spec 5, D4).
 func AttendanceEnabled(learningType, office string) bool {
@@ -169,7 +177,7 @@ type MarkCounts struct {
 }
 
 // OfficeLessons lists every lesson on day in the given branches, by branch
-// and start time.
+// and start time; online lessons are left out.
 func (s *Service) OfficeLessons(ctx context.Context, offices scope.Offices, day time.Time) ([]OfficeLesson, error) {
 	rows, err := s.q.OfficeLessons(ctx, lessondb.OfficeLessonsParams{
 		Date: date(day), AllOffices: offices.All, OfficeIds: offices.List(), NewGroupDays: NewGroupDays,
@@ -181,6 +189,9 @@ func (s *Service) OfficeLessons(ctx context.Context, offices scope.Offices, day 
 	for _, r := range rows {
 		if r.Students == 0 && !r.NewGroup && !r.SessionID.Valid {
 			continue // nobody on the list of an old group: see GroupIssues
+		}
+		if Online(r.LearningType, r.Office) {
+			continue // not the panel's business
 		}
 		l := OfficeLesson{
 			Lesson: Lesson{
@@ -252,6 +263,9 @@ func (s *Service) GroupIssues(ctx context.Context, offices scope.Offices, today 
 	}
 	out := []GroupIssue{}
 	for _, r := range rows {
+		if Online(r.LearningType, r.Office) {
+			continue
+		}
 		since, last := dateString(r.ScheduleSince), dateString(r.LastAttended)
 		newGroup := last == nil && since != nil && !r.ScheduleSince.Time.Before(today.AddDate(0, 0, -NewGroupDays))
 		kind := ""
