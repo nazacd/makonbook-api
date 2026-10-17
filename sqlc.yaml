@@ -58,3 +58,11 @@ sql:
         package: admindb
         out: internal/admin/admindb
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/practice/queries.sql
+    gen:
+      go:
+        package: practicedb
+        out: internal/practice/practicedb
+        sql_package: pgx/v5

@@ -100,6 +100,17 @@ func (h *Handler) Require(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// RequireEditor is Require for those who may edit practice content.
+func (h *Handler) RequireEditor(next http.HandlerFunc) http.HandlerFunc {
+	return h.Require(func(w http.ResponseWriter, r *http.Request) {
+		if p, _ := PrincipalFrom(r.Context()); !p.CanEdit() {
+			httpx.WriteError(w, r, http.StatusForbidden, httpx.CodeForbidden, "only editors can do this")
+			return
+		}
+		next(w, r)
+	})
+}
+
 // RequireSuper is Require for super admins only.
 func (h *Handler) RequireSuper(next http.HandlerFunc) http.HandlerFunc {
 	return h.Require(func(w http.ResponseWriter, r *http.Request) {
@@ -122,6 +133,7 @@ type Profile struct {
 	MemberType string   `json:"member_type"`
 	MemberID   int32    `json:"member_id"`
 	Super      bool     `json:"super"`
+	Editor     bool     `json:"editor"`  // may edit practice tests (true for super admins)
 	Offices    []Office `json:"offices"` // the branches they can see (all, for super admins)
 }
 
@@ -198,7 +210,7 @@ func (h *Handler) writeProfile(w http.ResponseWriter, r *http.Request, p Princip
 			offices = append(offices, o)
 		}
 	}
-	httpx.WriteJSON(w, r, http.StatusOK, Profile{Name: p.Name, MemberType: p.MemberType, MemberID: p.MemberID, Super: p.Super, Offices: offices})
+	httpx.WriteJSON(w, r, http.StatusOK, Profile{Name: p.Name, MemberType: p.MemberType, MemberID: p.MemberID, Super: p.Super, Editor: p.CanEdit(), Offices: offices})
 }
 
 func (h *Handler) internal(w http.ResponseWriter, r *http.Request, what string, err error) {

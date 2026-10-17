@@ -14,13 +14,13 @@ SET super = excluded.super, office_ids = excluded.office_ids,
     name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE admin_access.name END
 RETURNING *;
 
--- The panel's grant: only ever a branch admin, and never over a super admin
--- (then no row comes back). Super admins are managed on the server.
+-- The panel's grant: only ever a branch admin and/or editor, and never over a
+-- super admin (then no row comes back). Super admins are managed on the server.
 -- name: UpsertBranchAccess :one
-INSERT INTO admin_access (member_type, member_id, name, super, office_ids)
-VALUES (@member_type, @member_id, @name, false, @office_ids::int[])
+INSERT INTO admin_access (member_type, member_id, name, super, office_ids, editor)
+VALUES (@member_type, @member_id, @name, false, @office_ids::int[], @editor)
 ON CONFLICT (member_type, member_id) DO UPDATE
-SET office_ids = excluded.office_ids,
+SET office_ids = excluded.office_ids, editor = excluded.editor,
     name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE admin_access.name END
 WHERE NOT admin_access.super
 RETURNING *;

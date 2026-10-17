@@ -6,13 +6,17 @@ import { RouterProvider } from 'react-router/dom';
 
 import { ApiError } from './api/client';
 import { meKey } from './api/hooks';
-import { Shell } from './components/Shell';
+import { Home, Shell } from './components/Shell';
 import { AccessPage } from './pages/Access';
 import { CorrectionsPage } from './pages/Corrections';
 import { IssuesPage } from './pages/Issues';
 import { LessonsPage } from './pages/Lessons';
 import { SessionPage } from './pages/Session';
 import { WritesPage } from './pages/Writes';
+import { PracticeQuestionPage } from './practice/QuestionPage';
+import { PracticeQueuePage } from './practice/QueuePage';
+import { PracticeTestPage } from './practice/TestPage';
+import { PracticeTestsPage } from './practice/TestsPage';
 import './styles.css';
 
 // Any 401 means the session ended (signed out elsewhere, access removed,
@@ -38,7 +42,7 @@ const router = createBrowserRouter([
   {
     element: <Shell />,
     children: [
-      { index: true, element: <Navigate to="/lessons" replace /> },
+      { index: true, element: <Home /> },
       { path: 'lessons', element: <LessonsPage /> },
       { path: 'sessions/:id', element: <SessionPage /> },
       { path: 'corrections', element: <CorrectionsPage /> },
@@ -46,7 +50,11 @@ const router = createBrowserRouter([
       { path: 'issues', element: <IssuesPage /> },
       { path: 'data-quality', element: <Navigate to="/issues" replace /> },
       { path: 'access', element: <AccessPage /> },
-      { path: '*', element: <Navigate to="/lessons" replace /> },
+      { path: 'practice', element: <PracticeTestsPage /> },
+      { path: 'practice/queue', element: <PracticeQueuePage /> },
+      { path: 'practice/tests/:code', element: <PracticeTestPage /> },
+      { path: 'practice/questions/:id', element: <PracticeQuestionPage /> },
+      { path: '*', element: <Home /> },
     ],
   },
 ]);

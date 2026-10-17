@@ -28,6 +28,8 @@ export class ApiError extends Error {
     readonly code: string,
     message: string,
     readonly requestId?: string,
+    /** For a rejected form: what is wrong with each field. */
+    readonly fields?: Record<string, string>,
   ) {
     super(message);
   }
@@ -44,12 +46,15 @@ export async function call<T>(promise: Promise<Result<T>>): Promise<T> {
     throw new ApiError(0, 'network', 'Can’t reach MakonBook. Check the connection and try again.');
   }
   if (res.response.ok) return res.data as T;
-  const body = (res.error ?? {}) as { error?: { code?: string; message?: string; request_id?: string } };
+  const body = (res.error ?? {}) as {
+    error?: { code?: string; message?: string; request_id?: string; fields?: Record<string, string> };
+  };
   throw new ApiError(
     res.response.status,
     body.error?.code ?? 'unknown',
     body.error?.message ?? `Unexpected answer (${res.response.status}).`,
     body.error?.request_id,
+    body.error?.fields,
   );
 }
 

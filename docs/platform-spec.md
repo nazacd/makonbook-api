@@ -44,6 +44,9 @@ Access (except placement) is limited to people who are active in HolliHop.
 | D16 | Students see their own **attendance table** in the app. Marks come from **HolliHop** (synced read-only, so history before the app and admins' corrections are included), with **late** added from the app's scans. | Phase 2; see 8.7. |
 | D17 | **Billing**: teachers only decide present/absent. An absence is **billed by default**; only admins make it unbilled (when a student informs them), in HolliHop. The app never sends "not billed". | See 8.6. |
 | D18 | **Admin sign-in uses HolliHop credentials.** HolliHop checks the login and password (`GetMemberAuthKey`); MakonBook stores neither, nor the key HolliHop returns. HolliHop has no roles, so an **access list** in our DB says who may use the panel: **super admins** (every branch, manage the list) or **branch admins** limited to any set of offices — enforced in every admin query, not only in the page. Fired staff are refused at sign-in; removing someone from the list ends their sessions at once. | First grant is a server command (`makonbook admin grant`). |
+| D19 | **Practice content = SAT MAKON's own bank**, cleaned by an AI review before loading. | The bank is the teachers' own material. See 9.1. |
+| D20 | **Every active student sees every practice test**; a test stays **locked until all its questions are approved**. Scores are an **estimated 200–800**. | Tests open one by one as review finishes. |
+| D21 | **Editors** are a list of trusted teachers (any subject) granted by super admins; **reviewers** are teachers in a Telegram bot / Mini App, solving blind first. | Planned, 9.4. |
 
 ## 3. System overview
 
@@ -162,7 +165,7 @@ full|incremental` runs one by hand.
 - **Brute force:** per-account lockout — every 5th consecutive failure locks for 15 min × 2^(lockouts−1), capped at 24 h (so the 4-digit default can't be guessed in practice); a successful login resets the count. Wrong current passwords in a password change count too. Per-IP limit of 100 attempts / 10 min (generous: a classroom shares one IP). Behind the edge nginx, `TRUST_PROXY=true` takes the IP from `X-Forwarded-For`.
 - **Reset:** `makonbook reset-password student|teacher <id>` (admin-panel button later) forgets the own password, unlocks and ends all sessions. Email-code reset (hashed code, 15 min expiry, 5 attempts) can follow; Telegram later.
 - **Errors:** unknown account and wrong password both answer 401 `invalid_credentials`; a locked account answers 429 `account_locked` with `Retry-After`.
-- **Admins:** separate `admin_users` (email + password + TOTP), created via CLI. Roles: `admin`, `content_author` (main teachers writing practice content).
+- **Admins:** HolliHop staff on our access list, signing in with their HolliHop login (D18). Practice-content editors: a list of trusted teachers (D21).
 
 ## 8. Attendance (phase 2)
 
@@ -210,24 +213,61 @@ Rotation + device binding + teacher's live headcount. Geofencing only if abuse i
 
 ## 9. Practice tests (phase 3)
 
-### 9.1 Content model
-- **Question** (row in Postgres): `id` (uuid), `subject` (`math`|`rw`), `type` (`mcq`|`grid_in`), `difficulty` (easy|medium|hard), `domain`, `skill`, `stimulus`, `stem`, `options[4]` or `null`, `correct` (letter) or `accepted[]` (strings, parsed as rationals), `explanation`, `images[]`, `status` (draft|review|published), author, timestamps. Text supports inline LaTeX `\( … \)`.
-- **Test**: title, subject, format, and modules. Digital-SAT format per subject: **RW 2 × 27 questions, 32 min each; Math 2 × 22 questions, 35 min each**, i.e. `module_1`, `module_2_easy`, `module_2_hard` + routing threshold on module 1.
-- **Score conversion table** per test (raw → estimated 200–800 per section). Shown as an **estimate** — College Board uses IRT; we can't reproduce it exactly.
+### 9.1 Where the content comes from (D19)
+SAT MAKON's own question bank (60 practice tests `DAY1`…`DAY60`, each with Reading and Writing and Math,
+module 1 and module 2; CSV exports + screenshots in R2), made by its teachers. Much of it is broken (wrong
+keys, typos, cropped screenshots, explanations of older versions), so every test goes through an **AI
+review** before it is loaded: the private repository `nazacd/makonbook-questionbank`, procedure in its
+`tools/REVIEW.md`. Per question: transcription into text/LaTeX (only graphs, charts, geometry and maps stay
+images), two blind solves (Opus, Sonnet), explanation check (Math explanations rewritten), adjudication of
+flagged questions, and a risk: **green / yellow / red**. A key changes only with written proof, and such a
+question is red until a teacher confirms. New tests are written later in the admin panel (9.5).
 
-### 9.2 Publishing
-Publishing a test builds an **immutable package** `tests/<test_id>/v<N>.json` (all questions, answers, explanations, routing, conversion table) + images, uploaded to object storage. Editing a published question creates a new test version on next publish; old attempts stay tied to the version they used.
+### 9.2 Content model (built: phase 3, step 1)
+- **Question** (`questions`): subject (`math`|`english`), type (`mcq`|`grid_in`), passage, stem, choices
+  (A–D) or null, figures (`[{key, kind, alt}]`, key = R2 object), `correct` (letter) or `accepted[]` (every
+  form a student may enter), explanation, domain, skill, difficulty (an estimate), status
+  (`draft`|`review`|`approved`), `ai_risk` (worst of its AI reviews), version. Text format: paragraphs,
+  `\( \)`/`\[ \]`, `*i*`, `**b**`, `<u>`, `- ` lists, pipe tables, `![alt](r2:key)`.
+- **One row per distinct question.** The bank repeats questions across tests (~2 % of rows exactly, more
+  in practice); they are found by a hash of subject, type and text (case, spacing, curly quotes and figure
+  descriptions ignored; punctuation counts, because grammar questions differ by a comma). A repeated
+  question is fixed and approved once.
+- **Versions** (`question_versions`): every version's content, by import or by an editor.
+- **Test** (`practice_tests`, code e.g. `DAY12`) with its slots (`practice_test_questions`: subject, module
+  1|2, position → question). As in the bank: per subject, module 1 and module 2 (R&W 2 × 27, Math 2 × 22);
+  no adaptive routing.
+- **AI reviews** (`question_ai_reviews`): each review record as it came, per test position.
+- Loading: `makonbook practice import <questionbank checkout>` (deploy/DEPLOY.md) loads new tests and
+  skips loaded ones; `--replace` reloads a test while none of its questions is approved or edited.
 
-### 9.3 On device
-- Catalog from API → download package + images to `FileSystem` → fully offline.
-- Answers are in the package (needed for offline module-2 routing). Acceptable for practice; nothing graded on device is "official".
-- Attempt uploaded when online with a client-generated UUID (idempotent): answers, time per question, module path, raw and estimated scores.
-- Teachers see attempts of students in their groups.
+### 9.3 Access (D20)
+Every active student sees every test. A test is **locked until all its questions are approved**, then it
+opens; tests open one by one as their review finishes. Scores are shown as an **estimated 200–800** per
+section (College Board uses IRT; we can't reproduce it exactly).
 
-### 9.4 Authoring
-In the admin web app by users with `content_author` role: question editor with live LaTeX preview, image upload, test builder (pick questions into modules), conversion table, publish button.
+### 9.4 Editing and review by teachers (D21)
+- **Editors** (built: phase 3, step 3): a list of trusted teachers or staff (any subject), granted by super
+  admins in the panel (`admin_access.editor`; an editor needs no branch). In the admin panel: every test with
+  its progress, a queue of questions red first, and a question editor — the form, a live student view
+  (KaTeX as MathML, so the page's strict CSP stays), the AI review (verdict, solves, decision, issues,
+  proposed fix), the bank's original screenshots, and the history. Each save is a new version (`409
+  version_conflict` if someone saved meanwhile; `422 invalid_question` with a message per field: the content
+  format, A–D and a key, numeric grid-in answers, figures placed, domain/skill from the taxonomy). Editing an
+  approved question sends it back to review. Images come from SAT MAKON's R2 bucket through the API
+  (`/v1/admin/practice/figures`, read only, signed with SigV4). Uploading new images: later.
+- **Reviewers**: teachers review through a Telegram bot / Mini App. They solve each question blind first,
+  then see the key, explanation and AI findings and approve or report. The number of approvals needed
+  depends on the AI risk. Linked to MakonBook by phone number.
 
-**Copyright:** content must be original or licensed — no copies of College Board material.
+### 9.5 Publishing and on device (planned)
+- Publishing a test builds an **immutable package** (all questions, answers, explanations, conversion table)
+  + images, for offline download. Editing a question later creates a new test version on the next publish;
+  attempts stay tied to the version they used.
+- Catalog from API → download package + images → fully offline. Answers are in the package; nothing graded
+  on device is "official".
+- Attempt uploaded when online with a client-generated UUID (idempotent): answers, time per question, raw and
+  estimated scores. Teachers see attempts of students in their groups.
 
 ## 10. Placement test changes (mobile, small)
 
@@ -345,6 +385,15 @@ attendance_records(group_id, student_client_id FK, date, pass bool,
 hollihop_outbox(id, session_id FK, group_id, student_client_id, date, pass,
                 status (pending|sent|unchanged|set_manually|dry_run|superseded|failed),
                 attempts, next_attempt_at, last_error, created_at, done_at)   -- built, step 3
+
+-- built (phase 3, step 3): admin_access.editor (practice editors, D21)
+-- built (phase 3, step 1): see 9.2
+questions(id uuid PK, subject, type, content_hash UNIQUE, passage, stem, choices jsonb, figures jsonb,
+          correct, accepted text[], explanation, domain, skill, difficulty, status, ai_risk, version, …)
+question_versions(question_id FK, version, content jsonb, source (import|editor), created_by, created_at)
+practice_tests(id uuid PK, code UNIQUE, title, created_at)
+practice_test_questions(test_id FK, subject, module, position, question_id FK, PRIMARY KEY(test_id, subject, module, position))
+question_ai_reviews(id, question_id FK, test_id FK, qid, csv_id, risk, verdict, record jsonb, UNIQUE(test_id, qid))
 ```
 
 ## 16. Hosting & data
@@ -418,7 +467,8 @@ Go skeleton, DB, migrations, sync worker with guards, auth, OpenAPI; admin web (
 Lesson days, sessions, QR, scanning, overrides, outbox write-back (dry-run until the test lesson), student attendance table, admin attendance pages.
 
 **Phase 3 — practice tests**
-Authoring in admin, publishing, generic test engine on mobile, offline packages, attempts, teacher view.
+1. Question bank + importer of AI-reviewed tests (built). 2. AI review of all 60 tests (running). 3. Editor panel
+(built). 4. Telegram review bot. 5. Approval rules and unlocking. 6. Mobile engine, Practice tab, teacher view.
 
 **Phase 4 — vocabulary.** **Phase 5 — parents.** Later: Telegram login/reset, push notifications.
 

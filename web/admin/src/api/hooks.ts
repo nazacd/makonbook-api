@@ -9,6 +9,11 @@ export type Mark = Session['marks'][number];
 export type MarkState = Mark['state'];
 export type WriteStatus = Schemas['WriteStatus'];
 export type Access = Schemas['AdminAccess'];
+export type PracticeTest = Schemas['PracticeTestSummary'];
+export type QuestionSummary = Schemas['PracticeQuestionSummary'];
+export type Question = Schemas['PracticeQuestion'];
+export type QuestionEdit = Schemas['PracticeQuestionEdit'];
+export type Figure = Schemas['PracticeFigure'];
 
 export const meKey = ['me'] as const;
 
@@ -136,12 +141,12 @@ type Member = { type: 'employee' | 'teacher'; id: number };
 export function useGrant() {
   const qc = useQueryClient();
   return useMutation({
-    // The panel only makes branch admins; super admins are managed on the server.
-    mutationFn: ({ member, officeIds }: { member: Member; officeIds: number[] }) =>
+    // The panel only makes branch admins and editors; super admins are managed on the server.
+    mutationFn: ({ member, officeIds, editor }: { member: Member; officeIds: number[]; editor: boolean }) =>
       call(
         api.PUT('/v1/admin/access/{member_type}/{member_id}', {
           params: { header: CSRF, path: { member_type: member.type, member_id: member.id } },
-          body: { office_ids: officeIds },
+          body: { office_ids: officeIds, editor },
         }),
       ),
     onSuccess: (list) => qc.setQueryData(['access'], list),
@@ -168,5 +173,67 @@ export function useStaffSearch(q: string) {
     enabled: q.trim().length >= 2,
     staleTime: 60_000,
     retry: false, // a person is waiting on the answer
+  });
+}
+
+// ---- Practice tests (editors) ----
+
+export function usePracticeTests() {
+  return useQuery({
+    queryKey: ['practice', 'tests'],
+    queryFn: () => call(api.GET('/v1/admin/practice/tests')),
+  });
+}
+
+export function usePracticeTest(code: string) {
+  return useQuery({
+    queryKey: ['practice', 'test', code],
+    queryFn: () => call(api.GET('/v1/admin/practice/tests/{code}', { params: { path: { code } } })),
+  });
+}
+
+export type QueueFilter = {
+  risk?: 'red' | 'yellow' | 'green';
+  status?: 'draft' | 'review' | 'approved';
+  subject?: 'math' | 'english';
+  offset: number;
+};
+
+export function usePracticeQueue(f: QueueFilter) {
+  return useQuery({
+    queryKey: ['practice', 'queue', f],
+    queryFn: () => call(api.GET('/v1/admin/practice/questions', { params: { query: { ...f, limit: 50 } } })),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function usePracticeQuestion(id: string) {
+  return useQuery({
+    queryKey: ['practice', 'question', id],
+    queryFn: () => call(api.GET('/v1/admin/practice/questions/{id}', { params: { path: { id } } })),
+    staleTime: Infinity, // an open editor must not be refreshed under the person's hands
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useSaveQuestion(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: QuestionEdit) =>
+      call(api.PUT('/v1/admin/practice/questions/{id}', { params: { header: CSRF, path: { id } }, body })),
+    onSuccess: (q) => {
+      qc.setQueryData(['practice', 'question', id], q);
+      void qc.invalidateQueries({ queryKey: ['practice', 'tests'] });
+      void qc.invalidateQueries({ queryKey: ['practice', 'test'] });
+      void qc.invalidateQueries({ queryKey: ['practice', 'queue'] });
+    },
+  });
+}
+
+export function useTaxonomy() {
+  return useQuery({
+    queryKey: ['practice', 'taxonomy'],
+    queryFn: () => call(api.GET('/v1/admin/practice/taxonomy')),
+    staleTime: Infinity,
   });
 }

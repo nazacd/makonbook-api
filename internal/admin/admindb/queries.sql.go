@@ -71,7 +71,7 @@ func (q *Queries) DeleteBranchAccess(ctx context.Context, arg DeleteBranchAccess
 
 const getAccess = `-- name: GetAccess :one
 
-SELECT member_type, member_id, name, super, office_ids, granted_at, last_login_at FROM admin_access WHERE member_type = $1 AND member_id = $2
+SELECT member_type, member_id, name, super, office_ids, granted_at, last_login_at, editor FROM admin_access WHERE member_type = $1 AND member_id = $2
 `
 
 type GetAccessParams struct {
@@ -91,6 +91,7 @@ func (q *Queries) GetAccess(ctx context.Context, arg GetAccessParams) (AdminAcce
 		&i.OfficeIds,
 		&i.GrantedAt,
 		&i.LastLoginAt,
+		&i.Editor,
 	)
 	return i, err
 }
@@ -112,7 +113,7 @@ func (q *Queries) GetTeacher(ctx context.Context, id int32) (GetTeacherRow, erro
 }
 
 const listAccess = `-- name: ListAccess :many
-SELECT member_type, member_id, name, super, office_ids, granted_at, last_login_at FROM admin_access ORDER BY super DESC, name, member_id
+SELECT member_type, member_id, name, super, office_ids, granted_at, last_login_at, editor FROM admin_access ORDER BY super DESC, name, member_id
 `
 
 func (q *Queries) ListAccess(ctx context.Context) ([]AdminAccess, error) {
@@ -132,6 +133,7 @@ func (q *Queries) ListAccess(ctx context.Context) ([]AdminAccess, error) {
 			&i.OfficeIds,
 			&i.GrantedAt,
 			&i.LastLoginAt,
+			&i.Editor,
 		); err != nil {
 			return nil, err
 		}
@@ -239,7 +241,7 @@ func (q *Queries) RevokeSession(ctx context.Context, arg RevokeSessionParams) er
 }
 
 const sessionAccess = `-- name: SessionAccess :one
-SELECT a.member_type, a.member_id, a.name, a.super, a.office_ids, a.granted_at, a.last_login_at
+SELECT a.member_type, a.member_id, a.name, a.super, a.office_ids, a.granted_at, a.last_login_at, a.editor
 FROM admin_sessions s
 JOIN admin_access a ON a.member_type = s.member_type AND a.member_id = s.member_id
 WHERE s.token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > $2
@@ -262,6 +264,7 @@ func (q *Queries) SessionAccess(ctx context.Context, arg SessionAccessParams) (A
 		&i.OfficeIds,
 		&i.GrantedAt,
 		&i.LastLoginAt,
+		&i.Editor,
 	)
 	return i, err
 }
@@ -272,7 +275,7 @@ VALUES ($1, $2, $3, $4, $5::int[])
 ON CONFLICT (member_type, member_id) DO UPDATE
 SET super = excluded.super, office_ids = excluded.office_ids,
     name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE admin_access.name END
-RETURNING member_type, member_id, name, super, office_ids, granted_at, last_login_at
+RETURNING member_type, member_id, name, super, office_ids, granted_at, last_login_at, editor
 `
 
 type UpsertAccessParams struct {
@@ -300,18 +303,19 @@ func (q *Queries) UpsertAccess(ctx context.Context, arg UpsertAccessParams) (Adm
 		&i.OfficeIds,
 		&i.GrantedAt,
 		&i.LastLoginAt,
+		&i.Editor,
 	)
 	return i, err
 }
 
 const upsertBranchAccess = `-- name: UpsertBranchAccess :one
-INSERT INTO admin_access (member_type, member_id, name, super, office_ids)
-VALUES ($1, $2, $3, false, $4::int[])
+INSERT INTO admin_access (member_type, member_id, name, super, office_ids, editor)
+VALUES ($1, $2, $3, false, $4::int[], $5)
 ON CONFLICT (member_type, member_id) DO UPDATE
-SET office_ids = excluded.office_ids,
+SET office_ids = excluded.office_ids, editor = excluded.editor,
     name = CASE WHEN excluded.name <> '' THEN excluded.name ELSE admin_access.name END
 WHERE NOT admin_access.super
-RETURNING member_type, member_id, name, super, office_ids, granted_at, last_login_at
+RETURNING member_type, member_id, name, super, office_ids, granted_at, last_login_at, editor
 `
 
 type UpsertBranchAccessParams struct {
@@ -319,16 +323,18 @@ type UpsertBranchAccessParams struct {
 	MemberID   int32
 	Name       string
 	OfficeIds  []int32
+	Editor     bool
 }
 
-// The panel's grant: only ever a branch admin, and never over a super admin
-// (then no row comes back). Super admins are managed on the server.
+// The panel's grant: only ever a branch admin and/or editor, and never over a
+// super admin (then no row comes back). Super admins are managed on the server.
 func (q *Queries) UpsertBranchAccess(ctx context.Context, arg UpsertBranchAccessParams) (AdminAccess, error) {
 	row := q.db.QueryRow(ctx, upsertBranchAccess,
 		arg.MemberType,
 		arg.MemberID,
 		arg.Name,
 		arg.OfficeIds,
+		arg.Editor,
 	)
 	var i AdminAccess
 	err := row.Scan(
@@ -339,6 +345,7 @@ func (q *Queries) UpsertBranchAccess(ctx context.Context, arg UpsertBranchAccess
 		&i.OfficeIds,
 		&i.GrantedAt,
 		&i.LastLoginAt,
+		&i.Editor,
 	)
 	return i, err
 }

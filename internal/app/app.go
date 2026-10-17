@@ -16,6 +16,8 @@ import (
 	"github.com/nazacd/makonbook-api/internal/lessons"
 	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
+	"github.com/nazacd/makonbook-api/internal/platform/r2"
+	"github.com/nazacd/makonbook-api/internal/practice"
 	"github.com/nazacd/makonbook-api/internal/system"
 	"github.com/nazacd/makonbook-api/internal/system/systemdb"
 	adminweb "github.com/nazacd/makonbook-api/web/admin"
@@ -34,6 +36,9 @@ type Deps struct {
 	SecureCookies bool
 	// HolliHopWriteEnabled: attendance is really written to HolliHop (the
 	// worker's setting), so the admin panel can say when it's a dry run.
+	// Figures reads question images for the practice editor (R2, read
+	// only); nil when not configured.
+	Figures              *r2.Client
 	HolliHopWriteEnabled bool
 	// AdminHost serves the admin panel (empty: no panel).
 	AdminHost string
@@ -56,8 +61,11 @@ func Handler(d Deps) http.Handler {
 	attendanceSvc := attendance.NewService(d.Pool, lessonsSvc)
 	attendance.NewHandler(attendanceSvc, d.Location, authHandler.Require).Register(mux)
 	panel := admin.Panel{
-		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory,
+		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory, Practice: practice.NewService(d.Pool),
 		Location: d.Location, WriteEnabled: d.HolliHopWriteEnabled,
+	}
+	if d.Figures != nil {
+		panel.Figures = d.Figures
 	}
 	admin.NewHandler(admin.NewService(d.Pool, d.HolliHop), panel, d.TrustProxy, d.SecureCookies).Register(mux)
 

@@ -5,6 +5,8 @@
 //	makonbook sync full|incremental      run one HolliHop sync now
 //	makonbook migrate up|down|status     manage database migrations
 //	makonbook reset-password student|teacher <id>
+//	makonbook admin …                    admin panel access (see adminUsage)
+//	makonbook practice import|list       practice tests (see practiceUsage)
 package main
 
 import (
@@ -37,6 +39,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/platform/logging"
 	"github.com/nazacd/makonbook-api/internal/platform/migrate"
 	"github.com/nazacd/makonbook-api/internal/platform/postgres"
+	"github.com/nazacd/makonbook-api/internal/platform/r2"
 	hhsync "github.com/nazacd/makonbook-api/internal/sync"
 )
 
@@ -53,7 +56,7 @@ commands:
   reset-password student|teacher <id>
                             back to the default password (last 4 digits of the phone),
                             unlock the account and log out everywhere
-` + adminUsage
+` + adminUsage + practiceUsage
 
 var errUsage = errors.New("invalid usage")
 
@@ -108,6 +111,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return syncOnce(ctx, cfg, log, hhsync.Mode(sub), len(args) == 3, stdout)
 	case "admin":
 		return runAdmin(ctx, cfg, args, stdout)
+	case "practice":
+		return runPractice(ctx, cfg, args, stdout)
 	case "reset-password":
 		id, _ := strconv.ParseInt(arg, 10, 32) // validated in validArgs
 		return resetPassword(ctx, cfg, sub, int32(id), stdout)
@@ -129,6 +134,8 @@ func validArgs(args []string) bool {
 		return (args[1] == people.KindStudent || args[1] == people.KindTeacher) && err == nil
 	case len(args) >= 2 && args[0] == "admin":
 		return validAdminArgs(args)
+	case len(args) >= 2 && args[0] == "practice":
+		return validPracticeArgs(args)
 	case (len(args) == 2 || len(args) == 3) && args[0] == "sync":
 		modeOK := args[1] == string(hhsync.ModeFull) || args[1] == string(hhsync.ModeIncremental)
 		return modeOK && (len(args) == 2 || args[2] == "--allow-mass-change")
@@ -168,6 +175,12 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	deps := app.Deps{Pool: pool, Log: log, Location: cfg.Location, TrustProxy: cfg.TrustProxy, SecureCookies: cfg.Env == config.EnvProduction,
 		HolliHopWriteEnabled: cfg.HolliHopWriteEnabled,
 		AdminHost:            cfg.AdminHost,
+	}
+	if cfg.R2Endpoint != "" {
+		deps.Figures = &r2.Client{Endpoint: cfg.R2Endpoint, Bucket: cfg.R2Bucket, Region: cfg.R2Region,
+			AccessKey: cfg.R2AccessKeyID, SecretKey: cfg.R2SecretAccessKey}
+	} else {
+		log.Warn("R2_* not set: the practice editor shows no images")
 	}
 	if cfg.HolliHopBaseURL != "" && cfg.HolliHopAuthKey != "" {
 		deps.HolliHop = hollihop.New(cfg.HolliHopBaseURL, cfg.HolliHopAuthKey)

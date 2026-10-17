@@ -16,6 +16,7 @@ type AdminAccess struct {
 	OfficeIds   []int32
 	GrantedAt   pgtype.Timestamptz
 	LastLoginAt pgtype.Timestamptz
+	Editor      bool
 }
 
 type AdminSession struct {
@@ -158,6 +159,65 @@ type Office struct {
 	Name      string
 	UtcOffset string
 	UpdatedAt pgtype.Timestamptz
+}
+
+type PracticeTest struct {
+	ID        pgtype.UUID
+	Code      string
+	Title     string
+	CreatedAt pgtype.Timestamptz
+}
+
+type PracticeTestQuestion struct {
+	TestID     pgtype.UUID
+	Subject    string
+	Module     int16
+	Position   int16
+	QuestionID pgtype.UUID
+}
+
+type Question struct {
+	ID          pgtype.UUID
+	Subject     string
+	Type        string
+	ContentHash string
+	Passage     pgtype.Text
+	Stem        string
+	Choices     []byte
+	Figures     []byte
+	Correct     pgtype.Text
+	Accepted    []string
+	Explanation string
+	Domain      string
+	Skill       string
+	Difficulty  pgtype.Text
+	Status      string
+	AiRisk      pgtype.Text
+	Version     int32
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	ApprovedAt  pgtype.Timestamptz
+}
+
+type QuestionAiReview struct {
+	ID         int64
+	QuestionID pgtype.UUID
+	TestID     pgtype.UUID
+	Qid        string
+	CsvID      int32
+	Risk       string
+	Verdict    string
+	Record     []byte
+	ImportedAt pgtype.Timestamptz
+}
+
+type QuestionVersion struct {
+	QuestionID pgtype.UUID
+	Version    int32
+	Content    []byte
+	Source     string
+	CreatedBy  pgtype.Text
+	CreatedAt  pgtype.Timestamptz
 }
 
 type ScheduleItem struct {

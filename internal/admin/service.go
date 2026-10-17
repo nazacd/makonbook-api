@@ -35,7 +35,7 @@ var (
 	ErrUnavailable     = errors.New("HolliHop isn't answering; try again in a minute")
 	ErrUnauthorized    = errors.New("not signed in")
 	ErrNotFound        = errors.New("no such admin")
-	ErrInvalid         = errors.New("a branch admin needs at least one branch")
+	ErrInvalid         = errors.New("give at least one branch, or the editor right")
 	ErrUnknownTeacher  = errors.New("no such teacher in MakonBook (only teachers with classes are synced)")
 	ErrUnknownEmployee = errors.New("no such employee in HolliHop")
 	ErrFired           = errors.New("fired in HolliHop")
@@ -64,7 +64,11 @@ type Principal struct {
 	Name       string
 	Super      bool
 	OfficeIDs  []int32 // ignored for super admins
+	Editor     bool    // may edit practice content (super admins may too)
 }
+
+// CanEdit reports whether the admin may edit practice tests and questions.
+func (p Principal) CanEdit() bool { return p.Super || p.Editor }
 
 // Scope is the branches the admin may see and change.
 func (p Principal) Scope() scope.Offices {
@@ -207,7 +211,7 @@ func (s *Service) Grant(ctx context.Context, memberType string, memberID int32, 
 	if super {
 		officeIDs = []int32{}
 	}
-	name, err := s.checkGrant(ctx, memberType, memberID, name, super, officeIDs)
+	name, err := s.checkGrant(ctx, memberType, memberID, name, super || len(officeIDs) > 0, officeIDs)
 	if err != nil {
 		return admindb.AdminAccess{}, err
 	}
@@ -228,16 +232,20 @@ func (s *Service) Grant(ctx context.Context, memberType string, memberID int32, 
 	return a, err
 }
 
-// GrantBranch is the panel's grant: it makes or changes a branch admin, and
-// never touches a super admin (ErrSuperProtected) — a super admin can't
-// demote, remove or create another, or themselves, from the panel.
-func (s *Service) GrantBranch(ctx context.Context, memberType string, memberID int32, officeIDs []int32) (admindb.AdminAccess, error) {
-	name, err := s.checkGrant(ctx, memberType, memberID, "", false, officeIDs)
+// GrantBranch is the panel's grant: it makes or changes a branch admin and/or
+// an editor (editing needs no branches), and never touches a super admin
+// (ErrSuperProtected) — a super admin can't demote, remove or create another,
+// or themselves, from the panel.
+func (s *Service) GrantBranch(ctx context.Context, memberType string, memberID int32, officeIDs []int32, editor bool) (admindb.AdminAccess, error) {
+	if officeIDs == nil {
+		officeIDs = []int32{}
+	}
+	name, err := s.checkGrant(ctx, memberType, memberID, "", editor || len(officeIDs) > 0, officeIDs)
 	if err != nil {
 		return admindb.AdminAccess{}, err
 	}
 	a, err := admindb.New(s.pool).UpsertBranchAccess(ctx, admindb.UpsertBranchAccessParams{
-		MemberType: memberType, MemberID: memberID, Name: name, OfficeIds: officeIDs,
+		MemberType: memberType, MemberID: memberID, Name: name, OfficeIds: officeIDs, Editor: editor,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return admindb.AdminAccess{}, ErrSuperProtected
@@ -246,11 +254,12 @@ func (s *Service) GrantBranch(ctx context.Context, memberType string, memberID i
 }
 
 // checkGrant validates a grant and returns the person's name.
-func (s *Service) checkGrant(ctx context.Context, memberType string, memberID int32, name string, super bool, officeIDs []int32) (string, error) {
+// granted says the grant gives some right (super, a branch, or editing).
+func (s *Service) checkGrant(ctx context.Context, memberType string, memberID int32, name string, granted bool, officeIDs []int32) (string, error) {
 	if memberType != TypeEmployee && memberType != TypeTeacher {
 		return "", fmt.Errorf("member type must be %s or %s", TypeEmployee, TypeTeacher)
 	}
-	if !super && len(officeIDs) == 0 {
+	if !granted {
 		return "", ErrInvalid
 	}
 	if err := s.checkOffices(ctx, officeIDs); err != nil {
@@ -373,7 +382,7 @@ func (s *Service) List(ctx context.Context) ([]admindb.AdminAccess, error) {
 }
 
 func principal(a admindb.AdminAccess) Principal {
-	return Principal{MemberType: a.MemberType, MemberID: a.MemberID, Name: a.Name, Super: a.Super, OfficeIDs: a.OfficeIds}
+	return Principal{MemberType: a.MemberType, MemberID: a.MemberID, Name: a.Name, Super: a.Super, OfficeIDs: a.OfficeIds, Editor: a.Editor}
 }
 
 func hash(token string) []byte {

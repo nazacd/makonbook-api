@@ -25,9 +25,12 @@ type errorBody struct {
 }
 
 type errorDetail struct {
-	Code      string `json:"code"`
-	Message   string `json:"message"`
-	RequestID string `json:"request_id,omitempty"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// Fields: what is wrong with each field of the request, when a form
+	// was rejected (the page shows each next to its field).
+	Fields    map[string]string `json:"fields,omitempty"`
+	RequestID string            `json:"request_id,omitempty"`
 }
 
 // WriteJSON writes v as a JSON response with the given status.
@@ -67,4 +70,14 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 // NotFound answers any request that matched no route.
 func NotFound(w http.ResponseWriter, r *http.Request) {
 	WriteError(w, r, http.StatusNotFound, CodeNotFound, "no such endpoint")
+}
+
+// WriteFieldErrors is WriteError for a rejected form, with a message per field.
+func WriteFieldErrors(w http.ResponseWriter, r *http.Request, status int, code, message string, fields map[string]string) {
+	WriteJSON(w, r, status, errorBody{Error: errorDetail{
+		Code:      code,
+		Message:   message,
+		Fields:    fields,
+		RequestID: RequestID(r.Context()),
+	}})
 }

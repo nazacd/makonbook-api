@@ -553,8 +553,10 @@ export interface paths {
         };
         get?: never;
         /**
-         * Make someone a branch admin, or change their branches (super admins only)
-         * @description The name comes from HolliHop. The panel only manages branch admins:
+         * Make someone a branch admin and/or practice editor, or change that (super admins only)
+         * @description The name comes from HolliHop. An editor needs no branches, but a grant
+         *     must give at least one branch or `editor`. The panel only manages
+         *     branch admins and editors:
          *     it can't make anyone a super admin, nor change any super admin
          *     (another one or yourself) — 403 `super_admin_protected`. Super admins
          *     are managed on the server (`makonbook admin grant|revoke`).
@@ -580,6 +582,115 @@ export interface paths {
         };
         /** Search HolliHop's employees, to give one access (super admins only) */
         get: operations["adminFindStaff"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/practice/tests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Practice tests and how far their review has come (editors) */
+        get: operations["adminPracticeTests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/practice/tests/{code}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One test with its questions in order (editors) */
+        get: operations["adminPracticeTest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/practice/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Questions to work on, red first, then yellow, then green (editors) */
+        get: operations["adminPracticeQuestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/practice/questions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** A question with its AI reviews and versions (editors) */
+        get: operations["adminPracticeQuestion"];
+        /**
+         * Save an edit as a new version (editors)
+         * @description The whole content, plus the version it was made on. An approved
+         *     question goes back to review. Subject and type don't change.
+         */
+        put: operations["adminPracticeUpdateQuestion"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/practice/taxonomy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The digital SAT's domains and skills, per subject (editors) */
+        get: operations["adminPracticeTaxonomy"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/practice/figures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A question image from the bank's R2 bucket (editors) */
+        get: operations["adminPracticeFigure"];
         put?: never;
         post?: never;
         delete?: never;
@@ -728,12 +839,142 @@ export interface components {
             member_id: number;
             name: string;
             super: boolean;
-            /** @description Empty for super admins */
+            /** @description May edit practice content (super admins may anyway) */
+            editor: boolean;
+            /** @description Empty for super admins and editors only */
             offices: components["schemas"]["Office"][];
             /** Format: date-time */
             granted_at: string;
             /** Format: date-time */
             last_login_at: string | null;
+        };
+        PracticeTestSummary: {
+            /** @description The bank's test id, e.g. DAY12 */
+            code: string;
+            title: string;
+            questions: number;
+            approved: number;
+            /** @description Red questions not yet approved */
+            red: number;
+            /** @description Yellow questions not yet approved */
+            yellow: number;
+            /** @description Questions other tests use too */
+            shared: number;
+            /** @description Every question approved: students can take it */
+            open: boolean;
+        };
+        PracticePlace: {
+            test: string;
+            /** @enum {string} */
+            subject: "math" | "english";
+            /** @enum {integer} */
+            module: 1 | 2;
+            position: number;
+        };
+        PracticeQuestionSummary: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            subject: "math" | "english";
+            /** @enum {string} */
+            type: "mcq" | "grid_in";
+            /** @enum {string} */
+            status: "draft" | "review" | "approved";
+            /** @enum {string|null} */
+            ai_risk: "red" | "yellow" | "green" | null;
+            /** @description The start of the question as plain text */
+            preview: string;
+            version: number;
+            places: components["schemas"]["PracticePlace"][];
+            position?: components["schemas"]["PracticePlace"];
+        };
+        PracticeFigure: {
+            /** @description R2 object key */
+            key: string;
+            kind: string;
+            alt: string;
+        };
+        /**
+         * @description Text fields use the content format: paragraphs, `\( \)` and `\[ \]` math,
+         *     `*italic*`, `**bold**`, `<u>underline</u>`, `- ` lists, pipe tables and
+         *     `![alt](r2:key)` figures.
+         */
+        PracticeContent: {
+            passage: string | null;
+            stem: string;
+            /** @description A–D, for mcq */
+            choices: {
+                [key: string]: string;
+            } | null;
+            figures: components["schemas"]["PracticeFigure"][];
+            /** @description The letter */
+            correct: string | null;
+            /** @description Every accepted form */
+            accepted: string[] | null;
+            explanation: string;
+            domain: string;
+            skill: string;
+            /**
+             * @description An estimate
+             * @enum {string|null}
+             */
+            difficulty: "easy" | "medium" | "hard" | null;
+        };
+        PracticeQuestion: components["schemas"]["PracticeContent"] & {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            subject: "math" | "english";
+            /** @enum {string} */
+            type: "mcq" | "grid_in";
+            /** @enum {string} */
+            status: "draft" | "review" | "approved";
+            /** @enum {string|null} */
+            ai_risk: "red" | "yellow" | "green" | null;
+            version: number;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            approved_at: string | null;
+            places: components["schemas"]["PracticePlace"][];
+            reviews: {
+                test: string;
+                qid: string;
+                /** @enum {string} */
+                risk: "red" | "yellow" | "green";
+                verdict: string;
+                /** @description The AI review's whole record (makonbook-questionbank format) */
+                record: Record<string, never>;
+                /** Format: date-time */
+                imported_at: string;
+            }[];
+            /** @description Newest first */
+            versions: {
+                version: number;
+                /** @enum {string} */
+                source: "import" | "editor";
+                created_by: string | null;
+                /** Format: date-time */
+                created_at: string;
+                content: Record<string, never>;
+            }[];
+        };
+        PracticeQuestionEdit: {
+            /** @description The version the edit was made on */
+            version: number;
+            passage?: string | null;
+            stem: string;
+            choices?: {
+                [key: string]: string;
+            } | null;
+            figures?: components["schemas"]["PracticeFigure"][] | null;
+            correct?: string;
+            accepted?: string[] | null;
+            explanation: string;
+            domain: string;
+            skill: string;
+            /** @enum {string} */
+            difficulty?: "easy" | "medium" | "hard" | "";
         };
         AdminLoginRequest: {
             /** @description HolliHop login */
@@ -751,6 +992,8 @@ export interface components {
             member_id: number;
             /** @description Sees every branch and manages the access list */
             super: boolean;
+            /** @description May edit practice tests (true for super admins) */
+            editor: boolean;
             /** @description The branches this admin can see (all of them, for a super admin). */
             offices: components["schemas"]["Office"][];
         };
@@ -960,14 +1203,27 @@ export interface components {
                  * @description Stable machine-readable code.
                  * @enum {string}
                  */
-                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired";
+                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question";
                 /** @description Human-readable explanation; may change. */
                 message: string;
+                /** @description For a rejected form (`invalid_question`): what is wrong, per field (e.g. `stem`, `choices.B`). */
+                fields?: {
+                    [key: string]: string;
+                };
                 request_id?: string;
             };
         };
     };
     responses: {
+        /** @description The question */
+        PracticeQuestion: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["PracticeQuestion"];
+            };
+        };
         /** @description The session as the admin panel shows it */
         AdminAttendanceSession: {
             headers: {
@@ -1895,7 +2151,10 @@ export interface operations {
                      * @constant
                      */
                     super?: false;
+                    /** @description May be empty for an editor only */
                     office_ids: number[];
+                    /** @description May edit practice tests and questions */
+                    editor?: boolean;
                 };
             };
         };
@@ -1987,6 +2246,209 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    adminPracticeTests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every loaded test */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        tests: components["schemas"]["PracticeTestSummary"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    adminPracticeTest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description e.g. DAY12 */
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The test */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PracticeTestSummary"] & {
+                        /** @description The test's questions in order (each with its `position`) */
+                        slots: components["schemas"]["PracticeQuestionSummary"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    adminPracticeQuestions: {
+        parameters: {
+            query?: {
+                risk?: "red" | "yellow" | "green";
+                status?: "draft" | "review" | "approved";
+                subject?: "math" | "english";
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of questions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        questions: components["schemas"]["PracticeQuestionSummary"][];
+                        /** @description All questions matching the filters */
+                        total: number;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    adminPracticeQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["PracticeQuestion"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    adminPracticeUpdateQuestion: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PracticeQuestionEdit"];
+            };
+        };
+        responses: {
+            200: components["responses"]["PracticeQuestion"];
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `version_conflict`: someone saved the question after it was opened */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_question`, with `fields` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    adminPracticeTaxonomy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description subject → domain → skills */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        subjects: {
+                            [key: string]: {
+                                [key: string]: string[];
+                            };
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    adminPracticeFigure: {
+        parameters: {
+            query: {
+                /** @description R2 key as in the question, e.g. sat/question_images/x.png */
+                key: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The image */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": string;
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            502: components["responses"]["Error"];
             503: components["responses"]["Error"];
         };
     };
