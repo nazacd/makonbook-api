@@ -5,6 +5,8 @@
 //	makonbook sync full|incremental      run one HolliHop sync now
 //	makonbook migrate up|down|status     manage database migrations
 //	makonbook reset-password student|teacher <id>
+//	makonbook admin …                    admin panel access (see adminUsage)
+//	makonbook practice import|list       practice tests (see practiceUsage)
 package main
 
 import (
@@ -53,7 +55,7 @@ commands:
   reset-password student|teacher <id>
                             back to the default password (last 4 digits of the phone),
                             unlock the account and log out everywhere
-` + adminUsage
+` + adminUsage + practiceUsage
 
 var errUsage = errors.New("invalid usage")
 
@@ -108,6 +110,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return syncOnce(ctx, cfg, log, hhsync.Mode(sub), len(args) == 3, stdout)
 	case "admin":
 		return runAdmin(ctx, cfg, args, stdout)
+	case "practice":
+		return runPractice(ctx, cfg, args, stdout)
 	case "reset-password":
 		id, _ := strconv.ParseInt(arg, 10, 32) // validated in validArgs
 		return resetPassword(ctx, cfg, sub, int32(id), stdout)
@@ -129,6 +133,8 @@ func validArgs(args []string) bool {
 		return (args[1] == people.KindStudent || args[1] == people.KindTeacher) && err == nil
 	case len(args) >= 2 && args[0] == "admin":
 		return validAdminArgs(args)
+	case len(args) >= 2 && args[0] == "practice":
+		return validPracticeArgs(args)
 	case (len(args) == 2 || len(args) == 3) && args[0] == "sync":
 		modeOK := args[1] == string(hhsync.ModeFull) || args[1] == string(hhsync.ModeIncremental)
 		return modeOK && (len(args) == 2 || args[2] == "--allow-mass-change")

@@ -262,6 +262,36 @@ curl -s -c /tmp/mb -H 'X-MakonBook-Admin: 1' -H 'Content-Type: application/json'
 curl -s -b /tmp/mb https://api.makonbook.uz/v1/admin/me; rm -f /tmp/mb
 ```
 
+## Practice tests: loading reviewed tests
+
+Reviewed tests live in the private repository `nazacd/makonbook-questionbank`,
+one folder per test. The server reads them from a read-only checkout. Once:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/questionbank -N "" -C "makonbook server"
+cat ~/.ssh/questionbank.pub
+```
+
+On GitHub, open the repository's **Settings → Deploy keys → Add deploy key**,
+paste that key, and leave "Allow write access" **off**. Then:
+
+```bash
+GIT_SSH_COMMAND="ssh -i ~/.ssh/questionbank" \
+  git clone git@github.com:nazacd/makonbook-questionbank.git /opt/makonbook-questionbank
+```
+
+Each time new tests have been reviewed (in `/opt/makonbook-api`):
+
+```bash
+GIT_SSH_COMMAND="ssh -i ~/.ssh/questionbank" git -C /opt/makonbook-questionbank pull
+docker compose run --rm -v /opt/makonbook-questionbank:/questionbank:ro api practice import /questionbank
+docker compose run --rm api practice list
+```
+
+`practice import` loads the tests that aren't loaded yet and skips the rest.
+A test in the pilot's old format (DAY1) is refused until its review is re-run.
+Every test stays locked until a teacher has approved all its questions.
+
 ## Everyday operations
 
 | Task | Command (in `/opt/makonbook-api`) |
@@ -272,6 +302,7 @@ curl -s -b /tmp/mb https://api.makonbook.uz/v1/admin/me; rm -f /tmp/mb
 | Sync now | `docker compose run --rm api sync incremental` |
 | Sync blocked by the mass-change guard, change is real | `docker compose run --rm api sync full --allow-mass-change` |
 | Migration state | `docker compose run --rm api migrate status` |
+| Practice tests and their review progress | `docker compose run --rm api practice list` |
 | Stop / start | `docker compose stop` / `docker compose up -d` |
 
 The shared `db` container is its own Compose project, `/opt/sat-makon/postgres`.
