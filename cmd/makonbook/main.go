@@ -39,6 +39,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/platform/logging"
 	"github.com/nazacd/makonbook-api/internal/platform/migrate"
 	"github.com/nazacd/makonbook-api/internal/platform/postgres"
+	"github.com/nazacd/makonbook-api/internal/platform/r2"
 	hhsync "github.com/nazacd/makonbook-api/internal/sync"
 )
 
@@ -174,6 +175,12 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	deps := app.Deps{Pool: pool, Log: log, Location: cfg.Location, TrustProxy: cfg.TrustProxy, SecureCookies: cfg.Env == config.EnvProduction,
 		HolliHopWriteEnabled: cfg.HolliHopWriteEnabled,
 		AdminHost:            cfg.AdminHost,
+	}
+	if cfg.R2Endpoint != "" {
+		deps.Figures = &r2.Client{Endpoint: cfg.R2Endpoint, Bucket: cfg.R2Bucket, Region: cfg.R2Region,
+			AccessKey: cfg.R2AccessKeyID, SecretKey: cfg.R2SecretAccessKey}
+	} else {
+		log.Warn("R2_* not set: the practice editor shows no images")
 	}
 	if cfg.HolliHopBaseURL != "" && cfg.HolliHopAuthKey != "" {
 		deps.HolliHop = hollihop.New(cfg.HolliHopBaseURL, cfg.HolliHopAuthKey)

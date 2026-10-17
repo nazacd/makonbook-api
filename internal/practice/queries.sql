@@ -70,3 +70,67 @@ JOIN practice_test_questions tq ON tq.test_id = t.id
 JOIN questions q ON q.id = tq.question_id
 GROUP BY t.id
 ORDER BY length(t.code), t.code;
+
+-- name: TestSlots :many
+SELECT tq.subject, tq.module, tq.position, q.id, q.type, q.status, q.ai_risk, q.passage, q.stem, q.version,
+       (SELECT count(*) FROM practice_test_questions o WHERE o.question_id = q.id)::int AS uses
+FROM practice_test_questions tq
+JOIN questions q ON q.id = tq.question_id
+WHERE tq.test_id = @test_id
+ORDER BY tq.subject, tq.module, tq.position;
+
+-- Questions to work on, worst first: filters are optional.
+-- name: ListQuestions :many
+SELECT q.id, q.subject, q.type, q.status, q.ai_risk, q.passage, q.stem, q.version, q.updated_at
+FROM questions q
+WHERE (sqlc.narg('risk')::text IS NULL OR q.ai_risk = sqlc.narg('risk'))
+  AND (sqlc.narg('status')::text IS NULL OR q.status = sqlc.narg('status'))
+  AND (sqlc.narg('subject')::text IS NULL OR q.subject = sqlc.narg('subject'))
+ORDER BY coalesce(array_position(ARRAY['red', 'yellow', 'green'], q.ai_risk), 4), q.created_at, q.id
+LIMIT @lim OFFSET @off;
+
+-- name: CountQuestions :one
+SELECT count(*)::int
+FROM questions q
+WHERE (sqlc.narg('risk')::text IS NULL OR q.ai_risk = sqlc.narg('risk'))
+  AND (sqlc.narg('status')::text IS NULL OR q.status = sqlc.narg('status'))
+  AND (sqlc.narg('subject')::text IS NULL OR q.subject = sqlc.narg('subject'));
+
+-- Where questions are used: test, subject, module, position.
+-- name: QuestionPlaces :many
+SELECT tq.question_id, t.code, tq.subject, tq.module, tq.position
+FROM practice_test_questions tq
+JOIN practice_tests t ON t.id = tq.test_id
+WHERE tq.question_id = ANY (@ids::uuid[])
+ORDER BY length(t.code), t.code, tq.module, tq.position;
+
+-- name: GetQuestion :one
+SELECT * FROM questions WHERE id = @id;
+
+-- name: LockQuestion :one
+SELECT * FROM questions WHERE id = @id FOR UPDATE;
+
+-- name: QuestionReviews :many
+SELECT t.code, r.qid, r.risk, r.verdict, r.record, r.imported_at
+FROM question_ai_reviews r
+JOIN practice_tests t ON t.id = r.test_id
+WHERE r.question_id = @question_id
+ORDER BY length(t.code), t.code;
+
+-- name: QuestionVersions :many
+SELECT version, content, source, created_by, created_at
+FROM question_versions
+WHERE question_id = @question_id
+ORDER BY version DESC;
+
+-- An editor's change: a new version. An approved question goes back to
+-- review, so a teacher checks the change.
+-- name: UpdateQuestion :one
+UPDATE questions
+SET passage = sqlc.narg('passage'), stem = @stem, choices = sqlc.narg('choices'), figures = @figures,
+    correct = sqlc.narg('correct'), accepted = sqlc.narg('accepted')::text[], explanation = @explanation,
+    domain = @domain, skill = @skill, difficulty = sqlc.narg('difficulty'),
+    version = version + 1, updated_at = now(),
+    status = CASE WHEN status = 'approved' THEN 'review' ELSE status END, approved_at = NULL
+WHERE id = @id
+RETURNING version;

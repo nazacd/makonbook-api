@@ -157,7 +157,7 @@ func TestImport(t *testing.T) {
 		t.Errorf("reload after approval: %v", err)
 	}
 
-	tests, err := im.Tests(ctx)
+	tests, err := NewService(pool).Tests(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -38,7 +38,7 @@ func runPractice(ctx context.Context, cfg config.Config, args []string, stdout i
 	im := practice.Importer{Pool: pool}
 
 	if args[1] == "list" {
-		tests, err := im.Tests(ctx)
+		tests, err := practice.NewService(pool).Tests(ctx)
 		if err != nil {
 			return err
 		}
@@ -47,7 +47,7 @@ func runPractice(ctx context.Context, cfg config.Config, args []string, stdout i
 		}
 		for _, t := range tests {
 			state := "locked"
-			if t.Approved == t.Questions {
+			if t.Open {
 				state = "OPEN"
 			}
 			fmt.Fprintf(stdout, "%-8s %-6s approved %3d/%d  to review: red %d, yellow %d  shared with other tests: %d\n",

@@ -13,12 +13,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/nazacd/makonbook-api/internal/attendance"
 	"github.com/nazacd/makonbook-api/internal/hollihop"
 	"github.com/nazacd/makonbook-api/internal/lessons"
 	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
+	"github.com/nazacd/makonbook-api/internal/platform/r2"
 	"github.com/nazacd/makonbook-api/internal/platform/testdb"
+	"github.com/nazacd/makonbook-api/internal/practice"
 )
 
 var tashkent, _ = time.LoadLocation("Asia/Tashkent")
@@ -62,10 +66,22 @@ func (f *fakeHolliHop) GetEmployee(_ context.Context, id int32) (hollihop.Employ
 }
 
 type env struct {
-	t   *testing.T
-	srv *httptest.Server
-	svc *Service
-	hh  *fakeHolliHop
+	t    *testing.T
+	srv  *httptest.Server
+	svc  *Service
+	hh   *fakeHolliHop
+	pool *pgxpool.Pool
+	figs fakeFigures
+}
+
+// fakeFigures: the bucket's objects by key.
+type fakeFigures map[string]r2.Object
+
+func (f fakeFigures) Get(_ context.Context, key string) (r2.Object, error) {
+	if o, ok := f[key]; ok {
+		return o, nil
+	}
+	return r2.Object{}, r2.ErrNotFound
 }
 
 func setup(t *testing.T) *env {
@@ -147,14 +163,16 @@ func setup(t *testing.T) *env {
 	hh.employees[3] = hollihop.Employee{ID: 3, Fired: true} // fired after being given access
 
 	lessonsSvc := lessons.NewService(pool, tashkent)
+	figs := fakeFigures{}
 	panel := Panel{
 		Lessons: lessonsSvc, Attendance: attendance.NewService(pool, lessonsSvc), People: people.NewDirectory(pool), Location: tashkent,
+		Practice: practice.NewService(pool), Figures: figs,
 	}
 	mux := http.NewServeMux()
 	NewHandler(svc, panel, false, false).Register(mux)
 	srv := httptest.NewServer(httpx.Chain(mux, httpx.WithRequestContext(slog.New(slog.NewTextHandler(io.Discard, nil)))))
 	t.Cleanup(srv.Close)
-	return &env{t: t, srv: srv, svc: svc, hh: hh}
+	return &env{t: t, srv: srv, svc: svc, hh: hh, pool: pool, figs: figs}
 }
 
 func (e *env) do(method, path, cookie string, body any, csrf bool) (int, map[string]any, []*http.Cookie) {

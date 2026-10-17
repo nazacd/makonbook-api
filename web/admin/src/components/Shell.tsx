@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from 'react-router';
+import { Navigate, NavLink, Outlet } from 'react-router';
 
 import { useMe, useSignOut } from '../api/hooks';
 import { SignIn } from '../pages/SignIn';
@@ -20,7 +20,10 @@ export function Shell() {
   if (!me.data) return <SignIn />;
 
   const p = me.data;
-  const scope = p.super ? 'Super admin · all branches' : p.offices.map((o) => o.name).join(', ');
+  const branches = p.super || p.offices.length > 0;
+  const scope = p.super
+    ? 'Super admin · all branches'
+    : [p.offices.map((o) => o.name).join(', '), p.editor ? 'Practice editor' : ''].filter(Boolean).join(' · ');
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -29,10 +32,15 @@ export function Shell() {
           MakonBook
         </div>
         <nav className="nav" aria-label="Main">
-          <NavLink to="/lessons">Lessons</NavLink>
-          <NavLink to="/corrections">Teacher corrections</NavLink>
-          <NavLink to="/writes">HolliHop writes</NavLink>
-          <NavLink to="/issues">HolliHop issues</NavLink>
+          {branches && (
+            <>
+              <NavLink to="/lessons">Lessons</NavLink>
+              <NavLink to="/corrections">Teacher corrections</NavLink>
+              <NavLink to="/writes">HolliHop writes</NavLink>
+              <NavLink to="/issues">HolliHop issues</NavLink>
+            </>
+          )}
+          {p.editor && <NavLink to="/practice">Practice tests</NavLink>}
           {p.super && <NavLink to="/access">Admins</NavLink>}
         </nav>
         <div className="sidebar-foot">
@@ -50,4 +58,11 @@ export function Shell() {
       </main>
     </div>
   );
+}
+
+/** The first page: lessons, or practice tests for an editor with no branches. */
+export function Home() {
+  const me = useMe().data;
+  const editorOnly = me && !me.super && me.offices.length === 0 && me.editor;
+  return <Navigate to={editorOnly ? '/practice' : '/lessons'} replace />;
 }

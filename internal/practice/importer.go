@@ -371,11 +371,3 @@ func text(s *string) pgtype.Text {
 	}
 	return pgtype.Text{String: *s, Valid: true}
 }
-
-// Progress is how far a test's review has come.
-type Progress = practicedb.TestProgressRow
-
-// Tests lists every test with its review progress.
-func (im Importer) Tests(ctx context.Context) ([]Progress, error) {
-	return practicedb.New(im.Pool).TestProgress(ctx)
-}

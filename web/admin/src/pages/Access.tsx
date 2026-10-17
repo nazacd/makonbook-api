@@ -23,7 +23,8 @@ function grantError(error: unknown): string {
   return describe(error);
 }
 
-// Who can use the admin panel, and for which branches. Super admins only.
+// Who can use the admin panel: branch admins (their branches) and practice
+// editors. Super admins only.
 export function AccessPage() {
   const me = useMe().data;
   const access = useAccess(!!me?.super);
@@ -48,13 +49,13 @@ export function AccessPage() {
         <div>
           <h1>Admins</h1>
           <p className="muted">
-            They sign in with their own HolliHop login. Branch admins see only their branches. Super admins are added and
-            removed on the server, not here.
+            They sign in with their own HolliHop login. Branch admins see only their branches; editors fix practice tests.
+            Super admins are added and removed on the server, not here.
           </p>
         </div>
         {editing === null && (
           <button className="btn" onClick={() => setEditing('new')}>
-            Add branch admin
+            Add admin or editor
           </button>
         )}
       </div>
@@ -107,6 +108,7 @@ export function AccessPage() {
                         <span className="chip accent">Super admin</span>
                       ) : (
                         <span className="toolbar">
+                          {a.editor && <span className="chip accent">Editor</span>}
                           {a.offices.map((o) => (
                             <span key={o.id} className="chip plain">
                               {o.name}
@@ -161,9 +163,10 @@ function AccessForm({
 }) {
   const [picked, setPicked] = useState<Member | null>(member);
   const [officeIds, setOfficeIds] = useState<number[]>(initial?.offices.map((o) => o.id) ?? []);
+  const [editor, setEditor] = useState(initial?.editor ?? false);
   const grant = useGrant();
 
-  const valid = picked !== null && officeIds.length > 0;
+  const valid = picked !== null && (officeIds.length > 0 || editor);
   const toggle = (id: number) => setOfficeIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
 
   return (
@@ -171,10 +174,10 @@ function AccessForm({
       className="panel"
       onSubmit={(e) => {
         e.preventDefault();
-        if (picked && valid) grant.mutate({ member: picked, officeIds }, { onSuccess: onDone });
+        if (picked && valid) grant.mutate({ member: picked, officeIds, editor }, { onSuccess: onDone });
       }}>
       <div className="card-head" style={{ margin: 0 }}>
-        <h2>{member ? `Change ${member.name || 'access'}` : 'Add a branch admin'}</h2>
+        <h2>{member ? `Change ${member.name || 'access'}` : 'Add an admin or editor'}</h2>
         <button type="button" className="btn link" onClick={onDone}>
           Cancel
         </button>
@@ -191,7 +194,18 @@ function AccessForm({
             </label>
           ))}
         </div>
-        {officeIds.length === 0 && <span className="small faint">Pick at least one branch.</span>}
+        <span className="small faint">The branches whose lessons and attendance they see. None, for an editor only.</span>
+      </div>
+
+      <div className="field">
+        <label>Practice tests</label>
+        <div className="checks">
+          <label className="check">
+            <input type="checkbox" checked={editor} onChange={(e) => setEditor(e.target.checked)} /> Can edit practice
+            tests and questions
+          </label>
+        </div>
+        {!valid && picked !== null && <span className="small faint">Pick a branch, or make them an editor.</span>}
       </div>
 
       {grant.isError && <div className="field-error" role="alert">{grantError(grant.error)}</div>}

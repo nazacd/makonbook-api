@@ -690,9 +690,11 @@ paths:
       - { name: member_type, in: path, required: true, schema: { type: string, enum: [employee, teacher] } }
       - { name: member_id, in: path, required: true, schema: { type: integer }, description: HolliHop employee or teacher id }
     put:
-      summary: Make someone a branch admin, or change their branches (super admins only)
+      summary: Make someone a branch admin and/or practice editor, or change that (super admins only)
       description: |
-        The name comes from HolliHop. The panel only manages branch admins:
+        The name comes from HolliHop. An editor needs no branches, but a grant
+        must give at least one branch or `editor`. The panel only manages
+        branch admins and editors:
         it can't make anyone a super admin, nor change any super admin
         (another one or yourself) — 403 `super_admin_protected`. Super admins
         are managed on the server (`makonbook admin grant|revoke`).
@@ -710,7 +712,8 @@ paths:
               required: [office_ids]
               properties:
                 super: { type: boolean, const: false, description: "Must be false or absent: super admins are made on the server" }
-                office_ids: { type: array, minItems: 1, items: { type: integer } }
+                office_ids: { type: array, items: { type: integer }, description: "May be empty for an editor only" }
+                editor: { type: boolean, description: May edit practice tests and questions }
       responses:
         "200": { $ref: "#/components/responses/AccessList" }
         "400": { $ref: "#/components/responses/Error" }
@@ -770,6 +773,163 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/practice/tests:
+    get:
+      summary: Practice tests and how far their review has come (editors)
+      operationId: adminPracticeTests
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      responses:
+        "200":
+          description: Every loaded test
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tests]
+                properties:
+                  tests: { type: array, items: { $ref: "#/components/schemas/PracticeTestSummary" } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/practice/tests/{code}:
+    get:
+      summary: One test with its questions in order (editors)
+      operationId: adminPracticeTest
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - { name: code, in: path, required: true, schema: { type: string }, description: "e.g. DAY12" }
+      responses:
+        "200":
+          description: The test
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/PracticeTestSummary"
+                  - type: object
+                    required: [slots]
+                    properties:
+                      slots:
+                        type: array
+                        description: The test's questions in order (each with its `position`)
+                        items: { $ref: "#/components/schemas/PracticeQuestionSummary" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/practice/questions:
+    get:
+      summary: Questions to work on, red first, then yellow, then green (editors)
+      operationId: adminPracticeQuestions
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - { name: risk, in: query, schema: { type: string, enum: [red, yellow, green] } }
+        - { name: status, in: query, schema: { type: string, enum: [draft, review, approved] } }
+        - { name: subject, in: query, schema: { type: string, enum: [math, english] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200":
+          description: A page of questions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [questions, total]
+                properties:
+                  questions: { type: array, items: { $ref: "#/components/schemas/PracticeQuestionSummary" } }
+                  total: { type: integer, description: All questions matching the filters }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/practice/questions/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: A question with its AI reviews and versions (editors)
+      operationId: adminPracticeQuestion
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      responses:
+        "200": { $ref: "#/components/responses/PracticeQuestion" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Save an edit as a new version (editors)
+      description: |
+        The whole content, plus the version it was made on. An approved
+        question goes back to review. Subject and type don't change.
+      operationId: adminPracticeUpdateQuestion
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PracticeQuestionEdit" }
+      responses:
+        "200": { $ref: "#/components/responses/PracticeQuestion" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`version_conflict`: someone saved the question after it was opened"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_question`, with `fields`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/admin/practice/taxonomy:
+    get:
+      summary: The digital SAT's domains and skills, per subject (editors)
+      operationId: adminPracticeTaxonomy
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      responses:
+        "200":
+          description: subject → domain → skills
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [subjects]
+                properties:
+                  subjects:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      additionalProperties: { type: array, items: { type: string } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/practice/figures:
+    get:
+      summary: A question image from the bank's R2 bucket (editors)
+      operationId: adminPracticeFigure
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - { name: key, in: query, required: true, schema: { type: string, maxLength: 300 }, description: "R2 key as in the question, e.g. sat/question_images/x.png" }
+      responses:
+        "200":
+          description: The image
+          content:
+            image/*: { schema: { type: string, format: binary } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
         "503": { $ref: "#/components/responses/Error" }
 
 components:
@@ -922,15 +1082,138 @@ components:
 
     AdminAccess:
       type: object
-      required: [member_type, member_id, name, super, offices, granted_at, last_login_at]
+      required: [member_type, member_id, name, super, editor, offices, granted_at, last_login_at]
       properties:
         member_type: { type: string, enum: [Employee, Teacher] }
         member_id: { type: integer }
         name: { type: string }
         super: { type: boolean }
-        offices: { type: array, items: { $ref: "#/components/schemas/Office" }, description: Empty for super admins }
+        editor: { type: boolean, description: May edit practice content (super admins may anyway) }
+        offices: { type: array, items: { $ref: "#/components/schemas/Office" }, description: Empty for super admins and editors only }
         granted_at: { type: string, format: date-time }
         last_login_at: { type: [string, "null"], format: date-time }
+
+    PracticeTestSummary:
+      type: object
+      required: [code, title, questions, approved, red, yellow, shared, open]
+      properties:
+        code: { type: string, description: "The bank's test id, e.g. DAY12" }
+        title: { type: string }
+        questions: { type: integer }
+        approved: { type: integer }
+        red: { type: integer, description: Red questions not yet approved }
+        yellow: { type: integer, description: Yellow questions not yet approved }
+        shared: { type: integer, description: Questions other tests use too }
+        open: { type: boolean, description: "Every question approved: students can take it" }
+
+    PracticePlace:
+      type: object
+      required: [test, subject, module, position]
+      properties:
+        test: { type: string }
+        subject: { type: string, enum: [math, english] }
+        module: { type: integer, enum: [1, 2] }
+        position: { type: integer }
+
+    PracticeQuestionSummary:
+      type: object
+      required: [id, subject, type, status, ai_risk, preview, version, places]
+      properties:
+        id: { type: string, format: uuid }
+        subject: { type: string, enum: [math, english] }
+        type: { type: string, enum: [mcq, grid_in] }
+        status: { type: string, enum: [draft, review, approved] }
+        ai_risk: { type: [string, "null"], enum: [red, yellow, green, null] }
+        preview: { type: string, description: The start of the question as plain text }
+        version: { type: integer }
+        places: { type: array, items: { $ref: "#/components/schemas/PracticePlace" } }
+        position: { $ref: "#/components/schemas/PracticePlace" }
+
+    PracticeFigure:
+      type: object
+      required: [key, kind, alt]
+      properties:
+        key: { type: string, description: R2 object key }
+        kind: { type: string }
+        alt: { type: string }
+
+    PracticeContent:
+      type: object
+      description: |
+        Text fields use the content format: paragraphs, `\( \)` and `\[ \]` math,
+        `*italic*`, `**bold**`, `<u>underline</u>`, `- ` lists, pipe tables and
+        `![alt](r2:key)` figures.
+      required: [passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty]
+      properties:
+        passage: { type: [string, "null"] }
+        stem: { type: string }
+        choices:
+          type: [object, "null"]
+          description: A–D, for mcq
+          additionalProperties: { type: string }
+        figures: { type: array, items: { $ref: "#/components/schemas/PracticeFigure" } }
+        correct: { type: [string, "null"], description: The letter, for mcq }
+        accepted: { type: [array, "null"], items: { type: string }, description: Every accepted form, for grid-in }
+        explanation: { type: string }
+        domain: { type: string }
+        skill: { type: string }
+        difficulty: { type: [string, "null"], enum: [easy, medium, hard, null], description: An estimate }
+
+    PracticeQuestion:
+      allOf:
+        - $ref: "#/components/schemas/PracticeContent"
+        - type: object
+          required: [id, subject, type, status, ai_risk, version, updated_at, approved_at, places, reviews, versions]
+          properties:
+            id: { type: string, format: uuid }
+            subject: { type: string, enum: [math, english] }
+            type: { type: string, enum: [mcq, grid_in] }
+            status: { type: string, enum: [draft, review, approved] }
+            ai_risk: { type: [string, "null"], enum: [red, yellow, green, null] }
+            version: { type: integer }
+            updated_at: { type: string, format: date-time }
+            approved_at: { type: [string, "null"], format: date-time }
+            places: { type: array, items: { $ref: "#/components/schemas/PracticePlace" } }
+            reviews:
+              type: array
+              items:
+                type: object
+                required: [test, qid, risk, verdict, record, imported_at]
+                properties:
+                  test: { type: string }
+                  qid: { type: string }
+                  risk: { type: string, enum: [red, yellow, green] }
+                  verdict: { type: string }
+                  record: { type: object, description: "The AI review's whole record (makonbook-questionbank format)" }
+                  imported_at: { type: string, format: date-time }
+            versions:
+              type: array
+              description: Newest first
+              items:
+                type: object
+                required: [version, source, created_by, created_at, content]
+                properties:
+                  version: { type: integer }
+                  source: { type: string, enum: [import, editor] }
+                  created_by: { type: [string, "null"] }
+                  created_at: { type: string, format: date-time }
+                  content: { type: object }
+
+    PracticeQuestionEdit:
+      type: object
+      required: [version, stem, explanation, domain, skill]
+      properties:
+        version: { type: integer, description: The version the edit was made on }
+        passage: { type: [string, "null"] }
+        stem: { type: string }
+        choices: { type: [object, "null"], additionalProperties: { type: string } }
+        figures: { type: [array, "null"], items: { $ref: "#/components/schemas/PracticeFigure" } }
+        correct: { type: string }
+        accepted: { type: [array, "null"], items: { type: string } }
+        explanation: { type: string }
+        domain: { type: string }
+        skill: { type: string }
+        difficulty: { type: string, enum: [easy, medium, hard, ""] }
 
     AdminLoginRequest:
       type: object
@@ -941,12 +1224,13 @@ components:
 
     AdminProfile:
       type: object
-      required: [name, member_type, member_id, super, offices]
+      required: [name, member_type, member_id, super, editor, offices]
       properties:
         name: { type: string }
         member_type: { type: string, enum: [Employee, Teacher], description: As HolliHop reports it }
         member_id: { type: integer, description: HolliHop employee or teacher id }
         super: { type: boolean, description: Sees every branch and manages the access list }
+        editor: { type: boolean, description: "May edit practice tests (true for super admins)" }
         offices:
           type: array
           description: The branches this admin can see (all of them, for a super admin).
@@ -1193,9 +1477,15 @@ components:
                 - set_by_admin
                 - super_admin_protected
                 - fired
+                - version_conflict
+                - invalid_question
             message:
               type: string
               description: Human-readable explanation; may change.
+            fields:
+              type: object
+              additionalProperties: { type: string }
+              description: "For a rejected form (`invalid_question`): what is wrong, per field (e.g. `stem`, `choices.B`)."
             request_id:
               type: string
 
@@ -1218,6 +1508,11 @@ components:
       schema: { type: string, format: uuid }
 
   responses:
+    PracticeQuestion:
+      description: The question
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/PracticeQuestion" }
     AdminAttendanceSession:
       description: The session as the admin panel shows it
       content:

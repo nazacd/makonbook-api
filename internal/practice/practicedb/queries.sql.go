@@ -11,6 +11,27 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countQuestions = `-- name: CountQuestions :one
+SELECT count(*)::int
+FROM questions q
+WHERE ($1::text IS NULL OR q.ai_risk = $1)
+  AND ($2::text IS NULL OR q.status = $2)
+  AND ($3::text IS NULL OR q.subject = $3)
+`
+
+type CountQuestionsParams struct {
+	Risk    pgtype.Text
+	Status  pgtype.Text
+	Subject pgtype.Text
+}
+
+func (q *Queries) CountQuestions(ctx context.Context, arg CountQuestionsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countQuestions, arg.Risk, arg.Status, arg.Subject)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createTest = `-- name: CreateTest :one
 INSERT INTO practice_tests (code, title) VALUES ($1, $2) RETURNING id, code, title, created_at
 `
@@ -54,6 +75,38 @@ DELETE FROM practice_tests WHERE id = $1
 func (q *Queries) DeleteTest(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteTest, id)
 	return err
+}
+
+const getQuestion = `-- name: GetQuestion :one
+SELECT id, subject, type, content_hash, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty, status, ai_risk, version, created_at, updated_at, approved_at FROM questions WHERE id = $1
+`
+
+func (q *Queries) GetQuestion(ctx context.Context, id pgtype.UUID) (Question, error) {
+	row := q.db.QueryRow(ctx, getQuestion, id)
+	var i Question
+	err := row.Scan(
+		&i.ID,
+		&i.Subject,
+		&i.Type,
+		&i.ContentHash,
+		&i.Passage,
+		&i.Stem,
+		&i.Choices,
+		&i.Figures,
+		&i.Correct,
+		&i.Accepted,
+		&i.Explanation,
+		&i.Domain,
+		&i.Skill,
+		&i.Difficulty,
+		&i.Status,
+		&i.AiRisk,
+		&i.Version,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ApprovedAt,
+	)
+	return i, err
 }
 
 const getTestByCode = `-- name: GetTestByCode :one
@@ -200,6 +253,233 @@ func (q *Queries) LinkQuestion(ctx context.Context, arg LinkQuestionParams) erro
 	return err
 }
 
+const listQuestions = `-- name: ListQuestions :many
+SELECT q.id, q.subject, q.type, q.status, q.ai_risk, q.passage, q.stem, q.version, q.updated_at
+FROM questions q
+WHERE ($1::text IS NULL OR q.ai_risk = $1)
+  AND ($2::text IS NULL OR q.status = $2)
+  AND ($3::text IS NULL OR q.subject = $3)
+ORDER BY coalesce(array_position(ARRAY['red', 'yellow', 'green'], q.ai_risk), 4), q.created_at, q.id
+LIMIT $5 OFFSET $4
+`
+
+type ListQuestionsParams struct {
+	Risk    pgtype.Text
+	Status  pgtype.Text
+	Subject pgtype.Text
+	Off     int32
+	Lim     int32
+}
+
+type ListQuestionsRow struct {
+	ID        pgtype.UUID
+	Subject   string
+	Type      string
+	Status    string
+	AiRisk    pgtype.Text
+	Passage   pgtype.Text
+	Stem      string
+	Version   int32
+	UpdatedAt pgtype.Timestamptz
+}
+
+// Questions to work on, worst first: filters are optional.
+func (q *Queries) ListQuestions(ctx context.Context, arg ListQuestionsParams) ([]ListQuestionsRow, error) {
+	rows, err := q.db.Query(ctx, listQuestions,
+		arg.Risk,
+		arg.Status,
+		arg.Subject,
+		arg.Off,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListQuestionsRow
+	for rows.Next() {
+		var i ListQuestionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Subject,
+			&i.Type,
+			&i.Status,
+			&i.AiRisk,
+			&i.Passage,
+			&i.Stem,
+			&i.Version,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockQuestion = `-- name: LockQuestion :one
+SELECT id, subject, type, content_hash, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty, status, ai_risk, version, created_at, updated_at, approved_at FROM questions WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockQuestion(ctx context.Context, id pgtype.UUID) (Question, error) {
+	row := q.db.QueryRow(ctx, lockQuestion, id)
+	var i Question
+	err := row.Scan(
+		&i.ID,
+		&i.Subject,
+		&i.Type,
+		&i.ContentHash,
+		&i.Passage,
+		&i.Stem,
+		&i.Choices,
+		&i.Figures,
+		&i.Correct,
+		&i.Accepted,
+		&i.Explanation,
+		&i.Domain,
+		&i.Skill,
+		&i.Difficulty,
+		&i.Status,
+		&i.AiRisk,
+		&i.Version,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ApprovedAt,
+	)
+	return i, err
+}
+
+const questionPlaces = `-- name: QuestionPlaces :many
+SELECT tq.question_id, t.code, tq.subject, tq.module, tq.position
+FROM practice_test_questions tq
+JOIN practice_tests t ON t.id = tq.test_id
+WHERE tq.question_id = ANY ($1::uuid[])
+ORDER BY length(t.code), t.code, tq.module, tq.position
+`
+
+type QuestionPlacesRow struct {
+	QuestionID pgtype.UUID
+	Code       string
+	Subject    string
+	Module     int16
+	Position   int16
+}
+
+// Where questions are used: test, subject, module, position.
+func (q *Queries) QuestionPlaces(ctx context.Context, ids []pgtype.UUID) ([]QuestionPlacesRow, error) {
+	rows, err := q.db.Query(ctx, questionPlaces, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QuestionPlacesRow
+	for rows.Next() {
+		var i QuestionPlacesRow
+		if err := rows.Scan(
+			&i.QuestionID,
+			&i.Code,
+			&i.Subject,
+			&i.Module,
+			&i.Position,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const questionReviews = `-- name: QuestionReviews :many
+SELECT t.code, r.qid, r.risk, r.verdict, r.record, r.imported_at
+FROM question_ai_reviews r
+JOIN practice_tests t ON t.id = r.test_id
+WHERE r.question_id = $1
+ORDER BY length(t.code), t.code
+`
+
+type QuestionReviewsRow struct {
+	Code       string
+	Qid        string
+	Risk       string
+	Verdict    string
+	Record     []byte
+	ImportedAt pgtype.Timestamptz
+}
+
+func (q *Queries) QuestionReviews(ctx context.Context, questionID pgtype.UUID) ([]QuestionReviewsRow, error) {
+	rows, err := q.db.Query(ctx, questionReviews, questionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QuestionReviewsRow
+	for rows.Next() {
+		var i QuestionReviewsRow
+		if err := rows.Scan(
+			&i.Code,
+			&i.Qid,
+			&i.Risk,
+			&i.Verdict,
+			&i.Record,
+			&i.ImportedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const questionVersions = `-- name: QuestionVersions :many
+SELECT version, content, source, created_by, created_at
+FROM question_versions
+WHERE question_id = $1
+ORDER BY version DESC
+`
+
+type QuestionVersionsRow struct {
+	Version   int32
+	Content   []byte
+	Source    string
+	CreatedBy pgtype.Text
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) QuestionVersions(ctx context.Context, questionID pgtype.UUID) ([]QuestionVersionsRow, error) {
+	rows, err := q.db.Query(ctx, questionVersions, questionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QuestionVersionsRow
+	for rows.Next() {
+		var i QuestionVersionsRow
+		if err := rows.Scan(
+			&i.Version,
+			&i.Content,
+			&i.Source,
+			&i.CreatedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const raiseRisk = `-- name: RaiseRisk :one
 UPDATE questions
 SET ai_risk = CASE WHEN array_position(ARRAY['green', 'yellow', 'red'], $1::text)
@@ -278,6 +558,61 @@ func (q *Queries) TestProgress(ctx context.Context) ([]TestProgressRow, error) {
 	return items, nil
 }
 
+const testSlots = `-- name: TestSlots :many
+SELECT tq.subject, tq.module, tq.position, q.id, q.type, q.status, q.ai_risk, q.passage, q.stem, q.version,
+       (SELECT count(*) FROM practice_test_questions o WHERE o.question_id = q.id)::int AS uses
+FROM practice_test_questions tq
+JOIN questions q ON q.id = tq.question_id
+WHERE tq.test_id = $1
+ORDER BY tq.subject, tq.module, tq.position
+`
+
+type TestSlotsRow struct {
+	Subject  string
+	Module   int16
+	Position int16
+	ID       pgtype.UUID
+	Type     string
+	Status   string
+	AiRisk   pgtype.Text
+	Passage  pgtype.Text
+	Stem     string
+	Version  int32
+	Uses     int32
+}
+
+func (q *Queries) TestSlots(ctx context.Context, testID pgtype.UUID) ([]TestSlotsRow, error) {
+	rows, err := q.db.Query(ctx, testSlots, testID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TestSlotsRow
+	for rows.Next() {
+		var i TestSlotsRow
+		if err := rows.Scan(
+			&i.Subject,
+			&i.Module,
+			&i.Position,
+			&i.ID,
+			&i.Type,
+			&i.Status,
+			&i.AiRisk,
+			&i.Passage,
+			&i.Stem,
+			&i.Version,
+			&i.Uses,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const touchedQuestions = `-- name: TouchedQuestions :one
 SELECT count(DISTINCT q.id)::int
 FROM practice_test_questions tq
@@ -292,4 +627,50 @@ func (q *Queries) TouchedQuestions(ctx context.Context, testID pgtype.UUID) (int
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const updateQuestion = `-- name: UpdateQuestion :one
+UPDATE questions
+SET passage = $1, stem = $2, choices = $3, figures = $4,
+    correct = $5, accepted = $6::text[], explanation = $7,
+    domain = $8, skill = $9, difficulty = $10,
+    version = version + 1, updated_at = now(),
+    status = CASE WHEN status = 'approved' THEN 'review' ELSE status END, approved_at = NULL
+WHERE id = $11
+RETURNING version
+`
+
+type UpdateQuestionParams struct {
+	Passage     pgtype.Text
+	Stem        string
+	Choices     []byte
+	Figures     []byte
+	Correct     pgtype.Text
+	Accepted    []string
+	Explanation string
+	Domain      string
+	Skill       string
+	Difficulty  pgtype.Text
+	ID          pgtype.UUID
+}
+
+// An editor's change: a new version. An approved question goes back to
+// review, so a teacher checks the change.
+func (q *Queries) UpdateQuestion(ctx context.Context, arg UpdateQuestionParams) (int32, error) {
+	row := q.db.QueryRow(ctx, updateQuestion,
+		arg.Passage,
+		arg.Stem,
+		arg.Choices,
+		arg.Figures,
+		arg.Correct,
+		arg.Accepted,
+		arg.Explanation,
+		arg.Domain,
+		arg.Skill,
+		arg.Difficulty,
+		arg.ID,
+	)
+	var version int32
+	err := row.Scan(&version)
+	return version, err
 }

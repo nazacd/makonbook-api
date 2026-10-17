@@ -52,6 +52,11 @@ type Config struct {
 	AdminHost string
 
 	// Optional Telegram alerts for sync failures. Both or neither.
+	// R2 (read only): SAT MAKON's bucket holding question figures and
+	// screenshots, shown to practice editors. Optional; without it the
+	// editor shows no images.
+	R2Endpoint, R2Bucket, R2Region, R2AccessKeyID, R2SecretAccessKey string
+
 	TelegramBotToken    string
 	TelegramAlertChatID string
 }
@@ -127,6 +132,21 @@ func Load(getenv func(string) string) (Config, error) {
 	cfg.AdminHost = strings.ToLower(strings.TrimSpace(getenv("ADMIN_HOST")))
 	if strings.ContainsAny(cfg.AdminHost, "/: ") {
 		errs = append(errs, fmt.Errorf("ADMIN_HOST must be a bare host name like admin.makonbook.uz, got %q", cfg.AdminHost))
+	}
+
+	cfg.R2Endpoint = strings.TrimSpace(getenv("R2_ENDPOINT_URL"))
+	cfg.R2Bucket = strings.TrimSpace(getenv("R2_BUCKET_NAME"))
+	cfg.R2Region = withDefault(getenv("R2_REGION"), "auto")
+	cfg.R2AccessKeyID = getenv("R2_ACCESS_KEY_ID")
+	cfg.R2SecretAccessKey = getenv("R2_SECRET_ACCESS_KEY")
+	r2Set := 0
+	for _, v := range []string{cfg.R2Endpoint, cfg.R2Bucket, cfg.R2AccessKeyID, cfg.R2SecretAccessKey} {
+		if v != "" {
+			r2Set++
+		}
+	}
+	if r2Set != 0 && r2Set != 4 {
+		errs = append(errs, errors.New("R2_ENDPOINT_URL, R2_BUCKET_NAME, R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY must be set together"))
 	}
 
 	cfg.TelegramBotToken = getenv("TELEGRAM_BOT_TOKEN")

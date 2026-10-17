@@ -12,6 +12,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
 	"github.com/nazacd/makonbook-api/internal/platform/scope"
+	"github.com/nazacd/makonbook-api/internal/practice"
 )
 
 // Panel is what the admin pages read and change, through the features that
@@ -20,6 +21,8 @@ type Panel struct {
 	Lessons    *lessons.Service
 	Attendance *attendance.Service
 	People     *people.Directory
+	Practice   *practice.Service
+	Figures    Figures        // nil: images not configured
 	Location   *time.Location // school time zone, for "today"
 	// WriteEnabled: attendance is really written to HolliHop (not dry run).
 	WriteEnabled bool
@@ -47,6 +50,8 @@ func (h *Handler) registerPanel(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/admin/access/{member_type}/{member_id}", h.RequireSuper(h.grant))
 	mux.HandleFunc("DELETE /v1/admin/access/{member_type}/{member_id}", h.RequireSuper(h.revoke))
 	mux.HandleFunc("GET /v1/admin/staff", h.RequireSuper(h.staff))
+
+	h.registerPractice(mux)
 }
 
 // scopeOf is the signed-in admin's branches, narrowed to ?office_id= if the
@@ -256,6 +261,7 @@ type Access struct {
 	MemberID    int32      `json:"member_id"`
 	Name        string     `json:"name"`
 	Super       bool       `json:"super"`
+	Editor      bool       `json:"editor"`
 	Offices     []Office   `json:"offices"` // empty for super admins
 	GrantedAt   time.Time  `json:"granted_at"`
 	LastLoginAt *time.Time `json:"last_login_at"`
@@ -282,7 +288,8 @@ func (h *Handler) accessList(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]Access, 0, len(list))
 	for _, a := range list {
-		e := Access{MemberType: a.MemberType, MemberID: a.MemberID, Name: a.Name, Super: a.Super, Offices: []Office{}, GrantedAt: a.GrantedAt.Time}
+		e := Access{MemberType: a.MemberType, MemberID: a.MemberID, Name: a.Name, Super: a.Super, Editor: a.Editor,
+			Offices: []Office{}, GrantedAt: a.GrantedAt.Time}
 		for _, id := range a.OfficeIds {
 			e.Offices = append(e.Offices, Office{ID: id, Name: names[id]})
 		}
@@ -295,10 +302,12 @@ func (h *Handler) accessList(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, r, http.StatusOK, accessResponse{Access: out})
 }
 
-// grantRequest: the panel only makes branch admins; super must be false.
+// grantRequest: the panel only makes branch admins and editors; super must
+// be false.
 type grantRequest struct {
 	Super     bool    `json:"super"`
 	OfficeIDs []int32 `json:"office_ids"`
+	Editor    bool    `json:"editor"`
 }
 
 // member reads {member_type}/{member_id}: "employee" or "teacher", and an id.
@@ -328,7 +337,7 @@ func (h *Handler) grant(w http.ResponseWriter, r *http.Request) {
 		h.accessError(w, r, ErrSuperProtected)
 		return
 	}
-	if _, err := h.svc.GrantBranch(r.Context(), typ, id, req.OfficeIDs); err != nil {
+	if _, err := h.svc.GrantBranch(r.Context(), typ, id, req.OfficeIDs, req.Editor); err != nil {
 		h.accessError(w, r, err)
 		return
 	}

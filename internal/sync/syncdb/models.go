@@ -16,6 +16,7 @@ type AdminAccess struct {
 	OfficeIds   []int32
 	GrantedAt   pgtype.Timestamptz
 	LastLoginAt pgtype.Timestamptz
+	Editor      bool
 }
 
 type AdminSession struct {

@@ -246,9 +246,16 @@ Every active student sees every test. A test is **locked until all its questions
 opens; tests open one by one as their review finishes. Scores are shown as an **estimated 200–800** per
 section (College Board uses IRT; we can't reproduce it exactly).
 
-### 9.4 Review by teachers (D21; planned)
-- **Editors**: a list of trusted teachers (any subject), granted by super admins, edit questions and tests
-  in the admin panel (live LaTeX preview, image upload).
+### 9.4 Editing and review by teachers (D21)
+- **Editors** (built: phase 3, step 3): a list of trusted teachers or staff (any subject), granted by super
+  admins in the panel (`admin_access.editor`; an editor needs no branch). In the admin panel: every test with
+  its progress, a queue of questions red first, and a question editor — the form, a live student view
+  (KaTeX as MathML, so the page's strict CSP stays), the AI review (verdict, solves, decision, issues,
+  proposed fix), the bank's original screenshots, and the history. Each save is a new version (`409
+  version_conflict` if someone saved meanwhile; `422 invalid_question` with a message per field: the content
+  format, A–D and a key, numeric grid-in answers, figures placed, domain/skill from the taxonomy). Editing an
+  approved question sends it back to review. Images come from SAT MAKON's R2 bucket through the API
+  (`/v1/admin/practice/figures`, read only, signed with SigV4). Uploading new images: later.
 - **Reviewers**: teachers review through a Telegram bot / Mini App. They solve each question blind first,
   then see the key, explanation and AI findings and approve or report. The number of approvals needed
   depends on the AI risk. Linked to MakonBook by phone number.
@@ -379,6 +386,7 @@ hollihop_outbox(id, session_id FK, group_id, student_client_id, date, pass,
                 status (pending|sent|unchanged|set_manually|dry_run|superseded|failed),
                 attempts, next_attempt_at, last_error, created_at, done_at)   -- built, step 3
 
+-- built (phase 3, step 3): admin_access.editor (practice editors, D21)
 -- built (phase 3, step 1): see 9.2
 questions(id uuid PK, subject, type, content_hash UNIQUE, passage, stem, choices jsonb, figures jsonb,
           correct, accepted text[], explanation, domain, skill, difficulty, status, ai_risk, version, …)
@@ -459,8 +467,8 @@ Go skeleton, DB, migrations, sync worker with guards, auth, OpenAPI; admin web (
 Lesson days, sessions, QR, scanning, overrides, outbox write-back (dry-run until the test lesson), student attendance table, admin attendance pages.
 
 **Phase 3 — practice tests**
-1. Question bank + importer of AI-reviewed tests (built). 2. AI review of all 60 tests (running). 3. Editor panel.
-4. Telegram review bot. 5. Approval rules and unlocking. 6. Mobile engine, Practice tab, teacher view.
+1. Question bank + importer of AI-reviewed tests (built). 2. AI review of all 60 tests (running). 3. Editor panel
+(built). 4. Telegram review bot. 5. Approval rules and unlocking. 6. Mobile engine, Practice tab, teacher view.
 
 **Phase 4 — vocabulary.** **Phase 5 — parents.** Later: Telegram login/reset, push notifications.
 

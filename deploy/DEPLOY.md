@@ -244,7 +244,9 @@ docker compose run --rm api admin list
 docker compose run --rm api admin revoke employee 456  # their sessions end at once
 ```
 
-Once a super admin can sign in, they manage **branch admins** in the panel.
+Once a super admin can sign in, they manage **branch admins** and **practice
+editors** in the panel (Admins → Add admin or editor; an editor needs no
+branch).
 **Super admins are managed only here, with these commands**: the panel can't
 make, change or remove a super admin (not even yourself). The commands refuse
 to remove or demote the last super admin.
@@ -289,6 +291,10 @@ docker compose run --rm api practice list
 ```
 
 `practice import` loads the tests that aren't loaded yet and skips the rest.
+Editors then work on them in the admin panel (Practice tests). To show the
+questions' figures and the bank's original screenshots there, set the `R2_*`
+variables in `.env` (see `env.production.example`; a **read-only** R2 token)
+and `docker compose up -d`.
 A test in the pilot's old format (DAY1) is refused until its review is re-run.
 Every test stays locked until a teacher has approved all its questions.
 

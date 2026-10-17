@@ -16,6 +16,16 @@ func names(body map[string]any, list, field string) []string {
 	return out
 }
 
+func hasEditor(body map[string]any, id float64) bool {
+	items, _ := body["access"].([]any)
+	for _, it := range items {
+		if m := it.(map[string]any); m["member_id"] == id && m["editor"] == true {
+			return true
+		}
+	}
+	return false
+}
+
 // Branch admins see only their branches' lessons and data problems.
 func TestPanelScope(t *testing.T) {
 	e := setup(t)
@@ -97,6 +107,17 @@ func TestAccessManagement(t *testing.T) {
 	}
 	if status, _, _ := e.do("PUT", "/v1/admin/access/employee/4", boss, map[string]any{"office_ids": []int{99}}, true); status != 400 {
 		t.Errorf("unknown branch: %d", status)
+	}
+	// An editor needs no branches; a grant must give something.
+	status, body, _ = e.do("PUT", "/v1/admin/access/employee/4", boss, map[string]any{"office_ids": []int{}, "editor": true}, true)
+	if status != 200 || !hasEditor(body, 4) {
+		t.Errorf("editor-only grant: %d %v", status, body)
+	}
+	if status, _, _ := e.do("PUT", "/v1/admin/access/employee/4", boss, map[string]any{"office_ids": []int{}}, true); status != 400 {
+		t.Errorf("grant of nothing: %d", status)
+	}
+	if status, _, _ := e.do("PUT", "/v1/admin/access/employee/4", boss, map[string]any{"office_ids": []int{4}}, true); status != 200 {
+		t.Errorf("back to branch admin: %d", status)
 	}
 	if status, body, _ := e.do("PUT", "/v1/admin/access/employee/3", boss, map[string]any{"office_ids": []int{3}}, true); status != 422 || code(body) != "fired" {
 		t.Errorf("fired: %d %v", status, body)
