@@ -257,6 +257,9 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .rte-body th { background: var(--surface-2); font-weight: 600; }
 .rte-body .selectedCell { background: var(--accent-soft); }
 .rte-source { border: 0; border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
+.tbar-hint { padding: 0 6px; }
+.rte-note { padding: 6px 10px 0; }
+.rte-body.compact table { margin: 2px 0; }
 .math-node { cursor: pointer; padding: 0 2px; border-radius: 4px; }
 .math-node:hover, .math-node.selected { background: var(--accent-soft); outline: 1px solid var(--accent); }
 .math-node.display { display: block; text-align: center; margin: 6px 0; }
