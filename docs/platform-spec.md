@@ -255,7 +255,18 @@ section (College Board uses IRT; we can't reproduce it exactly).
   version_conflict` if someone saved meanwhile; `422 invalid_question` with a message per field: the content
   format, A–D and a key, numeric grid-in answers, figures placed, domain/skill from the taxonomy). Editing an
   approved question sends it back to review. Images come from SAT MAKON's R2 bucket through the API
-  (`/v1/admin/practice/figures`, read only, signed with SigV4). Uploading new images: later.
+  (`/v1/admin/practice/figures`, read only, signed with SigV4).
+- **Visual editor** (no codes for teachers): every text field is a WYSIWYG editor (TipTap) that reads and
+  writes the same stored text format, so the API, its checks and the apps don't change. Bold, italic,
+  underline (buttons or Ctrl+B/I/U), lists, tables, a "blank" button; math in a Desmos-like field (MathLive:
+  `/` makes a fraction, `^` a power, `sqrt` a root; click a formula to change it); images pasted, dropped or
+  picked, then described. A `</>` button shows the text behind it. Checked on all 9,300 real fields: 99.9 %
+  come back byte-identical, the rest only respaced. The editor's libraries load only on the practice pages.
+- **Uploaded images** (`POST /v1/admin/practice/images`): PNG/JPEG/GIF/WebP up to 5 MB, checked by the API,
+  then put in **MakonBook's own R2 bucket** (`R2_UPLOADS_*`, read-write; SAT MAKON's bucket keeps a read-only
+  key) under `mb/<sha-256>.<ext>`; `practice_images` records each one. Served like the bank's images. A save
+  that uses an image never uploaded is refused. The same bucket will hold the published test packages (9.5). Because of the math editor, the panel's CSP allows
+  inline styles (scripts stay `'self'` only).
 - **Reviewers**: teachers review through a Telegram bot / Mini App. They solve each question blind first,
   then see the key, explanation and AI findings and approve or report. The number of approvals needed
   depends on the AI risk. Linked to MakonBook by phone number.

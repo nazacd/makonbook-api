@@ -134,3 +134,12 @@ SET passage = sqlc.narg('passage'), stem = @stem, choices = sqlc.narg('choices')
     status = CASE WHEN status = 'approved' THEN 'review' ELSE status END, approved_at = NULL
 WHERE id = @id
 RETURNING version;
+
+-- name: InsertImage :exec
+INSERT INTO practice_images (key, content_type, bytes, width, height, uploaded_by)
+VALUES (@key, @content_type, @bytes, @width, @height, @uploaded_by)
+ON CONFLICT (key) DO NOTHING;
+
+-- Which of these uploaded images exist.
+-- name: ExistingImages :many
+SELECT key FROM practice_images WHERE key = ANY (@keys::text[]);

@@ -282,7 +282,9 @@ GIT_SSH_COMMAND="ssh -i ~/.ssh/questionbank" \
   git clone git@github.com:nazacd/makonbook-questionbank.git /opt/makonbook-questionbank
 ```
 
-Each time new tests have been reviewed (in `/opt/makonbook-api`):
+Each time new tests have been reviewed, run `deploy/import-practice.sh`
+(copy it once: `scp deploy/import-practice.sh root@makonbook.uz:/opt/makonbook-api/`,
+then `chmod 700 /opt/makonbook-api/import-practice.sh`). It does:
 
 ```bash
 GIT_SSH_COMMAND="ssh -i ~/.ssh/questionbank" git -C /opt/makonbook-questionbank pull
@@ -290,11 +292,22 @@ docker compose run --rm -v /opt/makonbook-questionbank:/questionbank:ro api prac
 docker compose run --rm api practice list
 ```
 
+To load new tests every night instead, add to `crontab -e`:
+`15 4 * * * /opt/makonbook-api/import-practice.sh >> /var/log/practice-import.log 2>&1`
+
 `practice import` loads the tests that aren't loaded yet and skips the rest.
 Editors then work on them in the admin panel (Practice tests). To show the
 questions' figures and the bank's original screenshots there, set the `R2_*`
 variables in `.env` (see `env.production.example`; a **read-only** R2 token)
 and `docker compose up -d`.
+
+Images editors upload go to **MakonBook's own R2 bucket**, never SAT MAKON's.
+Once, in Cloudflare: **R2 → Create bucket** (e.g. `makonbook`, private), then
+**Manage R2 API Tokens → Create API token** with **Object Read & Write**,
+applied to that bucket only. Put it in `.env` as `R2_UPLOADS_BUCKET`,
+`R2_UPLOADS_ACCESS_KEY_ID` and `R2_UPLOADS_SECRET_ACCESS_KEY` (same account, so
+the endpoint is `R2_ENDPOINT_URL`) and `docker compose up -d`. Without them the
+upload button answers "image uploads aren't set up on the server".
 A test in the pilot's old format (DAY1) is refused until its review is re-run.
 Every test stays locked until a teacher has approved all its questions.
 

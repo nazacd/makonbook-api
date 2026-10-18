@@ -10,7 +10,7 @@ import (
 func TestEditing(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := t.Context()
-	svc := NewService(pool)
+	svc := NewService(pool, nil)
 
 	day := review(t, "DAY8", func(subject string, module, n int, rec map[string]any) {
 		switch {
@@ -145,6 +145,7 @@ func TestCheckText(t *testing.T) {
 		"| a | b |\n|---|---|\n| 1 | 2 |",
 		"I and II are | and ||",
 		"![a line](r2:sat/g.png)",
+		"***bold italic*** and *italic with **bold** inside*",
 	} {
 		if msg := checkText(ok, figures); msg != "" {
 			t.Errorf("%q: %s", ok, msg)
@@ -163,3 +164,13 @@ func TestCheckText(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+func TestUploadsOff(t *testing.T) {
+	svc := NewService(nil, nil)
+	if _, err := svc.UploadImage(t.Context(), []byte("x"), "Editor"); !errors.Is(err, ErrUploadsOff) {
+		t.Errorf("upload without a bucket: %v", err)
+	}
+	if _, err := svc.GetImage(t.Context(), "mb/x.png"); !errors.Is(err, ErrUploadsOff) {
+		t.Errorf("get without a bucket: %v", err)
+	}
+}

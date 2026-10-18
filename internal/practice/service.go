@@ -33,10 +33,14 @@ func (e *InvalidError) Error() string {
 
 // Service is what the admin panel reads and changes in the question bank.
 type Service struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	uploads Store // nil: uploads not configured
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+// NewService: uploads is MakonBook's image bucket, or nil.
+func NewService(pool *pgxpool.Pool, uploads Store) *Service {
+	return &Service{pool: pool, uploads: uploads}
+}
 
 // TestSummary is one test and how far its review has come.
 type TestSummary struct {
@@ -331,7 +335,15 @@ func (s *Service) Update(ctx context.Context, id, editor string, e Edit) (Questi
 			return ErrConflict
 		}
 		e.normalize(cur.Type)
-		if bad := e.Validate(cur.Subject, cur.Type); len(bad) > 0 {
+		bad := e.Validate(cur.Subject, cur.Type)
+		missing, err := missingUploads(ctx, q, e.Figures)
+		if err != nil {
+			return err
+		}
+		if len(missing) > 0 {
+			bad["figures"] = "this image was never uploaded: " + missing[0]
+		}
+		if len(bad) > 0 {
 			return &InvalidError{Fields: bad}
 		}
 		figures, _ := json.Marshal(e.Figures)

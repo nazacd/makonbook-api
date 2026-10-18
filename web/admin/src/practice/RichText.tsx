@@ -1,6 +1,8 @@
 import katex from 'katex';
 import { Fragment, type ReactNode } from 'react';
 
+import { INLINE } from './format';
+
 // Renders the question content format (makonbook-questionbank's
 // tools/prompts/format.md): paragraphs, \( \) and \[ \] math, *italic*,
 // **bold**, <u>underline</u>, "- " lists, pipe tables, ![alt](r2:key)
@@ -17,7 +19,6 @@ function math(tex: string, display: boolean, key: number): ReactNode {
   return <span key={key} className={display ? 'math display' : 'math'} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-const INLINE = /(\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\]|!\[[^\]]*\]\([^)\s]*\)|\*\*[\s\S]+?\*\*|<u>[\s\S]*?<\/u>|\*[^*\s][^*]*?\*|\n)/;
 
 function inline(text: string): ReactNode[] {
   const out: ReactNode[] = [];
@@ -35,6 +36,12 @@ function inline(text: string): ReactNode[] {
       const m = /^!\[([^\]]*)\]\(([^)\s]*)\)$/.exec(part)!;
       const key = m[2]!.startsWith('r2:') ? m[2]!.slice(3) : '';
       out.push(key ? <img key={i} className="figure" src={figureUrl(key)} alt={m[1]} title={m[1]} loading="lazy" /> : <span key={i}>[{m[1]}]</span>);
+    } else if (part.startsWith('***')) {
+      out.push(
+        <b key={i}>
+          <i>{inline(part.slice(3, -3))}</i>
+        </b>,
+      );
     } else if (part.startsWith('**')) {
       out.push(<b key={i}>{inline(part.slice(2, -2))}</b>);
     } else if (part.startsWith('<u>')) {

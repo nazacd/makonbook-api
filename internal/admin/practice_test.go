@@ -1,9 +1,13 @@
 package admin
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"image"
+	pngenc "image/png"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -171,5 +175,94 @@ func TestPracticeFigures(t *testing.T) {
 	}
 	if status, _, _ := get(novza, "sat/g.png"); status != 403 {
 		t.Errorf("branch admin: %d", status)
+	}
+}
+
+func TestPracticeUpload(t *testing.T) {
+	e := setup(t)
+	e.loadTest("DAY5")
+	_, _, boss := e.login("boss", "pw-boss")
+	_, _, novza := e.login("novza", "pw-novza")
+
+	var png bytes.Buffer
+	img := image.NewRGBA(image.Rect(0, 0, 3, 2))
+	if err := pngenc.Encode(&png, img); err != nil {
+		t.Fatal(err)
+	}
+	upload := func(cookie string, data []byte, csrf bool) (int, map[string]any) {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		fw, _ := mw.CreateFormFile("file", "graph.png")
+		_, _ = fw.Write(data)
+		_ = mw.Close()
+		req, _ := http.NewRequestWithContext(t.Context(), "POST", e.srv.URL+"/v1/admin/practice/images", &body)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		req.AddCookie(&http.Cookie{Name: CookieName, Value: cookie})
+		if csrf {
+			req.Header.Set(CSRFHeader, "1")
+		}
+		resp, err := e.srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+
+	status, body := upload(boss, png.Bytes(), true)
+	key, _ := body["key"].(string)
+	if status != 201 || !strings.HasPrefix(key, "mb/") || !strings.HasSuffix(key, ".png") || body["width"] != 3.0 {
+		t.Fatalf("upload: %d %v", status, body)
+	}
+	if obj, ok := e.uploads[key]; !ok || obj.ContentType != "image/png" || !bytes.Equal(obj.Body, png.Bytes()) {
+		t.Errorf("not in the uploads bucket: %v", e.uploads)
+	}
+	if again, body := upload(boss, png.Bytes(), true); again != 201 || body["key"] != key {
+		t.Errorf("same file again: %d %v", again, body)
+	}
+	for name, data := range map[string][]byte{"text": []byte("hello"), "svg": []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`)} {
+		if status, _ := upload(boss, data, true); status != 400 {
+			t.Errorf("%s accepted: %d", name, status)
+		}
+	}
+	if status, _ := upload(boss, png.Bytes(), false); status != 403 {
+		t.Errorf("without CSRF header: %d", status)
+	}
+	if status, _ := upload(novza, png.Bytes(), true); status != 403 {
+		t.Errorf("branch admin: %d", status)
+	}
+
+	// It is served like the bank's images, from MakonBook's bucket.
+	req, _ := http.NewRequestWithContext(t.Context(), "GET", e.srv.URL+"/v1/admin/practice/figures?key="+key, nil)
+	req.AddCookie(&http.Cookie{Name: CookieName, Value: boss})
+	resp, err := e.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "image/png" || !bytes.Equal(got, png.Bytes()) {
+		t.Errorf("serve upload: %d %s", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+
+	// A question may use it; an image that was never uploaded is refused.
+	_, list, _ := e.do("GET", "/v1/admin/practice/questions?limit=1", boss, nil, false)
+	id := list["questions"].([]any)[0].(map[string]any)["id"].(string)
+	_, q, _ := e.do("GET", "/v1/admin/practice/questions/"+id, boss, nil, false)
+	edit := map[string]any{
+		"version": 1, "stem": "Look:\n\n![a new graph](r2:" + key + ")\n\nWhat is the slope?", "choices": q["choices"],
+		"figures": []map[string]string{{"key": key, "kind": "graph", "alt": "a new graph"}},
+		"correct": "A", "explanation": "Because.", "domain": "Algebra", "skill": "Linear functions",
+	}
+	if status, body, _ := e.do("PUT", "/v1/admin/practice/questions/"+id, boss, edit, true); status != 200 {
+		t.Errorf("save with upload: %d %v", status, body)
+	}
+	edit["version"] = 2
+	edit["stem"] = "Look:\n\n![x](r2:mb/0000.png)"
+	edit["figures"] = []map[string]string{{"key": "mb/0000.png", "kind": "graph", "alt": "x"}}
+	if status, body, _ := e.do("PUT", "/v1/admin/practice/questions/"+id, boss, edit, true); status != 422 {
+		t.Errorf("never uploaded: %d %v", status, body)
 	}
 }

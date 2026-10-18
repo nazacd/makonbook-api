@@ -56,6 +56,10 @@ type Config struct {
 	// screenshots, shown to practice editors. Optional; without it the
 	// editor shows no images.
 	R2Endpoint, R2Bucket, R2Region, R2AccessKeyID, R2SecretAccessKey string
+	// R2 uploads: MakonBook's own bucket, where editors' images go (read and
+	// write). Optional; without it editors can't upload images. The endpoint
+	// defaults to R2_ENDPOINT_URL (the same Cloudflare account).
+	R2UploadsEndpoint, R2UploadsBucket, R2UploadsAccessKeyID, R2UploadsSecretAccessKey string
 
 	TelegramBotToken    string
 	TelegramAlertChatID string
@@ -147,6 +151,15 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if r2Set != 0 && r2Set != 4 {
 		errs = append(errs, errors.New("R2_ENDPOINT_URL, R2_BUCKET_NAME, R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY must be set together"))
+	}
+
+	cfg.R2UploadsBucket = strings.TrimSpace(getenv("R2_UPLOADS_BUCKET"))
+	cfg.R2UploadsAccessKeyID = getenv("R2_UPLOADS_ACCESS_KEY_ID")
+	cfg.R2UploadsSecretAccessKey = getenv("R2_UPLOADS_SECRET_ACCESS_KEY")
+	cfg.R2UploadsEndpoint = withDefault(strings.TrimSpace(getenv("R2_UPLOADS_ENDPOINT_URL")), cfg.R2Endpoint)
+	if up := cfg.R2UploadsBucket + cfg.R2UploadsAccessKeyID + cfg.R2UploadsSecretAccessKey; up != "" &&
+		(cfg.R2UploadsBucket == "" || cfg.R2UploadsAccessKeyID == "" || cfg.R2UploadsSecretAccessKey == "" || cfg.R2UploadsEndpoint == "") {
+		errs = append(errs, errors.New("R2_UPLOADS_BUCKET, R2_UPLOADS_ACCESS_KEY_ID and R2_UPLOADS_SECRET_ACCESS_KEY must be set together, with R2_UPLOADS_ENDPOINT_URL or R2_ENDPOINT_URL"))
 	}
 
 	cfg.TelegramBotToken = getenv("TELEGRAM_BOT_TOKEN")

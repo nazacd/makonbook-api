@@ -1,8 +1,10 @@
-// Package r2 reads objects from Cloudflare R2 (S3-compatible), signing each
-// request with AWS Signature Version 4. Read only: it only ever sends GET.
+// Package r2 reads and writes objects in Cloudflare R2 (S3-compatible),
+// signing each request with AWS Signature Version 4. Writing (Put) is only
+// ever done to MakonBook's own bucket; SAT MAKON's bucket gets a read-only key.
 package r2
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -41,31 +43,9 @@ type Object struct {
 
 // Get downloads an object.
 func (c *Client) Get(ctx context.Context, key string) (Object, error) {
-	base, err := url.Parse(strings.TrimRight(c.Endpoint, "/"))
-	if err != nil || base.Host == "" {
-		return Object{}, errors.New("r2: invalid endpoint")
-	}
-	path := "/" + escapePath(c.Bucket) + "/" + escapePath(key)
-	u := *base
-	u.Path, _ = url.PathUnescape(path)
-	u.RawPath = path
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	resp, err := c.do(ctx, http.MethodGet, key, nil, "")
 	if err != nil {
-		return Object{}, fmt.Errorf("r2: %w", err)
-	}
-	c.sign(req, path)
-
-	client := c.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		var ue *url.Error
-		if errors.As(err, &ue) {
-			err = ue.Err
-		}
-		return Object{}, fmt.Errorf("r2: %w", err)
+		return Object{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	switch {
@@ -84,11 +64,60 @@ func (c *Client) Get(ctx context.Context, key string) (Object, error) {
 	return Object{Body: body, ContentType: resp.Header.Get("Content-Type")}, nil
 }
 
-// emptyPayload is the SHA-256 of the empty body every GET has.
-const emptyPayload = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+// Put uploads an object, replacing any with the same key.
+func (c *Client) Put(ctx context.Context, key string, body []byte, contentType string) error {
+	resp, err := c.do(ctx, http.MethodPut, key, body, contentType)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("r2: put: status %d", resp.StatusCode)
+	}
+	return nil
+}
 
-// sign adds the SigV4 headers for a bodiless GET of the escaped path.
-func (c *Client) sign(req *http.Request, escapedPath string) {
+func (c *Client) do(ctx context.Context, method, key string, body []byte, contentType string) (*http.Response, error) {
+	base, err := url.Parse(strings.TrimRight(c.Endpoint, "/"))
+	if err != nil || base.Host == "" {
+		return nil, errors.New("r2: invalid endpoint")
+	}
+	path := "/" + escapePath(c.Bucket) + "/" + escapePath(key)
+	u := *base
+	u.Path, _ = url.PathUnescape(path)
+	u.RawPath = path
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u.String(), rd)
+	if err != nil {
+		return nil, fmt.Errorf("r2: %w", err)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	c.sign(req, path, hexSHA(string(body)))
+
+	client := c.HTTP
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err // drop the URL
+		}
+		return nil, fmt.Errorf("r2: %w", err)
+	}
+	return resp, nil
+}
+
+// sign adds the SigV4 headers for a request to the escaped path whose body
+// has the given SHA-256 (hex).
+func (c *Client) sign(req *http.Request, escapedPath, payload string) {
 	now := time.Now
 	if c.Now != nil {
 		now = c.Now
@@ -100,13 +129,13 @@ func (c *Client) sign(req *http.Request, escapedPath string) {
 		region = "auto"
 	}
 	req.Header.Set("x-amz-date", stamp)
-	req.Header.Set("x-amz-content-sha256", emptyPayload)
+	req.Header.Set("x-amz-content-sha256", payload)
 
 	signed := "host;x-amz-content-sha256;x-amz-date"
 	canonical := strings.Join([]string{
 		req.Method, escapedPath, "",
-		"host:" + req.URL.Host, "x-amz-content-sha256:" + emptyPayload, "x-amz-date:" + stamp, "",
-		signed, emptyPayload,
+		"host:" + req.URL.Host, "x-amz-content-sha256:" + payload, "x-amz-date:" + stamp, "",
+		signed, payload,
 	}, "\n")
 	scope := day + "/" + region + "/s3/aws4_request"
 	toSign := "AWS4-HMAC-SHA256\n" + stamp + "\n" + scope + "\n" + hexSHA(canonical)
