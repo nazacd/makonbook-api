@@ -209,8 +209,15 @@ button.chip.selected { border-color: currentColor; }
 .rich p:last-child { margin-bottom: 0; }
 .rich ul { margin: 0 0 10px; padding-left: 20px; }
 .rich .figure { display: block; max-width: 100%; margin: 8px 0; background: #fff; border-radius: 6px; }
-.rich-table { width: auto; margin: 8px 0; }
-.rich-table th, .rich-table td { border: 1px solid var(--line); padding: 4px 10px; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text); }
+/* Question tables, as students see them (the editor's match): every cell
+   boxed, the last row included, centred, roomy columns, a shaded header. */
+.rich-table, .rte-body table { width: auto; margin: 8px 0; border-collapse: collapse; }
+.rich-table th, .rich-table td, .rte-body th, .rte-body td {
+  border: 1px solid var(--text-3); padding: 6px 16px; min-width: 72px; text-align: center; vertical-align: middle;
+  text-transform: none; letter-spacing: 0; white-space: normal; font-size: 14px; color: var(--text); font-variant-numeric: tabular-nums;
+}
+.rich-table th, .rte-body th { background: var(--surface-2); font-weight: 600; }
+.rich-table tbody tr:last-child td, .rte-body tbody tr:last-child td { border-bottom: 1px solid var(--text-3); }
 .math.display { display: block; text-align: center; margin: 8px 0; }
 .student { background: var(--brand); border-radius: var(--radius-sm); padding: 14px 16px; display: grid; gap: 12px; }
 .student .passage { padding-bottom: 12px; border-bottom: 1px solid var(--line); }
@@ -252,9 +259,6 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .rte-body p { margin: 0 0 8px; }
 .rte-body p:last-child { margin-bottom: 0; }
 .rte-body ul { margin: 0 0 8px; padding-left: 22px; }
-.rte-body table { border-collapse: collapse; margin: 8px 0; width: auto; }
-.rte-body th, .rte-body td { border: 1px solid var(--line); padding: 4px 10px; min-width: 60px; text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--text); vertical-align: top; }
-.rte-body th { background: var(--surface-2); font-weight: 600; }
 .rte-body .selectedCell { background: var(--accent-soft); }
 .rte-source { border: 0; border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
 .tbar-hint { padding: 0 6px; }
