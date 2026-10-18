@@ -36,10 +36,13 @@ type Deps struct {
 	SecureCookies bool
 	// HolliHopWriteEnabled: attendance is really written to HolliHop (the
 	// worker's setting), so the admin panel can say when it's a dry run.
-	// Figures reads question images for the practice editor (R2, read
-	// only); nil when not configured.
-	Figures              *r2.Client
 	HolliHopWriteEnabled bool
+	// Figures reads question images for the practice editor (SAT MAKON's
+	// R2 bucket, read only); nil when not configured.
+	Figures *r2.Client
+	// Uploads is MakonBook's own R2 bucket, for editors' images; nil when
+	// not configured.
+	Uploads *r2.Client
 	// AdminHost serves the admin panel (empty: no panel).
 	AdminHost string
 }
@@ -61,7 +64,7 @@ func Handler(d Deps) http.Handler {
 	attendanceSvc := attendance.NewService(d.Pool, lessonsSvc)
 	attendance.NewHandler(attendanceSvc, d.Location, authHandler.Require).Register(mux)
 	panel := admin.Panel{
-		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory, Practice: practice.NewService(d.Pool),
+		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory, Practice: practice.NewService(d.Pool, uploadStore(d.Uploads)),
 		Location: d.Location, WriteEnabled: d.HolliHopWriteEnabled,
 	}
 	if d.Figures != nil {
@@ -102,4 +105,12 @@ func adminHost(host string, panel, api http.Handler) http.Handler {
 			panel.ServeHTTP(w, r)
 		}
 	})
+}
+
+// uploadStore keeps a nil client a nil interface (no uploads).
+func uploadStore(c *r2.Client) practice.Store {
+	if c == nil {
+		return nil
+	}
+	return c
 }

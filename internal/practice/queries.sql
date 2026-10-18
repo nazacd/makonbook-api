@@ -136,12 +136,9 @@ WHERE id = @id
 RETURNING version;
 
 -- name: InsertImage :exec
-INSERT INTO practice_images (key, content_type, data, width, height, uploaded_by)
-VALUES (@key, @content_type, @data, @width, @height, @uploaded_by)
+INSERT INTO practice_images (key, content_type, bytes, width, height, uploaded_by)
+VALUES (@key, @content_type, @bytes, @width, @height, @uploaded_by)
 ON CONFLICT (key) DO NOTHING;
-
--- name: GetImage :one
-SELECT content_type, data FROM practice_images WHERE key = @key;
 
 -- Which of these uploaded images exist.
 -- name: ExistingImages :many

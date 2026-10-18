@@ -33,10 +33,14 @@ func (e *InvalidError) Error() string {
 
 // Service is what the admin panel reads and changes in the question bank.
 type Service struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	uploads Store // nil: uploads not configured
 }
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+// NewService: uploads is MakonBook's image bucket, or nil.
+func NewService(pool *pgxpool.Pool, uploads Store) *Service {
+	return &Service{pool: pool, uploads: uploads}
+}
 
 // TestSummary is one test and how far its review has come.
 type TestSummary struct {

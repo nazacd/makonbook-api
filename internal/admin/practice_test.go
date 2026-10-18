@@ -216,6 +216,9 @@ func TestPracticeUpload(t *testing.T) {
 	if status != 201 || !strings.HasPrefix(key, "mb/") || !strings.HasSuffix(key, ".png") || body["width"] != 3.0 {
 		t.Fatalf("upload: %d %v", status, body)
 	}
+	if obj, ok := e.uploads[key]; !ok || obj.ContentType != "image/png" || !bytes.Equal(obj.Body, png.Bytes()) {
+		t.Errorf("not in the uploads bucket: %v", e.uploads)
+	}
 	if again, body := upload(boss, png.Bytes(), true); again != 201 || body["key"] != key {
 		t.Errorf("same file again: %d %v", again, body)
 	}
@@ -231,7 +234,7 @@ func TestPracticeUpload(t *testing.T) {
 		t.Errorf("branch admin: %d", status)
 	}
 
-	// It is served like the bank's images, without R2.
+	// It is served like the bank's images, from MakonBook's bucket.
 	req, _ := http.NewRequestWithContext(t.Context(), "GET", e.srv.URL+"/v1/admin/practice/figures?key="+key, nil)
 	req.AddCookie(&http.Cookie{Name: CookieName, Value: boss})
 	resp, err := e.srv.Client().Do(req)

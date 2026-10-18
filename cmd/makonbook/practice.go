@@ -38,7 +38,7 @@ func runPractice(ctx context.Context, cfg config.Config, args []string, stdout i
 	im := practice.Importer{Pool: pool}
 
 	if args[1] == "list" {
-		tests, err := practice.NewService(pool).Tests(ctx)
+		tests, err := practice.NewService(pool, nil).Tests(ctx)
 		if err != nil {
 			return err
 		}

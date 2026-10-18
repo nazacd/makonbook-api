@@ -63,12 +63,16 @@ func (h *Handler) practiceUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	p, _ := PrincipalFrom(r.Context())
 	img, err := h.panel.Practice.UploadImage(r.Context(), data, p.Name)
-	if errors.Is(err, practice.ErrBadImage) {
+	switch {
+	case errors.Is(err, practice.ErrBadImage):
 		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, err.Error())
 		return
-	}
-	if err != nil {
-		h.internal(w, r, "upload image", err)
+	case errors.Is(err, practice.ErrUploadsOff):
+		httpx.WriteError(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, err.Error())
+		return
+	case err != nil:
+		httpx.Logger(r.Context()).Error("upload image", "err", err)
+		httpx.WriteError(w, r, http.StatusBadGateway, httpx.CodeUnavailable, "couldn't store the image; try again")
 		return
 	}
 	httpx.WriteJSON(w, r, http.StatusCreated, img)
@@ -178,16 +182,18 @@ func (h *Handler) practiceFigure(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(key, practice.UploadPrefix) {
-		ct, data, err := h.panel.Practice.GetImage(r.Context(), key)
-		if errors.Is(err, practice.ErrNotFound) {
+		obj, err := h.panel.Practice.GetImage(r.Context(), key)
+		switch {
+		case errors.Is(err, practice.ErrNotFound):
 			httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, "no such image")
-			return
+		case errors.Is(err, practice.ErrUploadsOff):
+			httpx.WriteError(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, err.Error())
+		case err != nil:
+			httpx.Logger(r.Context()).Warn("uploaded image", "key", key, "err", err)
+			httpx.WriteError(w, r, http.StatusBadGateway, httpx.CodeUnavailable, "the image store didn't answer")
+		default:
+			writeImage(w, obj.ContentType, obj.Body)
 		}
-		if err != nil {
-			h.internal(w, r, "uploaded image", err)
-			return
-		}
-		writeImage(w, ct, data)
 		return
 	}
 	if h.panel.Figures == nil {

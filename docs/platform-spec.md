@@ -262,9 +262,10 @@ section (College Board uses IRT; we can't reproduce it exactly).
   `/` makes a fraction, `^` a power, `sqrt` a root; click a formula to change it); images pasted, dropped or
   picked, then described. A `</>` button shows the text behind it. Checked on all 9,300 real fields: 99.9 %
   come back byte-identical, the rest only respaced. The editor's libraries load only on the practice pages.
-- **Uploaded images** (`POST /v1/admin/practice/images`): PNG/JPEG/GIF/WebP up to 5 MB, kept in Postgres
-  (`practice_images`, so in every backup), keyed by their SHA-256 (`mb/<hash>.<ext>`), served like the bank's.
-  A save that uses an image never uploaded is refused. Because of the math editor, the panel's CSP allows
+- **Uploaded images** (`POST /v1/admin/practice/images`): PNG/JPEG/GIF/WebP up to 5 MB, checked by the API,
+  then put in **MakonBook's own R2 bucket** (`R2_UPLOADS_*`, read-write; SAT MAKON's bucket keeps a read-only
+  key) under `mb/<sha-256>.<ext>`; `practice_images` records each one. Served like the bank's images. A save
+  that uses an image never uploaded is refused. The same bucket will hold the published test packages (9.5). Because of the math editor, the panel's CSP allows
   inline styles (scripts stay `'self'` only).
 - **Reviewers**: teachers review through a Telegram bot / Mini App. They solve each question blind first,
   then see the key, explanation and AI findings and approve or report. The number of approvals needed

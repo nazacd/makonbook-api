@@ -300,6 +300,14 @@ Editors then work on them in the admin panel (Practice tests). To show the
 questions' figures and the bank's original screenshots there, set the `R2_*`
 variables in `.env` (see `env.production.example`; a **read-only** R2 token)
 and `docker compose up -d`.
+
+Images editors upload go to **MakonBook's own R2 bucket**, never SAT MAKON's.
+Once, in Cloudflare: **R2 → Create bucket** (e.g. `makonbook`, private), then
+**Manage R2 API Tokens → Create API token** with **Object Read & Write**,
+applied to that bucket only. Put it in `.env` as `R2_UPLOADS_BUCKET`,
+`R2_UPLOADS_ACCESS_KEY_ID` and `R2_UPLOADS_SECRET_ACCESS_KEY` (same account, so
+the endpoint is `R2_ENDPOINT_URL`) and `docker compose up -d`. Without them the
+upload button answers "image uploads aren't set up on the server".
 A test in the pilot's old format (DAY1) is refused until its review is re-run.
 Every test stays locked until a teacher has approved all its questions.
 

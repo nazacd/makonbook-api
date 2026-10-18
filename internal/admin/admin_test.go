@@ -66,12 +66,13 @@ func (f *fakeHolliHop) GetEmployee(_ context.Context, id int32) (hollihop.Employ
 }
 
 type env struct {
-	t    *testing.T
-	srv  *httptest.Server
-	svc  *Service
-	hh   *fakeHolliHop
-	pool *pgxpool.Pool
-	figs fakeFigures
+	t       *testing.T
+	srv     *httptest.Server
+	svc     *Service
+	hh      *fakeHolliHop
+	pool    *pgxpool.Pool
+	figs    fakeFigures // SAT MAKON's bucket
+	uploads fakeFigures // MakonBook's bucket
 }
 
 // fakeFigures: the bucket's objects by key.
@@ -82,6 +83,11 @@ func (f fakeFigures) Get(_ context.Context, key string) (r2.Object, error) {
 		return o, nil
 	}
 	return r2.Object{}, r2.ErrNotFound
+}
+
+func (f fakeFigures) Put(_ context.Context, key string, body []byte, contentType string) error {
+	f[key] = r2.Object{Body: body, ContentType: contentType}
+	return nil
 }
 
 func setup(t *testing.T) *env {
@@ -163,16 +169,16 @@ func setup(t *testing.T) *env {
 	hh.employees[3] = hollihop.Employee{ID: 3, Fired: true} // fired after being given access
 
 	lessonsSvc := lessons.NewService(pool, tashkent)
-	figs := fakeFigures{}
+	figs, uploads := fakeFigures{}, fakeFigures{}
 	panel := Panel{
 		Lessons: lessonsSvc, Attendance: attendance.NewService(pool, lessonsSvc), People: people.NewDirectory(pool), Location: tashkent,
-		Practice: practice.NewService(pool), Figures: figs,
+		Practice: practice.NewService(pool, uploads), Figures: figs,
 	}
 	mux := http.NewServeMux()
 	NewHandler(svc, panel, false, false).Register(mux)
 	srv := httptest.NewServer(httpx.Chain(mux, httpx.WithRequestContext(slog.New(slog.NewTextHandler(io.Discard, nil)))))
 	t.Cleanup(srv.Close)
-	return &env{t: t, srv: srv, svc: svc, hh: hh, pool: pool, figs: figs}
+	return &env{t: t, srv: srv, svc: svc, hh: hh, pool: pool, figs: figs, uploads: uploads}
 }
 
 func (e *env) do(method, path, cookie string, body any, csrf bool) (int, map[string]any, []*http.Cookie) {

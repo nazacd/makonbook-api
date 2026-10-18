@@ -164,7 +164,7 @@ type Office struct {
 type PracticeImage struct {
 	Key         string
 	ContentType string
-	Data        []byte
+	Bytes       int32
 	Width       int32
 	Height      int32
 	UploadedBy  string

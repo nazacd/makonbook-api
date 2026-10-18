@@ -13,14 +13,14 @@ import (
 	_ "image/png"  //
 	"strings"
 
-	"github.com/jackc/pgx/v5"
 	_ "golang.org/x/image/webp" //
 
+	"github.com/nazacd/makonbook-api/internal/platform/r2"
 	"github.com/nazacd/makonbook-api/internal/practice/practicedb"
 )
 
-// UploadPrefix marks images editors uploaded (kept in our database), as
-// opposed to the bank's images in SAT MAKON's R2 bucket.
+// UploadPrefix marks images editors uploaded (in MakonBook's own R2
+// bucket), as opposed to the bank's images in SAT MAKON's.
 const UploadPrefix = "mb/"
 
 // MaxImageBytes bounds an upload.
@@ -28,8 +28,18 @@ const MaxImageBytes = 5 << 20
 
 const maxImageSide = 6000
 
-// ErrBadImage means the upload isn't a PNG, JPEG, GIF or WebP image we accept.
-var ErrBadImage = errors.New("not an image we accept: PNG, JPEG, GIF or WebP, at most 5 MB and 6000 px a side")
+var (
+	// ErrBadImage means the upload isn't a PNG, JPEG, GIF or WebP image we accept.
+	ErrBadImage = errors.New("not an image we accept: PNG, JPEG, GIF or WebP, at most 5 MB and 6000 px a side")
+	// ErrUploadsOff means the server has no bucket for uploads (R2_UPLOADS_*).
+	ErrUploadsOff = errors.New("image uploads aren't set up on the server")
+)
+
+// Store is where uploaded images go: MakonBook's R2 bucket.
+type Store interface {
+	Get(ctx context.Context, key string) (r2.Object, error)
+	Put(ctx context.Context, key string, body []byte, contentType string) error
+}
 
 var imageTypes = map[string]struct{ ext, contentType string }{
 	"png":  {"png", "image/png"},
@@ -45,9 +55,12 @@ type Image struct {
 	Height int    `json:"height"`
 }
 
-// UploadImage stores an image and returns its key. The key comes from the
-// bytes, so uploading the same file twice stores it once.
+// UploadImage checks an image, puts it in the bucket and returns its key.
+// The key comes from the bytes, so the same file uploaded twice is one object.
 func (s *Service) UploadImage(ctx context.Context, data []byte, by string) (Image, error) {
+	if s.uploads == nil {
+		return Image{}, ErrUploadsOff
+	}
 	if len(data) == 0 || len(data) > MaxImageBytes {
 		return Image{}, ErrBadImage
 	}
@@ -58,22 +71,29 @@ func (s *Service) UploadImage(ctx context.Context, data []byte, by string) (Imag
 	}
 	sum := sha256.Sum256(data)
 	key := UploadPrefix + hex.EncodeToString(sum[:20]) + "." + t.ext
+	if err := s.uploads.Put(ctx, key, data, t.contentType); err != nil {
+		return Image{}, fmt.Errorf("upload image: %w", err)
+	}
 	err = practicedb.New(s.pool).InsertImage(ctx, practicedb.InsertImageParams{
-		Key: key, ContentType: t.contentType, Data: data, Width: int32(cfg.Width), Height: int32(cfg.Height), UploadedBy: by, //nolint:gosec // ≤ 6000
+		Key: key, ContentType: t.contentType, Bytes: int32(len(data)), //nolint:gosec // ≤ 5 MB
+		Width: int32(cfg.Width), Height: int32(cfg.Height), UploadedBy: by, //nolint:gosec // ≤ 6000
 	})
 	if err != nil {
-		return Image{}, fmt.Errorf("store image: %w", err)
+		return Image{}, fmt.Errorf("record image: %w", err)
 	}
 	return Image{Key: key, Width: cfg.Width, Height: cfg.Height}, nil
 }
 
-// GetImage returns an uploaded image: its content type and bytes.
-func (s *Service) GetImage(ctx context.Context, key string) (string, []byte, error) {
-	img, err := practicedb.New(s.pool).GetImage(ctx, key)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil, ErrNotFound
+// GetImage returns an uploaded image from the bucket.
+func (s *Service) GetImage(ctx context.Context, key string) (r2.Object, error) {
+	if s.uploads == nil {
+		return r2.Object{}, ErrUploadsOff
 	}
-	return img.ContentType, img.Data, err
+	obj, err := s.uploads.Get(ctx, key)
+	if errors.Is(err, r2.ErrNotFound) {
+		return r2.Object{}, ErrNotFound
+	}
+	return obj, err
 }
 
 // missingUploads lists the uploaded-image keys among figures that aren't stored.

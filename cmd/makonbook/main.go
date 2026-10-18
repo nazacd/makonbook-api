@@ -182,6 +182,12 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	} else {
 		log.Warn("R2_* not set: the practice editor shows no images")
 	}
+	if cfg.R2UploadsBucket != "" {
+		deps.Uploads = &r2.Client{Endpoint: cfg.R2UploadsEndpoint, Bucket: cfg.R2UploadsBucket, Region: cfg.R2Region,
+			AccessKey: cfg.R2UploadsAccessKeyID, SecretKey: cfg.R2UploadsSecretAccessKey}
+	} else {
+		log.Warn("R2_UPLOADS_* not set: editors can't upload images")
+	}
 	if cfg.HolliHopBaseURL != "" && cfg.HolliHopAuthKey != "" {
 		deps.HolliHop = hollihop.New(cfg.HolliHopBaseURL, cfg.HolliHopAuthKey)
 	} else {
