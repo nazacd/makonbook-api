@@ -282,13 +282,18 @@ GIT_SSH_COMMAND="ssh -i ~/.ssh/questionbank" \
   git clone git@github.com:nazacd/makonbook-questionbank.git /opt/makonbook-questionbank
 ```
 
-Each time new tests have been reviewed (in `/opt/makonbook-api`):
+Each time new tests have been reviewed, run `deploy/import-practice.sh`
+(copy it once: `scp deploy/import-practice.sh root@makonbook.uz:/opt/makonbook-api/`,
+then `chmod 700 /opt/makonbook-api/import-practice.sh`). It does:
 
 ```bash
 GIT_SSH_COMMAND="ssh -i ~/.ssh/questionbank" git -C /opt/makonbook-questionbank pull
 docker compose run --rm -v /opt/makonbook-questionbank:/questionbank:ro api practice import /questionbank
 docker compose run --rm api practice list
 ```
+
+To load new tests every night instead, add to `crontab -e`:
+`15 4 * * * /opt/makonbook-api/import-practice.sh >> /var/log/practice-import.log 2>&1`
 
 `practice import` loads the tests that aren't loaded yet and skips the rest.
 Editors then work on them in the admin panel (Practice tests). To show the
