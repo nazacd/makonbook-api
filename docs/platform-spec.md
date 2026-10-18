@@ -239,7 +239,11 @@ question is red until a teacher confirms. New tests are written later in the adm
   no adaptive routing.
 - **AI reviews** (`question_ai_reviews`): each review record as it came, per test position.
 - Loading: `makonbook practice import <questionbank checkout>` (deploy/DEPLOY.md) loads new tests and
-  skips loaded ones; `--replace` reloads a test while none of its questions is approved or edited.
+  skips loaded ones; `--replace` reloads a test while none of its questions is approved by a person or edited.
+- **Auto-approval:** a question whose AI review is **green** (the key confirmed by both blind solves, a
+  clean transcription, no issues) is approved on import (`auto_approved`; ~84 % of the bank). Teachers work
+  on the yellow and red ones. A later review of a repeat that isn't green, or an editor's change, takes the
+  automatic approval back, so a person checks it.
 
 ### 9.3 Access (D20)
 Every active student sees every test. A test is **locked until all its questions are approved**, then it
@@ -250,8 +254,9 @@ section (College Board uses IRT; we can't reproduce it exactly).
 - **Editors** (built: phase 3, step 3): a list of trusted teachers or staff (any subject), granted by super
   admins in the panel (`admin_access.editor`; an editor needs no branch). In the admin panel: every test with
   its progress, a queue of questions red first, and a question editor — the form, a live student view
-  (KaTeX as MathML, so the page's strict CSP stays), the AI review (verdict, solves, decision, issues,
-  proposed fix), the bank's original screenshots, and the history. Each save is a new version (`409
+  (KaTeX as MathML, so the page's strict CSP stays), the AI review summed up (what it concluded, why it
+  isn't green, what to fix; the full record — solves, decision, every issue, proposed fix — and the bank's
+  original screenshots one click away), and the history. Each save is a new version (`409
   version_conflict` if someone saved meanwhile; `422 invalid_question` with a message per field: the content
   format, A–D and a key, numeric grid-in answers, figures placed, domain/skill from the taxonomy). Editing an
   approved question sends it back to review. Images come from SAT MAKON's R2 bucket through the API
@@ -260,7 +265,8 @@ section (College Board uses IRT; we can't reproduce it exactly).
   writes the same stored text format, so the API, its checks and the apps don't change. Bold, italic,
   underline (buttons or Ctrl+B/I/U), lists, tables, a "blank" button; math in a Desmos-like field (MathLive:
   `/` makes a fraction, `^` a power, `sqrt` a root; click a formula to change it); images pasted, dropped or
-  picked, then described. A `</>` button shows the text behind it. Checked on all 9,300 real fields: 99.9 %
+  picked, then described. Fields grow with their text; a grip under each makes it taller (double-click fits
+  it again). An extra blank line is kept as an empty line of space. A `</>` button shows the text behind it. Checked on all 9,300 real fields: 99.9 %
   come back byte-identical, the rest only respaced. The editor's libraries load only on the practice pages.
 - **Uploaded images** (`POST /v1/admin/practice/images`): PNG/JPEG/GIF/WebP up to 5 MB, checked by the API,
   then put in **MakonBook's own R2 bucket** (`R2_UPLOADS_*`, read-write; SAT MAKON's bucket keeps a read-only

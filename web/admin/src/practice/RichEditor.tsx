@@ -6,7 +6,7 @@ import { EditorContent, NodeViewWrapper, ReactNodeViewRenderer, useEditor, useEd
 import StarterKit from '@tiptap/starter-kit';
 import katex from 'katex';
 import { MathfieldElement } from 'mathlive';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 
 import { ApiError, describe } from '../api/client';
@@ -92,15 +92,17 @@ function MathPopover({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Below the math it edits.
+  // Below the math it edits, inside the window.
+  const pop = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: 100, top: 100 });
   useLayoutEffect(() => {
     const r = anchorRef.current?.getBoundingClientRect();
-    if (r) setPos({ left: Math.max(8, Math.min(r.left - 8, window.innerWidth - 440)), top: r.bottom + 8 });
+    const width = pop.current?.offsetWidth ?? 0;
+    if (r) setPos({ left: Math.max(8, Math.min(r.left - 8, window.innerWidth - width - 8)), top: r.bottom + 8 });
   }, [anchorRef]);
   const { left, top } = pos;
   return createPortal(
-    <div className="math-pop" style={{ left, top }} role="dialog" aria-label="Edit math" onMouseDown={(e) => e.stopPropagation()}>
+    <div ref={pop} className="math-pop" style={{ left, top }} role="dialog" aria-label="Edit math" onMouseDown={(e) => e.stopPropagation()}>
       <div ref={host} className="math-pop-field" />
       <div className="small faint">
         Type <b>/</b> for a fraction, <b>^</b> for a power, <b>sqrt</b> for a root, <b>pi</b> for π. Enter to finish.
@@ -367,6 +369,51 @@ function Toolbar({
   );
 }
 
+// ---- Resizing ----
+
+// Grip: drag (or arrow keys) to make a field taller than its text needs, or
+// back down to fit; a double click fits it to the text again.
+function Grip({ label, start, onResize }: { label: string; start: () => number; onResize: (height: number | null) => void }) {
+  const drag = useRef<{ y: number; h: number } | null>(null);
+  const [now, setNow] = useState<number | null>(null);
+  const set = (h: number | null) => {
+    const v = h == null ? null : Math.max(24, Math.round(h));
+    setNow(v);
+    onResize(v);
+  };
+  return (
+    <div
+      className="rte-grip"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label={`Resize ${label}`}
+      aria-valuenow={now ?? undefined}
+      tabIndex={0}
+      title="Drag to resize; double-click to fit the text"
+      onPointerDown={(e) => {
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        drag.current = { y: e.clientY, h: start() };
+      }}
+      onPointerMove={(e) => {
+        if (drag.current) set(drag.current.h + e.clientY - drag.current.y);
+      }}
+      onPointerUp={() => {
+        drag.current = null;
+      }}
+      onPointerCancel={() => {
+        drag.current = null;
+      }}
+      onDoubleClick={() => set(null)}
+      onKeyDown={(e) => {
+        if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+        e.preventDefault();
+        set(start() + (e.key === 'ArrowDown' ? 24 : -24));
+      }}
+    />
+  );
+}
+
 // ---- The editor ----
 
 // fitsSchema: whether the editor can hold every part of the text.
@@ -403,6 +450,9 @@ export function RichEditor({
   const fileInput = useRef<HTMLInputElement>(null);
   const editorRef = useRef<Editor | null>(null);
   const fitsRef = useRef(true);
+  // The field grows with its text; dragging the grip makes it taller still.
+  const area = useRef<HTMLDivElement>(null);
+  const [minHeight, setMinHeight] = useState<number | null>(null);
 
   async function insertImage(file: File) {
     const ed = editorRef.current;
@@ -504,11 +554,18 @@ export function RichEditor({
         />
       )}
       {!fits && <div className="small muted rte-note">This text has something the visual editor can’t show, so it opens as text code.</div>}
-      {code ? (
-        <textarea className="textarea rte-source" rows={compact ? 2 : 8} value={value} aria-label={`${label} (text code)`} onChange={(e) => onChange(e.target.value)} />
-      ) : (
-        <EditorContent editor={editor} />
-      )}
+      <div ref={area} className="rte-area" style={minHeight == null ? undefined : ({ '--rte-min': `${minHeight}px` } as CSSProperties)}>
+        {code ? (
+          <textarea className="textarea rte-source" rows={compact ? 2 : 6} value={value} aria-label={`${label} (text code)`} onChange={(e) => onChange(e.target.value)} />
+        ) : (
+          <EditorContent editor={editor} />
+        )}
+      </div>
+      <Grip
+        label={label}
+        start={() => area.current?.getBoundingClientRect().height ?? 0}
+        onResize={setMinHeight}
+      />
       {uploading && <div className="small muted">Uploading the image…</div>}
       {uploadError && <div className="field-error">{uploadError}</div>}
       {images && (

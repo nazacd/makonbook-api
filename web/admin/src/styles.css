@@ -228,6 +228,7 @@ button.chip.selected { border-color: currentColor; }
 .facts { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; margin: 0; }
 .facts dt { color: var(--text-3); font-size: 12px; padding-top: 2px; }
 .facts dd { margin: 0; }
+.ai-summary { margin: 0; }
 .issues { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
 .pre { white-space: pre-wrap; background: var(--brand); border-radius: var(--radius-sm); padding: 8px 10px; margin: 6px 0 0; }
 .originals { display: grid; gap: 10px; margin-top: 8px; }
@@ -254,13 +255,18 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .tb .fx { font-family: 'Times New Roman', serif; font-style: italic; font-size: 14px; }
 .tsep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
 .tgroup { display: inline-flex; gap: 2px; padding-left: 4px; border-left: 1px solid var(--line); margin-left: 4px; }
-.rte-body { min-height: 80px; padding: 10px 12px; outline: none; font: 14px/1.6 var(--font); color: var(--text); }
-.rte-body.compact { min-height: 0; padding: 6px 10px; }
+.rte-body { min-height: var(--rte-min, 80px); padding: 10px 12px; outline: none; font: 14px/1.6 var(--font); color: var(--text); }
+.rte-body.compact { min-height: var(--rte-min, 0); padding: 6px 10px; }
 .rte-body p { margin: 0 0 8px; }
 .rte-body p:last-child { margin-bottom: 0; }
 .rte-body ul { margin: 0 0 8px; padding-left: 22px; }
 .rte-body .selectedCell { background: var(--accent-soft); }
-.rte-source { border: 0; border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
+.rte-source { display: block; border: 0; border-radius: 0; resize: none; field-sizing: content; min-height: var(--rte-min, 3lh); }
+/* Under each field: drag to make it taller, double-click to fit the text. */
+.rte-grip { height: 9px; cursor: ns-resize; touch-action: none; border-radius: 0 0 var(--radius-sm) var(--radius-sm); position: relative; }
+.rte-grip::after { content: ''; position: absolute; left: 50%; top: 3px; width: 28px; height: 3px; margin-left: -14px; border-radius: 2px; background: var(--line); }
+.rte-grip:hover::after, .rte-grip:focus-visible::after { background: var(--accent); }
+.rte-grip:focus-visible { outline: none; }
 .tbar-hint { padding: 0 6px; }
 .rte-note { padding: 6px 10px 0; }
 .rte-body.compact table { margin: 2px 0; }
@@ -281,12 +287,14 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .figure-node-bar .input { flex: 1; }
 .figure-node-bar .input[aria-invalid='true'] { border-color: var(--warning); }
 .math-pop {
-  position: fixed; z-index: 1000; width: 430px; max-width: calc(100vw - 16px);
+  position: fixed; z-index: 1000; width: 520px; max-width: calc(100vw - 16px); grid-template-columns: minmax(0, 1fr);
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px;
   display: grid; gap: 8px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
+.math-pop-field { min-width: 0; }
+/* A long formula scrolls inside the field instead of spilling out. */
 .math-pop math-field {
-  display: block; width: 100%; font-size: 22px; padding: 8px 10px; border-radius: var(--radius-sm);
+  display: block; width: 100%; max-width: 100%; overflow-x: auto; font-size: 22px; padding: 8px 10px; border-radius: var(--radius-sm);
   border: 1px solid var(--accent); background: #fff; color: #111;
 }
 .choice-edit .rte { flex: 1; }
