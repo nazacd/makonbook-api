@@ -128,7 +128,12 @@ func TestEditing(t *testing.T) {
 			t.Errorf("grid-in with a word: %v", err)
 		}
 		ge.Accepted = []string{" 17/2 ", "8.5", ""}
-		if g2, err := svc.Update(ctx, g.ID, "Editor", ge); err != nil || len(g2.Accepted) != 2 || g2.Choices != nil {
+		if !g.AutoApproved || g.Status != "approved" {
+			t.Errorf("a green question isn't approved automatically: %+v", g)
+		}
+		// A teacher checks a change, even to a question the AI approved.
+		if g2, err := svc.Update(ctx, g.ID, "Editor", ge); err != nil || len(g2.Accepted) != 2 || g2.Choices != nil ||
+			g2.Status != "review" || g2.AutoApproved || g2.ApprovedAt != nil {
 			t.Errorf("grid-in edit: %+v %v", g2, err)
 		}
 	}

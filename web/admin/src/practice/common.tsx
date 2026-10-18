@@ -31,9 +31,13 @@ const STATUS: Record<string, { label: string; tone: string }> = {
   approved: { label: 'Approved', tone: 'success' },
 };
 
-export function StatusChip({ status }: { status: string }) {
+export function StatusChip({ status, auto }: { status: string; auto?: boolean }) {
   const s = STATUS[status] ?? { label: status, tone: 'plain' };
-  return <span className={`chip ${s.tone}`}>{s.label}</span>;
+  return (
+    <span className={`chip ${s.tone}`} title={auto ? 'Approved automatically: its AI review was green' : undefined}>
+      {auto && status === 'approved' ? 'Approved by AI review' : s.label}
+    </span>
+  );
 }
 
 /** Other tests that use the question too. */

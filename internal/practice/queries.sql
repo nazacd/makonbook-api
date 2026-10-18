@@ -6,13 +6,14 @@ SELECT * FROM practice_tests WHERE code = @code;
 -- name: CreateTest :one
 INSERT INTO practice_tests (code, title) VALUES (@code, @title) RETURNING *;
 
--- Questions of a test that people have already worked on: approved, or
--- changed after the import. A test with any of these can't be reloaded.
+-- Questions of a test that people have already worked on: approved by a
+-- person, or changed after the import. A test with any of these can't be
+-- reloaded.
 -- name: TouchedQuestions :one
 SELECT count(DISTINCT q.id)::int
 FROM practice_test_questions tq
 JOIN questions q ON q.id = tq.question_id
-WHERE tq.test_id = @test_id AND (q.status = 'approved' OR q.version > 1);
+WHERE tq.test_id = @test_id AND ((q.status = 'approved' AND NOT q.auto_approved) OR q.version > 1);
 
 -- name: DeleteTest :exec
 DELETE FROM practice_tests WHERE id = @id;
@@ -20,26 +21,32 @@ DELETE FROM practice_tests WHERE id = @id;
 -- Questions no test uses any more and nobody has touched (left behind by a reload).
 -- name: DeleteOrphanQuestions :execrows
 DELETE FROM questions q
-WHERE q.status = 'review' AND q.version = 1
+WHERE (q.status = 'review' OR q.auto_approved) AND q.version = 1
   AND NOT EXISTS (SELECT 1 FROM practice_test_questions tq WHERE tq.question_id = q.id);
 
--- A new question; nothing comes back if one with the same text exists.
+-- A new question; nothing comes back if one with the same text exists. A
+-- green one is approved at once.
 -- name: InsertQuestion :one
 INSERT INTO questions (subject, type, content_hash, passage, stem, choices, figures, correct, accepted,
-                       explanation, domain, skill, difficulty, ai_risk)
+                       explanation, domain, skill, difficulty, ai_risk, status, approved_at, auto_approved)
 VALUES (@subject, @type, @content_hash, sqlc.narg('passage'), @stem, sqlc.narg('choices'), @figures,
         sqlc.narg('correct'), sqlc.narg('accepted')::text[], @explanation, @domain, @skill,
-        sqlc.narg('difficulty'), @ai_risk)
+        sqlc.narg('difficulty'), @ai_risk,
+        CASE WHEN @ai_risk = 'green' THEN 'approved' ELSE 'review' END,
+        CASE WHEN @ai_risk = 'green' THEN now() END, @ai_risk = 'green')
 ON CONFLICT (content_hash) DO NOTHING
 RETURNING id;
 
 -- A repeat of a stored question: keep its content, raise its risk if this
--- review is worse.
+-- review is worse. A review that isn't green takes an automatic approval back.
 -- name: RaiseRisk :one
 UPDATE questions
 SET ai_risk = CASE WHEN array_position(ARRAY['green', 'yellow', 'red'], @ai_risk::text)
                         > coalesce(array_position(ARRAY['green', 'yellow', 'red'], ai_risk), 0)
-                   THEN @ai_risk::text ELSE ai_risk END
+                   THEN @ai_risk::text ELSE ai_risk END,
+    status = CASE WHEN auto_approved AND @ai_risk::text <> 'green' THEN 'review' ELSE status END,
+    approved_at = CASE WHEN auto_approved AND @ai_risk::text <> 'green' THEN NULL ELSE approved_at END,
+    auto_approved = auto_approved AND @ai_risk::text = 'green'
 WHERE content_hash = @content_hash
 RETURNING id;
 
@@ -123,15 +130,15 @@ FROM question_versions
 WHERE question_id = @question_id
 ORDER BY version DESC;
 
--- An editor's change: a new version. An approved question goes back to
--- review, so a teacher checks the change.
+-- An editor's change: a new version. An approved question (by a person or
+-- automatically) goes back to review, so a teacher checks the change.
 -- name: UpdateQuestion :one
 UPDATE questions
 SET passage = sqlc.narg('passage'), stem = @stem, choices = sqlc.narg('choices'), figures = @figures,
     correct = sqlc.narg('correct'), accepted = sqlc.narg('accepted')::text[], explanation = @explanation,
     domain = @domain, skill = @skill, difficulty = sqlc.narg('difficulty'),
     version = version + 1, updated_at = now(),
-    status = CASE WHEN status = 'approved' THEN 'review' ELSE status END, approved_at = NULL
+    status = CASE WHEN status = 'approved' THEN 'review' ELSE status END, approved_at = NULL, auto_approved = false
 WHERE id = @id
 RETURNING version;
 
