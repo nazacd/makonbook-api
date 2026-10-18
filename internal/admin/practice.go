@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -38,6 +39,39 @@ func (h *Handler) registerPractice(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/admin/practice/questions/{id}", h.RequireEditor(h.practiceUpdate))
 	mux.HandleFunc("GET /v1/admin/practice/taxonomy", h.RequireEditor(h.practiceTaxonomy))
 	mux.HandleFunc("GET /v1/admin/practice/figures", h.RequireEditor(h.practiceFigure))
+	mux.HandleFunc("POST /v1/admin/practice/images", h.RequireEditor(h.practiceUpload))
+}
+
+// practiceUpload stores an image an editor uploads (multipart field "file").
+func (h *Handler) practiceUpload(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, practice.MaxImageBytes+64<<10)
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			httpx.WriteError(w, r, http.StatusRequestEntityTooLarge, httpx.CodeBadRequest, practice.ErrBadImage.Error())
+			return
+		}
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "send the image as the form field \"file\"")
+		return
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(io.LimitReader(file, practice.MaxImageBytes+1))
+	if err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "couldn't read the image")
+		return
+	}
+	p, _ := PrincipalFrom(r.Context())
+	img, err := h.panel.Practice.UploadImage(r.Context(), data, p.Name)
+	if errors.Is(err, practice.ErrBadImage) {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, err.Error())
+		return
+	}
+	if err != nil {
+		h.internal(w, r, "upload image", err)
+		return
+	}
+	httpx.WriteJSON(w, r, http.StatusCreated, img)
 }
 
 type practiceTestsResponse struct {
@@ -143,6 +177,19 @@ func (h *Handler) practiceFigure(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "not an image key")
 		return
 	}
+	if strings.HasPrefix(key, practice.UploadPrefix) {
+		ct, data, err := h.panel.Practice.GetImage(r.Context(), key)
+		if errors.Is(err, practice.ErrNotFound) {
+			httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, "no such image")
+			return
+		}
+		if err != nil {
+			h.internal(w, r, "uploaded image", err)
+			return
+		}
+		writeImage(w, ct, data)
+		return
+	}
 	if h.panel.Figures == nil {
 		httpx.WriteError(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "images are not configured on the server")
 		return
@@ -157,15 +204,7 @@ func (h *Handler) practiceFigure(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, r, http.StatusBadGateway, httpx.CodeUnavailable, "the image store didn't answer")
 			return
 		}
-		ct := obj.ContentType
-		if !strings.HasPrefix(ct, "image/") || strings.Contains(ct, "svg") {
-			ct = "application/octet-stream" // never let a stored file run as a page
-		}
-		w.Header().Set("Content-Type", ct)
-		w.Header().Set("Cache-Control", "private, max-age=86400")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'")
-		_, _ = w.Write(obj.Body)
+		writeImage(w, obj.ContentType, obj.Body)
 		return
 	}
 	httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, "no such image")
@@ -178,4 +217,15 @@ func oneOf(s string, options ...string) bool {
 		}
 	}
 	return false
+}
+
+func writeImage(w http.ResponseWriter, contentType string, data []byte) {
+	if !strings.HasPrefix(contentType, "image/") || strings.Contains(contentType, "svg") {
+		contentType = "application/octet-stream" // never let a stored file run as a page
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'")
+	_, _ = w.Write(data) //nolint:gosec // image bytes: image/* only (never SVG), nosniff, and a CSP that runs nothing
 }

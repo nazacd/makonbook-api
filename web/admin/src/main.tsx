@@ -13,10 +13,6 @@ import { IssuesPage } from './pages/Issues';
 import { LessonsPage } from './pages/Lessons';
 import { SessionPage } from './pages/Session';
 import { WritesPage } from './pages/Writes';
-import { PracticeQuestionPage } from './practice/QuestionPage';
-import { PracticeQueuePage } from './practice/QueuePage';
-import { PracticeTestPage } from './practice/TestPage';
-import { PracticeTestsPage } from './practice/TestsPage';
 import './styles.css';
 
 // Any 401 means the session ended (signed out elsewhere, access removed,
@@ -50,10 +46,15 @@ const router = createBrowserRouter([
       { path: 'issues', element: <IssuesPage /> },
       { path: 'data-quality', element: <Navigate to="/issues" replace /> },
       { path: 'access', element: <AccessPage /> },
-      { path: 'practice', element: <PracticeTestsPage /> },
-      { path: 'practice/queue', element: <PracticeQueuePage /> },
-      { path: 'practice/tests/:code', element: <PracticeTestPage /> },
-      { path: 'practice/questions/:id', element: <PracticeQuestionPage /> },
+      // Practice pages load on first visit: the editor's math and text
+      // libraries are large, and branch admins never need them.
+      { path: 'practice', lazy: async () => ({ Component: (await import('./practice/TestsPage')).PracticeTestsPage }) },
+      { path: 'practice/queue', lazy: async () => ({ Component: (await import('./practice/QueuePage')).PracticeQueuePage }) },
+      { path: 'practice/tests/:code', lazy: async () => ({ Component: (await import('./practice/TestPage')).PracticeTestPage }) },
+      {
+        path: 'practice/questions/:id',
+        lazy: async () => ({ Component: (await import('./practice/QuestionPage')).PracticeQuestionPage }),
+      },
       { path: '*', element: <Home /> },
     ],
   },

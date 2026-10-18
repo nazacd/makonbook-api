@@ -145,6 +145,7 @@ func TestCheckText(t *testing.T) {
 		"| a | b |\n|---|---|\n| 1 | 2 |",
 		"I and II are | and ||",
 		"![a line](r2:sat/g.png)",
+		"***bold italic*** and *italic with **bold** inside*",
 	} {
 		if msg := checkText(ok, figures); msg != "" {
 			t.Errorf("%q: %s", ok, msg)

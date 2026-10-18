@@ -12,7 +12,12 @@
   },
   "dependencies": {
     "@tanstack/react-query": "5.104.2",
+    "@tiptap/extension-table": "3.31.3",
+    "@tiptap/pm": "3.31.3",
+    "@tiptap/react": "3.31.3",
+    "@tiptap/starter-kit": "3.31.3",
     "katex": "0.18.8",
+    "mathlive": "0.110.0",
     "openapi-fetch": "0.17.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",

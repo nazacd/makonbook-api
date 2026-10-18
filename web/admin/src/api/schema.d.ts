@@ -682,6 +682,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/practice/images": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload an image for a question (editors)
+         * @description PNG, JPEG, GIF or WebP, at most 5 MB and 6000 px a side; kept in
+         *     MakonBook's database. The answer's `key` goes into the text as
+         *     `![description](r2:<key>)` and into `figures`. The same file uploaded
+         *     again gets the same key.
+         */
+        post: operations["adminPracticeUploadImage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/practice/figures": {
         parameters: {
             query?: never;
@@ -689,7 +712,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** A question image from the bank's R2 bucket (editors) */
+        /** A question image, from the bank's R2 bucket or an upload (editors) */
         get: operations["adminPracticeFigure"];
         put?: never;
         post?: never;
@@ -2421,6 +2444,45 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+        };
+    };
+    adminPracticeUploadImage: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Stored */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description mb/<hash>.<ext> */
+                        key: string;
+                        width: number;
+                        height: number;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            413: components["responses"]["Error"];
         };
     };
     adminPracticeFigure: {

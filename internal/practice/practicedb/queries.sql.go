@@ -77,6 +77,47 @@ func (q *Queries) DeleteTest(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
+const existingImages = `-- name: ExistingImages :many
+SELECT key FROM practice_images WHERE key = ANY ($1::text[])
+`
+
+// Which of these uploaded images exist.
+func (q *Queries) ExistingImages(ctx context.Context, keys []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, existingImages, keys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		items = append(items, key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getImage = `-- name: GetImage :one
+SELECT content_type, data FROM practice_images WHERE key = $1
+`
+
+type GetImageRow struct {
+	ContentType string
+	Data        []byte
+}
+
+func (q *Queries) GetImage(ctx context.Context, key string) (GetImageRow, error) {
+	row := q.db.QueryRow(ctx, getImage, key)
+	var i GetImageRow
+	err := row.Scan(&i.ContentType, &i.Data)
+	return i, err
+}
+
 const getQuestion = `-- name: GetQuestion :one
 SELECT id, subject, type, content_hash, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty, status, ai_risk, version, created_at, updated_at, approved_at FROM questions WHERE id = $1
 `
@@ -151,6 +192,33 @@ func (q *Queries) InsertAIReview(ctx context.Context, arg InsertAIReviewParams) 
 		arg.Risk,
 		arg.Verdict,
 		arg.Record,
+	)
+	return err
+}
+
+const insertImage = `-- name: InsertImage :exec
+INSERT INTO practice_images (key, content_type, data, width, height, uploaded_by)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (key) DO NOTHING
+`
+
+type InsertImageParams struct {
+	Key         string
+	ContentType string
+	Data        []byte
+	Width       int32
+	Height      int32
+	UploadedBy  string
+}
+
+func (q *Queries) InsertImage(ctx context.Context, arg InsertImageParams) error {
+	_, err := q.db.Exec(ctx, insertImage,
+		arg.Key,
+		arg.ContentType,
+		arg.Data,
+		arg.Width,
+		arg.Height,
+		arg.UploadedBy,
 	)
 	return err
 }

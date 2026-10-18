@@ -331,7 +331,15 @@ func (s *Service) Update(ctx context.Context, id, editor string, e Edit) (Questi
 			return ErrConflict
 		}
 		e.normalize(cur.Type)
-		if bad := e.Validate(cur.Subject, cur.Type); len(bad) > 0 {
+		bad := e.Validate(cur.Subject, cur.Type)
+		missing, err := missingUploads(ctx, q, e.Figures)
+		if err != nil {
+			return err
+		}
+		if len(missing) > 0 {
+			bad["figures"] = "this image was never uploaded: " + missing[0]
+		}
+		if len(bad) > 0 {
 			return &InvalidError{Fields: bad}
 		}
 		figures, _ := json.Marshal(e.Figures)

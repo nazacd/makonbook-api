@@ -19,7 +19,9 @@ var files embed.FS
 
 // Locked down: the page loads only its own files and talks only to its own
 // origin, and no other site may frame it.
-const csp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; " +
+// style-src allows inline styles: the math editor (MathLive) positions its
+// glyphs with style attributes. Scripts stay limited to the page's own files.
+const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; " +
 	"connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
 // Handler serves the panel: its files, and index.html for any other path

@@ -912,9 +912,48 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
 
+  /v1/admin/practice/images:
+    post:
+      summary: Upload an image for a question (editors)
+      description: |
+        PNG, JPEG, GIF or WebP, at most 5 MB and 6000 px a side; kept in
+        MakonBook's database. The answer's `key` goes into the text as
+        `![description](r2:<key>)` and into `figures`. The same file uploaded
+        again gets the same key.
+      operationId: adminPracticeUploadImage
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "201":
+          description: Stored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [key, width, height]
+                properties:
+                  key: { type: string, description: "mb/<hash>.<ext>" }
+                  width: { type: integer }
+                  height: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+
   /v1/admin/practice/figures:
     get:
-      summary: A question image from the bank's R2 bucket (editors)
+      summary: A question image, from the bank's R2 bucket or an upload (editors)
       operationId: adminPracticeFigure
       tags: [admin]
       security: [{ adminCookie: [] }]

@@ -161,6 +161,16 @@ type Office struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type PracticeImage struct {
+	Key         string
+	ContentType string
+	Data        []byte
+	Width       int32
+	Height      int32
+	UploadedBy  string
+	CreatedAt   pgtype.Timestamptz
+}
+
 type PracticeTest struct {
 	ID        pgtype.UUID
 	Code      string

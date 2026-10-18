@@ -14,6 +14,8 @@ import {
 import { ErrorNotice, Loading, Notice } from '../components/ui';
 import { dateTime } from '../lib/dates';
 import { AlsoIn, placeLabel, RiskChip, StatusChip, SUBJECT } from './common';
+import { figuresIn } from './format';
+import { RichEditor } from './RichEditor';
 import { figureUrl, RichText } from './RichText';
 
 const LETTERS = ['A', 'B', 'C', 'D'] as const;
@@ -96,13 +98,29 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
   const fields = save.error instanceof ApiError ? (save.error.fields ?? {}) : {};
   const conflict = save.error instanceof ApiError && save.error.code === 'version_conflict';
 
+  // The figures are the images placed in the text; each keeps the kind the
+  // review gave it (graph, chart…), new uploads are "other".
+  function figuresOf(f: Form): Figure[] {
+    const kinds = new Map(q.figures.map((x) => [x.key, x.kind]));
+    const seen = new Set<string>();
+    const out: Figure[] = [];
+    for (const t of [f.passage, f.stem, ...(mcq ? LETTERS.map((l) => f.choices[l] ?? '') : [])]) {
+      for (const x of figuresIn(t)) {
+        if (seen.has(x.key)) continue;
+        seen.add(x.key);
+        out.push({ key: x.key, alt: x.alt, kind: kinds.get(x.key) ?? 'other' });
+      }
+    }
+    return out;
+  }
+
   function submit() {
     const body: QuestionEdit = {
       version: q.version,
       passage: form.passage.trim() ? form.passage : null,
       stem: form.stem,
       choices: mcq ? form.choices : null,
-      figures: form.figures,
+      figures: figuresOf(form),
       correct: mcq ? form.correct : '',
       accepted: mcq ? null : form.accepted.split(',').map((a) => a.trim()).filter(Boolean),
       explanation: form.explanation,
@@ -169,7 +187,13 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
       {save.isError && !conflict && (
         <Notice tone="error" title={Object.keys(fields).length ? 'Fix the marked fields' : 'Couldn’t save'}>
           {Object.keys(fields).length ? null : describe(save.error)}
-          {fields.figures && <div className="field-error">{fields.figures}</div>}
+          {Object.entries(fields)
+            .filter(([k]) => k.startsWith('figures'))
+            .map(([k, v]) => (
+              <div key={k} className="field-error">
+                {k === 'figures' ? v : `Image ${Number(k.split('.')[1]) + 1}: ${v}`}
+              </div>
+            ))}
           {fields.choices && <div className="field-error">{fields.choices}</div>}
         </Notice>
       )}
@@ -178,9 +202,9 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
         <div className="stack">
           <div className="panel">
             {(q.subject === 'english' || form.passage) && (
-              <TextField label="Passage" value={form.passage} onChange={(v) => set('passage', v)} error={fields.passage} rows={8} />
+              <RichField label="Passage" value={form.passage} onChange={(v) => set('passage', v)} error={fields.passage} />
             )}
-            <TextField label="Question" value={form.stem} onChange={(v) => set('stem', v)} error={fields.stem} rows={4} />
+            <RichField label="Question" value={form.stem} onChange={(v) => set('stem', v)} error={fields.stem} />
             {mcq ? (
               <div className="field">
                 <label>Choices (pick the correct one)</label>
@@ -190,12 +214,13 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
                       <input type="radio" name="correct" checked={form.correct === l} onChange={() => set('correct', l)} /> {l}
                     </label>
                     <div className="field" style={{ flex: 1 }}>
-                      <textarea
-                        className="textarea"
-                        rows={1}
-                        value={form.choices[l]}
-                        aria-label={`Choice ${l}`}
-                        onChange={(e) => set('choices', { ...form.choices, [l]: e.target.value })}
+                      <RichEditor
+                        compact
+                        rich={false}
+                        label={`Choice ${l}`}
+                        value={form.choices[l] ?? ''}
+                        invalid={!!fields[`choices.${l}`]}
+                        onChange={(v) => setForm((f) => ({ ...f, choices: { ...f.choices, [l]: v } }))}
                       />
                       {fields[`choices.${l}`] && <span className="field-error">{fields[`choices.${l}`]}</span>}
                     </div>
@@ -210,7 +235,7 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
                 {fields.accepted && <span className="field-error">{fields.accepted}</span>}
               </div>
             )}
-            <TextField label="Explanation" value={form.explanation} onChange={(v) => set('explanation', v)} error={fields.explanation} rows={8} />
+            <RichField label="Explanation" value={form.explanation} onChange={(v) => set('explanation', v)} error={fields.explanation} images={false} />
 
             <div className="grid-3">
               <div className="field">
@@ -248,30 +273,7 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
               </div>
             </div>
 
-            {form.figures.length > 0 && (
-              <div className="field">
-                <label>Figures (place each in the text as ![description](r2:key))</label>
-                {form.figures.map((f, i) => (
-                  <div key={f.key} className="figure-edit">
-                    <img src={figureUrl(f.key)} alt="" />
-                    <div className="field" style={{ flex: 1 }}>
-                      <code className="small faint">r2:{f.key}</code>
-                      <input
-                        className="input"
-                        value={f.alt}
-                        aria-label="Description"
-                        onChange={(e) => set('figures', form.figures.map((g, j) => (j === i ? { ...g, alt: e.target.value } : g)))}
-                      />
-                      {fields[`figures.${i}`] && <span className="field-error">{fields[`figures.${i}`]}</span>}
-                    </div>
-                    <button className="btn danger small" onClick={() => set('figures', form.figures.filter((_, j) => j !== i))}>
-                      Remove
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <FormatHelp />
+            <EditorHelp />
           </div>
         </div>
 
@@ -294,12 +296,11 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
   );
 }
 
-function TextField({ label, value, onChange, error, rows }: { label: string; value: string; onChange: (v: string) => void; error?: string; rows: number }) {
-  const id = `f-${label.toLowerCase()}`;
+function RichField({ label, value, onChange, error, images = true }: { label: string; value: string; onChange: (v: string) => void; error?: string; images?: boolean }) {
   return (
     <div className="field">
-      <label htmlFor={id}>{label}</label>
-      <textarea id={id} className="textarea" rows={rows} value={value} onChange={(e) => onChange(e.target.value)} aria-invalid={!!error} />
+      <label>{label}</label>
+      <RichEditor label={label} value={value} onChange={onChange} images={images} invalid={!!error} />
       {error && <span className="field-error">{error}</span>}
     </div>
   );
@@ -326,24 +327,19 @@ function QuestionView({ form, mcq }: { form: Form; mcq: boolean }) {
   );
 }
 
-function FormatHelp() {
+function EditorHelp() {
   return (
     <details className="small muted">
-      <summary>Text format</summary>
+      <summary>How to edit</summary>
       <ul>
+        <li>Select words and press B, I or U (or Ctrl+B, Ctrl+I, Ctrl+U).</li>
         <li>
-          Math: <code>\( x^2 \)</code> in a line, <code>\[ \frac{'{a}{b}'} \]</code> on its own line.
+          √x adds math (or Ctrl+M). Type as on a calculator: <b>/</b> makes a fraction, <b>^</b> a power, <b>sqrt</b> a root,{' '}
+          <b>pi</b> gives π. Click any math to change it.
         </li>
-        <li>
-          <code>*italic*</code>, <code>**bold**</code>, <code>&lt;u&gt;underlined&lt;/u&gt;</code>; a blank: <code>______</code>.
-        </li>
-        <li>An empty line starts a new paragraph. Lines starting with “- ” make a list.</li>
-        <li>
-          Tables: <code>| a | b |</code>, then <code>|---|---|</code>, then the rows.
-        </li>
-        <li>
-          Figures: <code>![what it shows](r2:key)</code> on its own line.
-        </li>
+        <li>Paste a screenshot straight into the text, or use the picture button; then describe what it shows.</li>
+        <li>___ adds a blank to fill. Lists and tables have their own buttons.</li>
+        <li>&lt;/&gt; shows the text code behind it, if you ever need it.</li>
       </ul>
     </details>
   );
