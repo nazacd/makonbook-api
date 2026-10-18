@@ -257,9 +257,18 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .rte-body th { background: var(--surface-2); font-weight: 600; }
 .rte-body .selectedCell { background: var(--accent-soft); }
 .rte-source { border: 0; border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
+.tbar-hint { padding: 0 6px; }
+.rte-note { padding: 6px 10px 0; }
+.rte-body.compact table { margin: 2px 0; }
 .math-node { cursor: pointer; padding: 0 2px; border-radius: 4px; }
 .math-node:hover, .math-node.selected { background: var(--accent-soft); outline: 1px solid var(--accent); }
-.math-node.display { display: block; text-align: center; margin: 6px 0; }
+.math-node.display { display: block; text-align: center; margin: 8px 0; }
+/* The editor's cursor helpers next to a formula on its own line would each
+   add an empty line the student never sees; the page spaces it like the
+   student view. */
+.rte-body .node-math:has(> .display) + img.ProseMirror-separator,
+.rte-body img.ProseMirror-separator:has(+ .node-math > .display),
+.rte-body .node-math:has(> .display) + img.ProseMirror-separator + br.ProseMirror-trailingBreak { display: none !important; } /* over TipTap's own !important */
 .math-node math { font-size: 1.1em; }
 .figure-node { margin: 8px 0; padding: 8px; border: 1px dashed var(--line); border-radius: var(--radius-sm); display: grid; gap: 8px; }
 .figure-node.selected { border-color: var(--accent); }

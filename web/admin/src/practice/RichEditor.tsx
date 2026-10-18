@@ -261,7 +261,23 @@ function Btn({ on, disabled, title, onClick, children }: { on?: boolean; disable
   );
 }
 
-function Toolbar({ editor, images, rich, onImage, source, onSource }: { editor: Editor; images: boolean; rich: boolean; onImage: () => void; source: boolean; onSource: () => void }) {
+function Toolbar({
+  editor,
+  images,
+  rich,
+  onImage,
+  source,
+  locked,
+  onSource,
+}: {
+  editor: Editor;
+  images: boolean;
+  rich: boolean;
+  onImage: () => void;
+  source: boolean;
+  locked: boolean;
+  onSource: () => void;
+}) {
   const s = useEditorState({
     editor,
     selector: ({ editor: e }) => ({
@@ -338,8 +354,13 @@ function Toolbar({ editor, images, rich, onImage, source, onSource }: { editor: 
           </Btn>
         </>
       )}
+      {source && <span className="small faint tbar-hint">Text code: the stored format, edit with care</span>}
       <span style={{ marginLeft: 'auto' }} />
-      <Btn title={source ? 'Back to the visual editor' : 'Show the text code (for experts)'} on={source} onClick={onSource}>
+      <Btn
+        title={locked ? 'The visual editor can’t show this text' : source ? 'Back to the visual editor' : 'Show the text code (for experts)'}
+        on={source}
+        disabled={locked}
+        onClick={onSource}>
         {'</>'}
       </Btn>
     </div>
@@ -347,6 +368,16 @@ function Toolbar({ editor, images, rich, onImage, source, onSource }: { editor: 
 }
 
 // ---- The editor ----
+
+// fitsSchema: whether the editor can hold every part of the text.
+function fitsSchema(editor: Editor, value: string): boolean {
+  try {
+    editor.schema.nodeFromJSON(parse(value)).check();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function RichEditor({
   value,
@@ -371,6 +402,7 @@ export function RichEditor({
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const editorRef = useRef<Editor | null>(null);
+  const fitsRef = useRef(true);
 
   async function insertImage(file: File) {
     const ed = editorRef.current;
@@ -402,11 +434,10 @@ export function RichEditor({
         orderedList: false,
         horizontalRule: false,
         link: false,
-        bulletList: rich ? {} : false,
-        listItem: rich ? {} : false,
-        listKeymap: rich ? {} : false,
       }),
-      ...(rich ? [TableKit.configure({ table: { resizable: false } })] : []),
+      // Every field can hold lists and tables (some choices are tables);
+      // `rich` only decides whether the toolbar offers new ones.
+      TableKit.configure({ table: { resizable: false } }),
       MathNode,
       FigureNode,
     ],
@@ -428,6 +459,7 @@ export function RichEditor({
       },
     },
     onUpdate: ({ editor: e }) => {
+      if (!fitsRef.current) return; // never overwrite text the editor couldn't load whole
       const text = serialize(e.getJSON() as Node);
       emitted.current = text;
       onChange(text);
@@ -445,9 +477,17 @@ export function RichEditor({
     }
   }, [value, editor]);
 
+  // Text the visual editor can't hold whole (it would drop the rest) is
+  // edited only as text code.
+  const fits = useMemo(() => !editor || fitsSchema(editor, value), [editor, value]);
+  useEffect(() => {
+    fitsRef.current = fits;
+  }, [fits]);
+  const code = source || !fits;
+
   const focused = useEditorState({ editor, selector: ({ editor: e }) => e?.isFocused ?? false });
   const [hovering, setHovering] = useState(false);
-  const showBar = !compact || focused || hovering || source;
+  const showBar = !compact || focused || hovering || code;
 
   if (!editor) return null;
   return (
@@ -457,12 +497,14 @@ export function RichEditor({
           editor={editor}
           images={images}
           rich={rich}
-          source={source}
+          source={code}
+          locked={!fits}
           onImage={() => fileInput.current?.click()}
           onSource={() => setSource((s) => !s)}
         />
       )}
-      {source ? (
+      {!fits && <div className="small muted rte-note">This text has something the visual editor can’t show, so it opens as text code.</div>}
+      {code ? (
         <textarea className="textarea rte-source" rows={compact ? 2 : 8} value={value} aria-label={`${label} (text code)`} onChange={(e) => onChange(e.target.value)} />
       ) : (
         <EditorContent editor={editor} />
