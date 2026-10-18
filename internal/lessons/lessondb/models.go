@@ -208,6 +208,7 @@ type Question struct {
 	UpdatedAt    pgtype.Timestamptz
 	ApprovedAt   pgtype.Timestamptz
 	AutoApproved bool
+	ApprovedBy   pgtype.Text
 }
 
 type QuestionAiReview struct {

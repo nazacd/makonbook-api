@@ -244,6 +244,9 @@ question is red until a teacher confirms. New tests are written later in the adm
   clean transcription, no issues) is approved on import (`auto_approved`; ~84 % of the bank). Teachers work
   on the yellow and red ones. A later review of a repeat that isn't green, or an editor's change, takes the
   automatic approval back, so a person checks it.
+- **Approving in the editor** (until the Telegram reviewers): an editor approves the version they see
+  (`POST …/questions/{id}/approval`, `409` if it changed meanwhile); it must pass the checks a save does, so
+  a question without a key can't be approved. `approved_by` keeps who. An approval can be taken back.
 
 ### 9.3 Access (D20)
 Every active student sees every test. A test is **locked until all its questions are approved**, then it

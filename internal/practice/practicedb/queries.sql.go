@@ -11,6 +11,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const approveQuestion = `-- name: ApproveQuestion :exec
+UPDATE questions SET status = 'approved', approved_at = now(), approved_by = $1, auto_approved = false
+WHERE id = $2
+`
+
+type ApproveQuestionParams struct {
+	ApprovedBy pgtype.Text
+	ID         pgtype.UUID
+}
+
+// A person approves a question in the editor.
+func (q *Queries) ApproveQuestion(ctx context.Context, arg ApproveQuestionParams) error {
+	_, err := q.db.Exec(ctx, approveQuestion, arg.ApprovedBy, arg.ID)
+	return err
+}
+
 const countQuestions = `-- name: CountQuestions :one
 SELECT count(*)::int
 FROM questions q
@@ -103,7 +119,7 @@ func (q *Queries) ExistingImages(ctx context.Context, keys []string) ([]string, 
 }
 
 const getQuestion = `-- name: GetQuestion :one
-SELECT id, subject, type, content_hash, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty, status, ai_risk, version, created_at, updated_at, approved_at, auto_approved FROM questions WHERE id = $1
+SELECT id, subject, type, content_hash, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty, status, ai_risk, version, created_at, updated_at, approved_at, auto_approved, approved_by FROM questions WHERE id = $1
 `
 
 func (q *Queries) GetQuestion(ctx context.Context, id pgtype.UUID) (Question, error) {
@@ -131,6 +147,7 @@ func (q *Queries) GetQuestion(ctx context.Context, id pgtype.UUID) (Question, er
 		&i.UpdatedAt,
 		&i.ApprovedAt,
 		&i.AutoApproved,
+		&i.ApprovedBy,
 	)
 	return i, err
 }
@@ -377,7 +394,7 @@ func (q *Queries) ListQuestions(ctx context.Context, arg ListQuestionsParams) ([
 }
 
 const lockQuestion = `-- name: LockQuestion :one
-SELECT id, subject, type, content_hash, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty, status, ai_risk, version, created_at, updated_at, approved_at, auto_approved FROM questions WHERE id = $1 FOR UPDATE
+SELECT id, subject, type, content_hash, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty, status, ai_risk, version, created_at, updated_at, approved_at, auto_approved, approved_by FROM questions WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockQuestion(ctx context.Context, id pgtype.UUID) (Question, error) {
@@ -405,6 +422,7 @@ func (q *Queries) LockQuestion(ctx context.Context, id pgtype.UUID) (Question, e
 		&i.UpdatedAt,
 		&i.ApprovedAt,
 		&i.AutoApproved,
+		&i.ApprovedBy,
 	)
 	return i, err
 }
@@ -690,13 +708,25 @@ func (q *Queries) TouchedQuestions(ctx context.Context, testID pgtype.UUID) (int
 	return column_1, err
 }
 
+const unapproveQuestion = `-- name: UnapproveQuestion :exec
+UPDATE questions SET status = 'review', approved_at = NULL, approved_by = NULL, auto_approved = false
+WHERE id = $1
+`
+
+// A person takes an approval back (theirs, someone else's or the AI review's).
+func (q *Queries) UnapproveQuestion(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, unapproveQuestion, id)
+	return err
+}
+
 const updateQuestion = `-- name: UpdateQuestion :one
 UPDATE questions
 SET passage = $1, stem = $2, choices = $3, figures = $4,
     correct = $5, accepted = $6::text[], explanation = $7,
     domain = $8, skill = $9, difficulty = $10,
     version = version + 1, updated_at = now(),
-    status = CASE WHEN status = 'approved' THEN 'review' ELSE status END, approved_at = NULL, auto_approved = false
+    status = CASE WHEN status = 'approved' THEN 'review' ELSE status END, approved_at = NULL, auto_approved = false,
+    approved_by = NULL
 WHERE id = $11
 RETURNING version
 `

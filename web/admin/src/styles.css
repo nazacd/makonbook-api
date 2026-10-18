@@ -104,6 +104,8 @@ button, input, select { font: inherit; color: inherit; }
 .btn:disabled { opacity: 0.5; cursor: default; transform: none; }
 .btn.secondary { background: var(--surface-2); border-color: var(--line); color: var(--text); }
 .btn.secondary:hover { background: var(--line); }
+.btn.success { background: var(--success); border-color: var(--success); color: #04120c; }
+.btn.success:hover { filter: brightness(1.08); }
 .btn.danger { background: transparent; border-color: var(--line); color: var(--danger); }
 .btn.danger:hover { background: rgba(248, 113, 113, 0.12); }
 .btn.small { height: 28px; padding: 0 10px; font-size: 13px; }
@@ -154,6 +156,7 @@ button.chip.selected { border-color: currentColor; }
 .notice.error { border-left-color: var(--danger); }
 .notice.warning { border-left-color: var(--warning); }
 .notice.info { border-left-color: var(--accent); }
+.notice.success { border-left-color: var(--success); }
 .notice b { display: block; margin-bottom: 2px; }
 .empty { padding: 40px 16px; text-align: center; color: var(--text-2); }
 .spinner {

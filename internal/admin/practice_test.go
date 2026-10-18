@@ -130,6 +130,18 @@ func TestPracticeEditor(t *testing.T) {
 		t.Errorf("invalid save: %d %v", status, body)
 	}
 
+	// The editor approves the saved version, by name.
+	if status, _, _ := e.do("POST", "/v1/admin/practice/questions/"+id+"/approval", teacher, map[string]any{"version": 2}, true); status != 400 {
+		t.Errorf("approval without a decision: %d", status)
+	}
+	status, body, _ = e.do("POST", "/v1/admin/practice/questions/"+id+"/approval", teacher, map[string]any{"version": 2, "approved": true}, true)
+	if status != 200 || body["status"] != "approved" || body["approved_by"] != "Ali Valiyev" || body["auto_approved"] != false {
+		t.Errorf("approve: %d %v", status, body)
+	}
+	if status, body, _ := e.do("POST", "/v1/admin/practice/questions/"+id+"/approval", boss, map[string]any{"version": 1, "approved": false}, true); status != 409 || code(body) != CodeConflict {
+		t.Errorf("stale approval change: %d %v", status, body)
+	}
+
 	// Taxonomy for the form.
 	_, body, _ = e.do("GET", "/v1/admin/practice/taxonomy", teacher, nil, false)
 	if _, ok := body["subjects"].(map[string]any)["math"].(map[string]any)["Algebra"]; !ok {

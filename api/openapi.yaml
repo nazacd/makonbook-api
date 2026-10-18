@@ -889,6 +889,44 @@ paths:
           description: "`invalid_question`, with `fields`"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/admin/practice/questions/{id}/approval:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Approve a question, or take an approval back (editors)
+      description: |
+        Approves the version the editor saw (a test opens to students once
+        all its questions are approved). Approving runs the checks a save
+        does, so a question without a key can't pass. `approved: false`
+        sends it back to review, whoever approved it.
+      operationId: adminPracticeApproval
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, approved]
+              properties:
+                version: { type: integer, description: The version the editor saw. }
+                approved: { type: boolean }
+      responses:
+        "200": { $ref: "#/components/responses/PracticeQuestion" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`version_conflict`: someone saved the question after it was opened"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_question`, with `fields`: it can't be approved as it is"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /v1/admin/practice/taxonomy:
     get:
       summary: The digital SAT's domains and skills, per subject (editors)
@@ -1202,7 +1240,7 @@ components:
       allOf:
         - $ref: "#/components/schemas/PracticeContent"
         - type: object
-          required: [id, subject, type, status, ai_risk, version, updated_at, approved_at, auto_approved, places, reviews, versions]
+          required: [id, subject, type, status, ai_risk, version, updated_at, approved_at, auto_approved, approved_by, places, reviews, versions]
           properties:
             id: { type: string, format: uuid }
             subject: { type: string, enum: [math, english] }
@@ -1215,6 +1253,7 @@ components:
             auto_approved:
               type: boolean
               description: Approved on import because its AI review was green. A worse review of a repeat or an editor's change takes it back.
+            approved_by: { type: [string, "null"], description: The person who approved it in the editor. }
             places: { type: array, items: { $ref: "#/components/schemas/PracticePlace" } }
             reviews:
               type: array

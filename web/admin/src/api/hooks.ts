@@ -230,6 +230,20 @@ export function useSaveQuestion(id: string) {
   });
 }
 
+export function useApproveQuestion(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { version: number; approved: boolean }) =>
+      call(api.POST('/v1/admin/practice/questions/{id}/approval', { params: { header: CSRF, path: { id } }, body })),
+    onSuccess: (q) => {
+      qc.setQueryData(['practice', 'question', id], q);
+      void qc.invalidateQueries({ queryKey: ['practice', 'tests'] });
+      void qc.invalidateQueries({ queryKey: ['practice', 'test'] });
+      void qc.invalidateQueries({ queryKey: ['practice', 'queue'] });
+    },
+  });
+}
+
 export function useTaxonomy() {
   return useQuery({
     queryKey: ['practice', 'taxonomy'],

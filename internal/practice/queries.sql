@@ -138,9 +138,20 @@ SET passage = sqlc.narg('passage'), stem = @stem, choices = sqlc.narg('choices')
     correct = sqlc.narg('correct'), accepted = sqlc.narg('accepted')::text[], explanation = @explanation,
     domain = @domain, skill = @skill, difficulty = sqlc.narg('difficulty'),
     version = version + 1, updated_at = now(),
-    status = CASE WHEN status = 'approved' THEN 'review' ELSE status END, approved_at = NULL, auto_approved = false
+    status = CASE WHEN status = 'approved' THEN 'review' ELSE status END, approved_at = NULL, auto_approved = false,
+    approved_by = NULL
 WHERE id = @id
 RETURNING version;
+
+-- A person approves a question in the editor.
+-- name: ApproveQuestion :exec
+UPDATE questions SET status = 'approved', approved_at = now(), approved_by = @approved_by, auto_approved = false
+WHERE id = @id;
+
+-- A person takes an approval back (theirs, someone else's or the AI review's).
+-- name: UnapproveQuestion :exec
+UPDATE questions SET status = 'review', approved_at = NULL, approved_by = NULL, auto_approved = false
+WHERE id = @id;
 
 -- name: InsertImage :exec
 INSERT INTO practice_images (key, content_type, bytes, width, height, uploaded_by)

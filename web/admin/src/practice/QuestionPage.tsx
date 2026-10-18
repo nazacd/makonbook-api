@@ -5,6 +5,7 @@ import { ApiError, describe } from '../api/client';
 import {
   usePracticeQuestion,
   usePracticeTest,
+  useApproveQuestion,
   useSaveQuestion,
   useTaxonomy,
   type Figure,
@@ -95,8 +96,13 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
   }, [dirty]);
 
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((f) => ({ ...f, [key]: value }));
-  const fields = save.error instanceof ApiError ? (save.error.fields ?? {}) : {};
-  const conflict = save.error instanceof ApiError && save.error.code === 'version_conflict';
+  const approval = useApproveQuestion(q.id);
+  const fields = {
+    ...(save.error instanceof ApiError ? (save.error.fields ?? {}) : {}),
+    ...(approval.error instanceof ApiError ? (approval.error.fields ?? {}) : {}),
+  };
+  const conflict = [save.error, approval.error].some((e) => e instanceof ApiError && e.code === 'version_conflict');
+  const approved = q.status === 'approved';
 
   // The figures are the images placed in the text; each keeps the kind the
   // review gave it (graph, chart…), new uploads are "other".
@@ -167,18 +173,44 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
           <button className="btn" disabled={!dirty || save.isPending} onClick={submit}>
             {save.isPending ? 'Saving…' : 'Save'}
           </button>
+          {approved ? (
+            <button
+              className="btn secondary"
+              disabled={dirty || approval.isPending}
+              onClick={() => approval.mutate({ version: q.version, approved: false })}>
+              Take back approval
+            </button>
+          ) : (
+            <button
+              className="btn success"
+              disabled={dirty || approval.isPending}
+              title={dirty ? 'Save your changes first' : 'It’s right and ready for students'}
+              onClick={() => approval.mutate({ version: q.version, approved: true })}>
+              {approval.isPending ? 'Approving…' : 'Approve'}
+            </button>
+          )}
         </div>
       </div>
 
       {q.places.length > 1 && (
         <Notice tone="info">This question is in {q.places.length} tests; a change here changes it in all of them.</Notice>
       )}
-      {q.status === 'approved' && (
-        <Notice tone="warning">
-          {q.auto_approved ? 'It’s approved automatically (its AI review is green).' : 'It’s approved.'} Saving a change sends it back to review.
+      {approved && (
+        <Notice tone="success">
+          {q.auto_approved
+            ? 'Approved automatically: its AI review is green.'
+            : `Approved${q.approved_by ? ` by ${q.approved_by}` : ''}${q.approved_at ? `, ${dateTime(q.approved_at)}` : ''}.`}{' '}
+          Saving a change sends it back to review.
         </Notice>
       )}
-      {save.isSuccess && !dirty && save.data.id === q.id && <Notice tone="info">Saved as version {q.version}.</Notice>}
+      {save.isSuccess && !dirty && save.data.id === q.id && !approved && (
+        <Notice tone="info">Saved as version {q.version}. When it’s right, approve it.</Notice>
+      )}
+      {approval.isError && !conflict && (
+        <Notice tone="error" title={Object.keys(fields).length ? 'It can’t be approved yet: fix the marked fields' : 'Couldn’t change the approval'}>
+          {Object.keys(fields).length ? null : describe(approval.error)}
+        </Notice>
+      )}
       {conflict && (
         <Notice tone="error" title="Someone saved this question after you opened it">
           Copy what you changed, then{' '}

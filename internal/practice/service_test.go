@@ -15,7 +15,7 @@ func TestEditing(t *testing.T) {
 	day := review(t, "DAY8", func(subject string, module, n int, rec map[string]any) {
 		switch {
 		case subject == "english" && module == 1 && n == 3:
-			rec["risk"] = "red"
+			rec["risk"], rec["key"] = "red", "" // the bank has no key
 		case subject == "math" && module == 1 && n == 1:
 			rec["risk"] = "yellow"
 			rec["stem"] = "The graph:\n\n![a line](r2:sat/g.png)\n\nWhat is the slope?"
@@ -136,6 +136,20 @@ func TestEditing(t *testing.T) {
 			g2.Status != "review" || g2.AutoApproved || g2.ApprovedAt != nil {
 			t.Errorf("grid-in edit: %+v %v", g2, err)
 		}
+	}
+	// A person approves what they saw; it must pass the checks.
+	if _, err := svc.SetApproval(ctx, q.ID, "Teacher", 2, true); !errors.Is(err, ErrConflict) {
+		t.Errorf("approving an old version: %v", err)
+	}
+	a, err := svc.SetApproval(ctx, q.ID, "Teacher", 3, true)
+	if err != nil || a.Status != "approved" || a.AutoApproved || *a.ApprovedBy != "Teacher" || a.ApprovedAt == nil || a.Version != 3 {
+		t.Errorf("approve: %+v %v", a, err)
+	}
+	if _, err := svc.SetApproval(ctx, list[0].ID, "Teacher", 1, true); !errors.As(err, &inv) || inv.Fields["correct"] == "" {
+		t.Errorf("approving a question without a key: %v", err)
+	}
+	if a, err := svc.SetApproval(ctx, q.ID, "Teacher", 3, false); err != nil || a.Status != "review" || a.ApprovedBy != nil || a.ApprovedAt != nil {
+		t.Errorf("take the approval back: %+v %v", a, err)
 	}
 	if _, err := svc.Question(ctx, "not-a-uuid"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("bad id: %v", err)

@@ -215,6 +215,8 @@ type Question struct {
 	ApprovedAt *time.Time `json:"approved_at"`
 	// AutoApproved: approved on import because its AI review was green.
 	AutoApproved bool `json:"auto_approved"`
+	// ApprovedBy: the person who approved it in the editor.
+	ApprovedBy *string `json:"approved_by"`
 	Content
 	Places   []Place    `json:"places"`
 	Reviews  []AIReview `json:"reviews"`
@@ -256,7 +258,7 @@ func (s *Service) Question(ctx context.Context, id string) (Question, error) {
 	}
 	out := Question{
 		ID: id, Subject: row.Subject, Type: row.Type, Status: row.Status, AIRisk: textPtr(row.AiRisk),
-		Version: row.Version, UpdatedAt: row.UpdatedAt.Time, AutoApproved: row.AutoApproved,
+		Version: row.Version, UpdatedAt: row.UpdatedAt.Time, AutoApproved: row.AutoApproved, ApprovedBy: textPtr(row.ApprovedBy),
 		Content: Content{
 			Passage: textPtr(row.Passage), Stem: row.Stem, Correct: textPtr(row.Correct), Accepted: row.Accepted,
 			Explanation: row.Explanation, Domain: row.Domain, Skill: row.Skill, Difficulty: textPtr(row.Difficulty),
@@ -378,6 +380,63 @@ func (s *Service) Update(ctx context.Context, id, editor string, e Edit) (Questi
 		return Question{}, err
 	}
 	return s.Question(ctx, id)
+}
+
+// SetApproval approves a question as the version the person saw, or takes an
+// approval back. ErrConflict if it changed since; approving runs the checks
+// a save does (*InvalidError), so a question without a key can't pass.
+func (s *Service) SetApproval(ctx context.Context, id, by string, version int32, approved bool) (Question, error) {
+	uid, ok := parseUUID(id)
+	if !ok {
+		return Question{}, ErrNotFound
+	}
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := practicedb.New(tx)
+		cur, err := q.LockQuestion(ctx, uid)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if cur.Version != version {
+			return ErrConflict
+		}
+		if !approved {
+			return q.UnapproveQuestion(ctx, uid)
+		}
+		e, err := editOf(cur)
+		if err != nil {
+			return err
+		}
+		e.normalize(cur.Type)
+		if bad := e.Validate(cur.Subject, cur.Type); len(bad) > 0 {
+			return &InvalidError{Fields: bad}
+		}
+		return q.ApproveQuestion(ctx, practicedb.ApproveQuestionParams{ID: uid, ApprovedBy: optText(by)})
+	})
+	if err != nil {
+		return Question{}, err
+	}
+	return s.Question(ctx, id)
+}
+
+// editOf is a stored question as an edit of itself, to check it.
+func editOf(row practicedb.Question) (Edit, error) {
+	e := Edit{
+		BaseVersion: row.Version, Passage: textPtr(row.Passage), Stem: row.Stem, Correct: row.Correct.String,
+		Accepted: row.Accepted, Explanation: row.Explanation, Domain: row.Domain, Skill: row.Skill,
+		Difficulty: row.Difficulty.String,
+	}
+	if row.Choices != nil {
+		if err := json.Unmarshal(row.Choices, &e.Choices); err != nil {
+			return e, fmt.Errorf("choices: %w", err)
+		}
+	}
+	if err := json.Unmarshal(row.Figures, &e.Figures); err != nil {
+		return e, fmt.Errorf("figures: %w", err)
+	}
+	return e, nil
 }
 
 // normalize trims what doesn't matter, so a blank passage is no passage.

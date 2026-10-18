@@ -665,6 +665,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/practice/questions/{id}/approval": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve a question, or take an approval back (editors)
+         * @description Approves the version the editor saw (a test opens to students once
+         *     all its questions are approved). Approving runs the checks a save
+         *     does, so a question without a key can't pass. `approved: false`
+         *     sends it back to review, whoever approved it.
+         */
+        post: operations["adminPracticeApproval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/practice/taxonomy": {
         parameters: {
             query?: never;
@@ -961,6 +986,8 @@ export interface components {
             approved_at: string | null;
             /** @description Approved on import because its AI review was green. A worse review of a repeat or an editor's change takes it back. */
             auto_approved: boolean;
+            /** @description The person who approved it in the editor. */
+            approved_by: string | null;
             places: components["schemas"]["PracticePlace"][];
             reviews: {
                 test: string;
@@ -2410,6 +2437,53 @@ export interface operations {
                 };
             };
             /** @description `invalid_question`, with `fields` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    adminPracticeApproval: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The version the editor saw. */
+                    version: number;
+                    approved: boolean;
+                };
+            };
+        };
+        responses: {
+            200: components["responses"]["PracticeQuestion"];
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `version_conflict`: someone saved the question after it was opened */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_question`, with `fields`: it can't be approved as it is */
             422: {
                 headers: {
                     [name: string]: unknown;
