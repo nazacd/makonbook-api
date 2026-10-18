@@ -59,10 +59,13 @@ function cells(line: string): string[] {
 
 export function RichText({ text, className }: { text: string | null | undefined; className?: string }) {
   if (!text) return null;
-  const blocks = text.split(/\n\s*\n/).filter((b) => b.trim() !== '');
+  // Paragraphs are split by a blank line; each further blank line is an
+  // empty line of space (as the editor writes it).
+  const blocks = text.trim().split(/\n[ \t]*\n/);
   return (
     <div className={`rich ${className ?? ''}`}>
       {blocks.map((block, i) => {
+        if (block.trim() === '') return <p key={i} className="blank" aria-hidden="true"><br /></p>;
         const lines = block.split('\n');
         if (lines.length > 1 && lines.every((l) => l.trim().startsWith('|'))) {
           const rows = lines.filter((l) => !/^\s*\|?\s*:?-{2,}/.test(l)).map(cells);
