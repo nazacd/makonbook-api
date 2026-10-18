@@ -1,7 +1,8 @@
 // Converts between the stored content format (makonbook-questionbank's
 // tools/prompts/format.md) and the visual editor's document (TipTap JSON):
 //
-//   paragraphs (blank line between), "\n" line breaks, \( \) and \[ \] math,
+//   paragraphs (blank line between; each further blank line is an empty
+//   line), "\n" line breaks, \( \) and \[ \] math,
 //   *italic*, **bold**, ***bold italic***, <u>underline</u>, "- " lists,
 //   pipe tables (header, |---|, rows), ![description](r2:key) figures.
 //
@@ -56,8 +57,13 @@ function cells(line: string): string[] {
 /** Parses stored text into the editor's document. */
 export function parse(text: string | null | undefined): Node {
   const blocks: Node[] = [];
-  for (const block of (text ?? '').split(/\n[ \t]*\n/)) {
-    if (block.trim() === '') continue;
+  // Paragraphs are split by a blank line; each further blank line is an
+  // empty line of space.
+  for (const block of (text ?? '').trim().split(/\n[ \t]*\n/)) {
+    if (block.trim() === '') {
+      blocks.push({ type: 'paragraph' });
+      continue;
+    }
     const lines = block.split('\n');
     if (lines.length > 1 && lines.every((l) => l.trim().startsWith('|'))) {
       const rows = lines.filter((l) => !/^\s*\|?\s*:?-{2,}/.test(l)).map(cells);
@@ -188,9 +194,9 @@ function blockText(n: Node): string {
 
 /** Writes the editor's document back as stored text. */
 export function serialize(doc: Node): string {
+  // An empty paragraph between others is kept as an extra blank line.
   return (doc.content ?? [])
-    .map(blockText)
-    .filter((b) => b.trim() !== '')
+    .map((b) => (blockText(b).trim() === '' ? '' : blockText(b)))
     .join('\n\n')
     .trim();
 }
