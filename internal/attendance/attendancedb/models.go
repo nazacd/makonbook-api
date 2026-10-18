@@ -187,26 +187,27 @@ type PracticeTestQuestion struct {
 }
 
 type Question struct {
-	ID          pgtype.UUID
-	Subject     string
-	Type        string
-	ContentHash string
-	Passage     pgtype.Text
-	Stem        string
-	Choices     []byte
-	Figures     []byte
-	Correct     pgtype.Text
-	Accepted    []string
-	Explanation string
-	Domain      string
-	Skill       string
-	Difficulty  pgtype.Text
-	Status      string
-	AiRisk      pgtype.Text
-	Version     int32
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
-	ApprovedAt  pgtype.Timestamptz
+	ID           pgtype.UUID
+	Subject      string
+	Type         string
+	ContentHash  string
+	Passage      pgtype.Text
+	Stem         string
+	Choices      []byte
+	Figures      []byte
+	Correct      pgtype.Text
+	Accepted     []string
+	Explanation  string
+	Domain       string
+	Skill        string
+	Difficulty   pgtype.Text
+	Status       string
+	AiRisk       pgtype.Text
+	Version      int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	ApprovedAt   pgtype.Timestamptz
+	AutoApproved bool
 }
 
 type QuestionAiReview struct {

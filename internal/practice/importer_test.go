@@ -89,6 +89,13 @@ func TestImport(t *testing.T) {
 	if s.Code != "DAY2" || s.Questions != 98 || s.New != 98 || s.Risk["yellow"] != 1 {
 		t.Errorf("DAY2: %+v", s)
 	}
+	// Green questions are approved at once, marked as done by the AI review.
+	if n := count(`SELECT count(*) FROM questions WHERE status = 'approved' AND auto_approved AND approved_at IS NOT NULL`); n != 97 {
+		t.Errorf("auto-approved: %d, want the 97 green", n)
+	}
+	if n := count(`SELECT count(*) FROM questions WHERE ai_risk = 'yellow' AND status = 'review'`); n != 1 {
+		t.Error("the yellow question was approved")
+	}
 
 	// DAY3 repeats two DAY2 questions, written with other spacing and quotes
 	// (its risk is raised to this review's red) or another figure description:
@@ -105,6 +112,7 @@ func TestImport(t *testing.T) {
 		case subject == "math" && module == 1 && n == 9:
 			rec["stem"] = "The graph:\n\n![a straight line](r2:sat/g.png)\n\nWhat is the slope?"
 			rec["figures"] = []map[string]string{{"key": "sat/g.png", "kind": "graph", "alt": "a straight line"}}
+			rec["risk"] = "yellow"
 		}
 	})
 	s, err = im.Import(ctx, load(t, day3), false)
@@ -120,6 +128,11 @@ func TestImport(t *testing.T) {
 	if n := count(`SELECT count(*) FROM questions WHERE ai_risk = 'red' AND stem LIKE 'Shared%'`); n != 1 {
 		t.Error("the shared question's risk wasn't raised to red")
 	}
+	// The figure question, green in DAY2, is yellow in DAY3's review: it
+	// loses its automatic approval.
+	if n := count(`SELECT count(*) FROM questions WHERE stem LIKE 'The graph%' AND ai_risk = 'yellow' AND status = 'review' AND NOT auto_approved AND approved_at IS NULL`); n != 1 {
+		t.Error("the figure question kept its automatic approval after a yellow review")
+	}
 	if n := count(`SELECT count(*) FROM question_ai_reviews r JOIN questions q ON q.id = r.question_id WHERE q.stem LIKE 'Shared%'`); n != 2 {
 		t.Errorf("the shared question has %d reviews, want both", n)
 	}
@@ -131,7 +144,8 @@ func TestImport(t *testing.T) {
 	}
 
 	// Loading DAY2 again is skipped; a reload replaces it while nobody has
-	// worked on it, and drops the questions only it used.
+	// worked on it (automatic approvals don't count), and drops the
+	// questions only it used.
 	if _, err := im.Import(ctx, load(t, day2), false); !errors.Is(err, ErrImported) {
 		t.Errorf("second import: %v", err)
 	}
@@ -148,7 +162,7 @@ func TestImport(t *testing.T) {
 	}
 
 	// Once a teacher approves a question, the test can't be reloaded.
-	if _, err := pool.Exec(ctx, `UPDATE questions SET status = 'approved', approved_at = now()
+	if _, err := pool.Exec(ctx, `UPDATE questions SET status = 'approved', approved_at = now(), auto_approved = false
 		WHERE id = (SELECT question_id FROM practice_test_questions tq JOIN practice_tests t ON t.id = tq.test_id
 		            WHERE t.code = 'DAY2' LIMIT 1)`); err != nil {
 		t.Fatal(err)
@@ -161,7 +175,7 @@ func TestImport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(tests) != 2 || tests[0].Code != "DAY2" || tests[0].Approved != 1 || tests[0].Questions != 98 ||
+	if len(tests) != 2 || tests[0].Code != "DAY2" || tests[0].Approved != 98 || tests[0].Questions != 98 ||
 		tests[1].Red != 1 || tests[1].Shared != 0 {
 		t.Errorf("progress: %+v", tests)
 	}

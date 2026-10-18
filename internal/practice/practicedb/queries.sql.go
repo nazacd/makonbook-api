@@ -55,7 +55,7 @@ func (q *Queries) CreateTest(ctx context.Context, arg CreateTestParams) (Practic
 
 const deleteOrphanQuestions = `-- name: DeleteOrphanQuestions :execrows
 DELETE FROM questions q
-WHERE q.status = 'review' AND q.version = 1
+WHERE (q.status = 'review' OR q.auto_approved) AND q.version = 1
   AND NOT EXISTS (SELECT 1 FROM practice_test_questions tq WHERE tq.question_id = q.id)
 `
 
@@ -103,7 +103,7 @@ func (q *Queries) ExistingImages(ctx context.Context, keys []string) ([]string, 
 }
 
 const getQuestion = `-- name: GetQuestion :one
-SELECT id, subject, type, content_hash, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty, status, ai_risk, version, created_at, updated_at, approved_at FROM questions WHERE id = $1
+SELECT id, subject, type, content_hash, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty, status, ai_risk, version, created_at, updated_at, approved_at, auto_approved FROM questions WHERE id = $1
 `
 
 func (q *Queries) GetQuestion(ctx context.Context, id pgtype.UUID) (Question, error) {
@@ -130,6 +130,7 @@ func (q *Queries) GetQuestion(ctx context.Context, id pgtype.UUID) (Question, er
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ApprovedAt,
+		&i.AutoApproved,
 	)
 	return i, err
 }
@@ -209,10 +210,12 @@ func (q *Queries) InsertImage(ctx context.Context, arg InsertImageParams) error 
 
 const insertQuestion = `-- name: InsertQuestion :one
 INSERT INTO questions (subject, type, content_hash, passage, stem, choices, figures, correct, accepted,
-                       explanation, domain, skill, difficulty, ai_risk)
+                       explanation, domain, skill, difficulty, ai_risk, status, approved_at, auto_approved)
 VALUES ($1, $2, $3, $4, $5, $6, $7,
         $8, $9::text[], $10, $11, $12,
-        $13, $14)
+        $13, $14,
+        CASE WHEN $14 = 'green' THEN 'approved' ELSE 'review' END,
+        CASE WHEN $14 = 'green' THEN now() END, $14 = 'green')
 ON CONFLICT (content_hash) DO NOTHING
 RETURNING id
 `
@@ -234,7 +237,8 @@ type InsertQuestionParams struct {
 	AiRisk      pgtype.Text
 }
 
-// A new question; nothing comes back if one with the same text exists.
+// A new question; nothing comes back if one with the same text exists. A
+// green one is approved at once.
 func (q *Queries) InsertQuestion(ctx context.Context, arg InsertQuestionParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, insertQuestion,
 		arg.Subject,
@@ -373,7 +377,7 @@ func (q *Queries) ListQuestions(ctx context.Context, arg ListQuestionsParams) ([
 }
 
 const lockQuestion = `-- name: LockQuestion :one
-SELECT id, subject, type, content_hash, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty, status, ai_risk, version, created_at, updated_at, approved_at FROM questions WHERE id = $1 FOR UPDATE
+SELECT id, subject, type, content_hash, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty, status, ai_risk, version, created_at, updated_at, approved_at, auto_approved FROM questions WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockQuestion(ctx context.Context, id pgtype.UUID) (Question, error) {
@@ -400,6 +404,7 @@ func (q *Queries) LockQuestion(ctx context.Context, id pgtype.UUID) (Question, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ApprovedAt,
+		&i.AutoApproved,
 	)
 	return i, err
 }
@@ -536,7 +541,10 @@ const raiseRisk = `-- name: RaiseRisk :one
 UPDATE questions
 SET ai_risk = CASE WHEN array_position(ARRAY['green', 'yellow', 'red'], $1::text)
                         > coalesce(array_position(ARRAY['green', 'yellow', 'red'], ai_risk), 0)
-                   THEN $1::text ELSE ai_risk END
+                   THEN $1::text ELSE ai_risk END,
+    status = CASE WHEN auto_approved AND $1::text <> 'green' THEN 'review' ELSE status END,
+    approved_at = CASE WHEN auto_approved AND $1::text <> 'green' THEN NULL ELSE approved_at END,
+    auto_approved = auto_approved AND $1::text = 'green'
 WHERE content_hash = $2
 RETURNING id
 `
@@ -547,7 +555,7 @@ type RaiseRiskParams struct {
 }
 
 // A repeat of a stored question: keep its content, raise its risk if this
-// review is worse.
+// review is worse. A review that isn't green takes an automatic approval back.
 func (q *Queries) RaiseRisk(ctx context.Context, arg RaiseRiskParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, raiseRisk, arg.AiRisk, arg.ContentHash)
 	var id pgtype.UUID
@@ -669,11 +677,12 @@ const touchedQuestions = `-- name: TouchedQuestions :one
 SELECT count(DISTINCT q.id)::int
 FROM practice_test_questions tq
 JOIN questions q ON q.id = tq.question_id
-WHERE tq.test_id = $1 AND (q.status = 'approved' OR q.version > 1)
+WHERE tq.test_id = $1 AND ((q.status = 'approved' AND NOT q.auto_approved) OR q.version > 1)
 `
 
-// Questions of a test that people have already worked on: approved, or
-// changed after the import. A test with any of these can't be reloaded.
+// Questions of a test that people have already worked on: approved by a
+// person, or changed after the import. A test with any of these can't be
+// reloaded.
 func (q *Queries) TouchedQuestions(ctx context.Context, testID pgtype.UUID) (int32, error) {
 	row := q.db.QueryRow(ctx, touchedQuestions, testID)
 	var column_1 int32
@@ -687,7 +696,7 @@ SET passage = $1, stem = $2, choices = $3, figures = $4,
     correct = $5, accepted = $6::text[], explanation = $7,
     domain = $8, skill = $9, difficulty = $10,
     version = version + 1, updated_at = now(),
-    status = CASE WHEN status = 'approved' THEN 'review' ELSE status END, approved_at = NULL
+    status = CASE WHEN status = 'approved' THEN 'review' ELSE status END, approved_at = NULL, auto_approved = false
 WHERE id = $11
 RETURNING version
 `
@@ -706,8 +715,8 @@ type UpdateQuestionParams struct {
 	ID          pgtype.UUID
 }
 
-// An editor's change: a new version. An approved question goes back to
-// review, so a teacher checks the change.
+// An editor's change: a new version. An approved question (by a person or
+// automatically) goes back to review, so a teacher checks the change.
 func (q *Queries) UpdateQuestion(ctx context.Context, arg UpdateQuestionParams) (int32, error) {
 	row := q.db.QueryRow(ctx, updateQuestion,
 		arg.Passage,

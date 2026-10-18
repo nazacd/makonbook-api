@@ -213,6 +213,8 @@ type Question struct {
 	Version    int32      `json:"version"`
 	UpdatedAt  time.Time  `json:"updated_at"`
 	ApprovedAt *time.Time `json:"approved_at"`
+	// AutoApproved: approved on import because its AI review was green.
+	AutoApproved bool `json:"auto_approved"`
 	Content
 	Places   []Place    `json:"places"`
 	Reviews  []AIReview `json:"reviews"`
@@ -254,7 +256,7 @@ func (s *Service) Question(ctx context.Context, id string) (Question, error) {
 	}
 	out := Question{
 		ID: id, Subject: row.Subject, Type: row.Type, Status: row.Status, AIRisk: textPtr(row.AiRisk),
-		Version: row.Version, UpdatedAt: row.UpdatedAt.Time,
+		Version: row.Version, UpdatedAt: row.UpdatedAt.Time, AutoApproved: row.AutoApproved,
 		Content: Content{
 			Passage: textPtr(row.Passage), Stem: row.Stem, Correct: textPtr(row.Correct), Accepted: row.Accepted,
 			Explanation: row.Explanation, Domain: row.Domain, Skill: row.Skill, Difficulty: textPtr(row.Difficulty),

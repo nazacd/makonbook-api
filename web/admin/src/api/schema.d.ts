@@ -959,6 +959,8 @@ export interface components {
             updated_at: string;
             /** Format: date-time */
             approved_at: string | null;
+            /** @description Approved on import because its AI review was green. A worse review of a repeat or an editor's change takes it back. */
+            auto_approved: boolean;
             places: components["schemas"]["PracticePlace"][];
             reviews: {
                 test: string;

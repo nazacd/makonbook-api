@@ -152,7 +152,7 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
           <h1>{q.places.length > 0 ? placeLabel(q.places.find((p) => p.test === testCode) ?? q.places[0]!) : 'Question'}</h1>
           <div className="toolbar" style={{ marginTop: 8 }}>
             <RiskChip risk={q.ai_risk} />
-            <StatusChip status={q.status} />
+            <StatusChip status={q.status} auto={q.auto_approved} />
             <span className="chip plain">{SUBJECT[q.subject]}</span>
             <span className="chip plain">{mcq ? 'Multiple choice' : 'Grid-in'}</span>
             <span className="small faint">Version {q.version}</span>
@@ -173,7 +173,11 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
       {q.places.length > 1 && (
         <Notice tone="info">This question is in {q.places.length} tests; a change here changes it in all of them.</Notice>
       )}
-      {q.status === 'approved' && <Notice tone="warning">It’s approved. Saving a change sends it back to review.</Notice>}
+      {q.status === 'approved' && (
+        <Notice tone="warning">
+          {q.auto_approved ? 'It’s approved automatically (its AI review is green).' : 'It’s approved.'} Saving a change sends it back to review.
+        </Notice>
+      )}
       {save.isSuccess && !dirty && save.data.id === q.id && <Notice tone="info">Saved as version {q.version}.</Notice>}
       {conflict && (
         <Notice tone="error" title="Someone saved this question after you opened it">
@@ -352,12 +356,48 @@ const obj = (v: unknown): Rec => (v && typeof v === 'object' && !Array.isArray(v
 const arr = (v: unknown): Rec[] => (Array.isArray(v) ? v.map(obj) : []);
 const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
 
+// The headline of a review: what the AI concluded, in a sentence.
+function verdictLine(r: Rec): string {
+  const key = str(r.key);
+  const answer = key || (Array.isArray(r.accepted) ? r.accepted.map(String).join(', ') : ''); // grid-in: every accepted form
+  const solves = arr(r.blind_solves);
+  const agree = solves.length > 0 && solves.every((s) => s.matches_key === true);
+  switch (str(r.verdict)) {
+    case 'key_correct':
+      return `The answer ${answer ? `(${answer}) ` : ''}is right${agree ? ': both AI solvers got it' : ''}.`;
+    case 'key_wrong':
+      return `The bank’s answer ${str(r.bank_key) ? `(${str(r.bank_key)}) ` : ''}looks wrong${str(r.proposed_key) || key ? `; the AI’s answer is ${str(r.proposed_key) || key}` : ''}. Check it and fix the key.`;
+    case 'ambiguous':
+      return 'More than one answer can be argued for. The question needs a fix so only one is right.';
+    case 'broken':
+      return 'The question can’t be answered as written (something is missing or wrong). It needs a fix.';
+    case 'unsolvable':
+      return 'The AI couldn’t solve it. Check it by hand.';
+    default:
+      return str(r.verdict).replace(/_/g, ' ');
+  }
+}
+
+// Why a review isn't green, in plain words (its risk reasons; issues and the
+// verdict are shown on their own).
+function whyLines(r: Rec): string[] {
+  const out = new Set<string>();
+  for (const reason of Array.isArray(r.risk_reasons) ? r.risk_reasons.map(String) : []) {
+    if (reason.startsWith('transcription')) out.add('The text was copied from the bank’s screenshots with some doubt: compare it with them.');
+    else if (reason.endsWith('disagrees with the key')) out.add('One AI solver got a different answer: check the key.');
+    else if (/^(opus|sonnet) (medium|low)$/.test(reason)) out.add('An AI solver wasn’t fully sure of its answer.');
+  }
+  return [...out];
+}
+
+/** The AI review, summed up; everything it recorded is one click away. */
 function AIReview({ review }: { review: Question['reviews'][number] }) {
   const r = obj(review.record);
   const adj = obj(r.adjudication);
   const ex = obj(r.explanation);
   const images = obj(obj(r.source).images);
   const issues = arr(r.issues);
+  const toFix = issues.filter((i) => str(i.severity) !== 'cosmetic');
   const keyChanged = str(r.bank_key) !== str(r.key);
   return (
     <div className="panel">
@@ -365,62 +405,83 @@ function AIReview({ review }: { review: Question['reviews'][number] }) {
         <h2>AI review · {review.test}</h2>
         <RiskChip risk={review.risk} />
       </div>
-      <dl className="facts">
-        <dt>Verdict</dt>
-        <dd>{str(r.verdict).replace('_', ' ')}</dd>
-        <dt>Bank’s key</dt>
-        <dd>
-          {str(r.bank_key) || '—'}
-          {keyChanged && (
-            <>
-              {' '}
-              → AI proposes <b>{str(r.key)}</b>
-            </>
-          )}
-        </dd>
-        <dt>Blind solves</dt>
-        <dd>
-          {arr(r.blind_solves).map((s, i) => (
-            <div key={i}>
-              <b>{str(s.answer)}</b> <span className="faint">({str(s.solver)}, {str(s.confidence)})</span> {str(s.reasoning)}
-            </div>
+      <p className="ai-summary">{verdictLine(r)}</p>
+      {whyLines(r).length > 0 && (
+        <ul className="issues small">
+          {whyLines(r).map((w) => (
+            <li key={w}>{w}</li>
           ))}
-        </dd>
-        {str(adj.reason) && (
-          <>
-            <dt>Decision</dt>
-            <dd>
-              {str(adj.reason)}
-              {str(adj.proof) && <div className="small muted pre">{str(adj.proof)}</div>}
-            </dd>
-          </>
-        )}
-        <dt>Bank explanation</dt>
-        <dd>
-          {str(ex.bank_status).replace('_', ' ') || '—'}
-          {str(ex.disputed_quote) && <div className="small muted">Disputed: “{str(ex.disputed_quote)}”</div>}
-        </dd>
-      </dl>
-      {issues.length > 0 && (
+        </ul>
+      )}
+      {toFix.length > 0 && (
         <ul className="issues">
-          {issues.map((i, k) => (
+          {toFix.map((i, k) => (
             <li key={k}>
-              <span className={`chip ${str(i.severity) === 'blocking' ? 'danger' : str(i.severity) === 'content' ? 'warning' : 'plain'}`}>
-                {str(i.severity)}
-              </span>{' '}
-              <b>{str(i.kind).replace(/_/g, ' ')}</b>: {str(i.detail)}
+              <span className={`chip ${str(i.severity) === 'blocking' ? 'danger' : 'warning'}`}>{str(i.severity) === 'blocking' ? 'must fix' : 'fix'}</span>{' '}
+              {str(i.detail)}
             </li>
           ))}
         </ul>
       )}
-      {r.proposed_fix != null && (
-        <div>
-          <div className="small muted">Proposed fix (apply it in the editor if it’s right)</div>
-          <pre className="pre small">{JSON.stringify(r.proposed_fix, null, 1)}</pre>
-        </div>
-      )}
+      <details>
+        <summary className="small muted">Full review</summary>
+        <dl className="facts">
+          <dt>Verdict</dt>
+          <dd>{str(r.verdict).replace('_', ' ')}</dd>
+          <dt>Bank’s key</dt>
+          <dd>
+            {str(r.bank_key) || '—'}
+            {keyChanged && (
+              <>
+                {' '}
+                → AI proposes <b>{str(r.key)}</b>
+              </>
+            )}
+          </dd>
+          <dt>Blind solves</dt>
+          <dd>
+            {arr(r.blind_solves).map((s, i) => (
+              <div key={i}>
+                <b>{str(s.answer)}</b> <span className="faint">({str(s.solver)}, {str(s.confidence)})</span> {str(s.reasoning)}
+              </div>
+            ))}
+          </dd>
+          {str(adj.reason) && (
+            <>
+              <dt>Decision</dt>
+              <dd>
+                {str(adj.reason)}
+                {str(adj.proof) && <div className="small muted pre">{str(adj.proof)}</div>}
+              </dd>
+            </>
+          )}
+          <dt>Bank explanation</dt>
+          <dd>
+            {str(ex.bank_status).replace('_', ' ') || '—'}
+            {str(ex.disputed_quote) && <div className="small muted">Disputed: “{str(ex.disputed_quote)}”</div>}
+          </dd>
+        </dl>
+        {issues.length > 0 && (
+          <ul className="issues">
+            {issues.map((i, k) => (
+              <li key={k}>
+                <span className={`chip ${str(i.severity) === 'blocking' ? 'danger' : str(i.severity) === 'content' ? 'warning' : 'plain'}`}>
+                  {str(i.severity)}
+                </span>{' '}
+                <b>{str(i.kind).replace(/_/g, ' ')}</b>: {str(i.detail)}
+              </li>
+            ))}
+          </ul>
+        )}
+        {r.proposed_fix != null && (
+          <div>
+            <div className="small muted">Proposed fix (apply it in the editor if it’s right)</div>
+            <pre className="pre small">{JSON.stringify(r.proposed_fix, null, 1)}</pre>
+          </div>
+        )}
+      </details>
       {Object.keys(images).length > 0 && (
-        <details open={review.risk !== 'green'}>
+        <details>
           <summary className="small muted">The bank’s original screenshots</summary>
           <div className="originals">
             {Object.entries(images).map(([slot, key]) => (
