@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router';
 import { describe } from '../api/client';
 import { useMe, type MarkState, type WriteStatus } from '../api/hooks';
 
-export function Notice({ tone = 'info', title, children }: { tone?: 'info' | 'warning' | 'error'; title?: string; children?: ReactNode }) {
+export function Notice({ tone = 'info', title, children }: { tone?: 'info' | 'success' | 'warning' | 'error'; title?: string; children?: ReactNode }) {
   return (
     <div className={`notice ${tone}`} role={tone === 'error' ? 'alert' : 'status'}>
       {title && <b>{title}</b>}

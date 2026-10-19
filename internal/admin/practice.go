@@ -37,6 +37,7 @@ func (h *Handler) registerPractice(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/admin/practice/questions", h.RequireEditor(h.practiceQuestions))
 	mux.HandleFunc("GET /v1/admin/practice/questions/{id}", h.RequireEditor(h.practiceQuestion))
 	mux.HandleFunc("PUT /v1/admin/practice/questions/{id}", h.RequireEditor(h.practiceUpdate))
+	mux.HandleFunc("POST /v1/admin/practice/questions/{id}/approval", h.RequireEditor(h.practiceApproval))
 	mux.HandleFunc("GET /v1/admin/practice/taxonomy", h.RequireEditor(h.practiceTaxonomy))
 	mux.HandleFunc("GET /v1/admin/practice/figures", h.RequireEditor(h.practiceFigure))
 	mux.HandleFunc("POST /v1/admin/practice/images", h.RequireEditor(h.practiceUpload))
@@ -147,6 +148,25 @@ func (h *Handler) practiceUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	p, _ := PrincipalFrom(r.Context())
 	q, err := h.panel.Practice.Update(r.Context(), r.PathValue("id"), p.Name, e)
+	h.respondQuestion(w, r, q, err)
+}
+
+type approvalRequest struct {
+	Version  int32 `json:"version"`  // the version the editor approves
+	Approved *bool `json:"approved"` // false takes the approval back
+}
+
+func (h *Handler) practiceApproval(w http.ResponseWriter, r *http.Request) {
+	var req approvalRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.Approved == nil || req.Version < 1 {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "send the version you saw and approved: true or false")
+		return
+	}
+	p, _ := PrincipalFrom(r.Context())
+	q, err := h.panel.Practice.SetApproval(r.Context(), r.PathValue("id"), p.Name, req.Version, *req.Approved)
 	h.respondQuestion(w, r, q, err)
 }
 

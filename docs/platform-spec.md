@@ -243,7 +243,18 @@ question is red until a teacher confirms. New tests are written later in the adm
 - **Auto-approval:** a question whose AI review is **green** (the key confirmed by both blind solves, a
   clean transcription, no issues) is approved on import (`auto_approved`; ~84 % of the bank). Teachers work
   on the yellow and red ones. A later review of a repeat that isn't green, or an editor's change, takes the
-  automatic approval back, so a person checks it.
+  automatic approval back, so a person checks it. When a green question's review proposed a fix (a typo, a
+  missing word: 25 questions), the import applies it as a version of its own (`ai_fix`, "Fixed by the AI
+  review"), so the history shows it and an editor can undo it; a fix that can't be applied whole sends the
+  question to review instead.
+- **Fixes the AI only proposes:** the AI never changes a question that isn't green. Its `proposed_fix` (whole
+  fields: passage, stem, a choice, the key, grid-in answers) is shown in the editor with the changed words
+  marked and an **Apply fix** button that fills the form; the editor checks the student view, saves and
+  approves. A blocking problem without a fix (words missing from the bank's text, two right answers) needs a
+  teacher to restore or rewrite it: the AI doesn't invent the bank's missing content.
+- **Approving in the editor** (until the Telegram reviewers): an editor approves the version they see
+  (`POST …/questions/{id}/approval`, `409` if it changed meanwhile); it must pass the checks a save does, so
+  a question without a key can't be approved. `approved_by` keeps who. An approval can be taken back.
 
 ### 9.3 Access (D20)
 Every active student sees every test. A test is **locked until all its questions are approved**, then it

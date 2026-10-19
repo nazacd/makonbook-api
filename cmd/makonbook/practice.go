@@ -91,6 +91,14 @@ func runPractice(ctx context.Context, cfg config.Config, args []string, stdout i
 		failed++
 		fmt.Fprintf(stdout, "%s: NOT loaded: %v\n", f, err)
 	}
+	// Green questions get the small fixes their AI review proposed.
+	fixed, err := im.ApplyAIFixes(ctx)
+	if err != nil {
+		return err
+	}
+	if fixed.Applied+fixed.Review > 0 {
+		fmt.Fprintf(stdout, "AI fixes: %d applied to approved questions; %d couldn't be applied, sent to review\n", fixed.Applied, fixed.Review)
+	}
 	if failed > 0 {
 		return fmt.Errorf("%d of %d tests not loaded", failed, len(files))
 	}

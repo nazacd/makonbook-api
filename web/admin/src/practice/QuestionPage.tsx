@@ -5,6 +5,7 @@ import { ApiError, describe } from '../api/client';
 import {
   usePracticeQuestion,
   usePracticeTest,
+  useApproveQuestion,
   useSaveQuestion,
   useTaxonomy,
   type Figure,
@@ -95,8 +96,13 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
   }, [dirty]);
 
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((f) => ({ ...f, [key]: value }));
-  const fields = save.error instanceof ApiError ? (save.error.fields ?? {}) : {};
-  const conflict = save.error instanceof ApiError && save.error.code === 'version_conflict';
+  const approval = useApproveQuestion(q.id);
+  const fields = {
+    ...(save.error instanceof ApiError ? (save.error.fields ?? {}) : {}),
+    ...(approval.error instanceof ApiError ? (approval.error.fields ?? {}) : {}),
+  };
+  const conflict = [save.error, approval.error].some((e) => e instanceof ApiError && e.code === 'version_conflict');
+  const approved = q.status === 'approved';
 
   // The figures are the images placed in the text; each keeps the kind the
   // review gave it (graph, chart…), new uploads are "other".
@@ -167,18 +173,44 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
           <button className="btn" disabled={!dirty || save.isPending} onClick={submit}>
             {save.isPending ? 'Saving…' : 'Save'}
           </button>
+          {approved ? (
+            <button
+              className="btn secondary"
+              disabled={dirty || approval.isPending}
+              onClick={() => approval.mutate({ version: q.version, approved: false })}>
+              Take back approval
+            </button>
+          ) : (
+            <button
+              className="btn success"
+              disabled={dirty || approval.isPending}
+              title={dirty ? 'Save your changes first' : 'It’s right and ready for students'}
+              onClick={() => approval.mutate({ version: q.version, approved: true })}>
+              {approval.isPending ? 'Approving…' : 'Approve'}
+            </button>
+          )}
         </div>
       </div>
 
       {q.places.length > 1 && (
         <Notice tone="info">This question is in {q.places.length} tests; a change here changes it in all of them.</Notice>
       )}
-      {q.status === 'approved' && (
-        <Notice tone="warning">
-          {q.auto_approved ? 'It’s approved automatically (its AI review is green).' : 'It’s approved.'} Saving a change sends it back to review.
+      {approved && (
+        <Notice tone="success">
+          {q.auto_approved
+            ? 'Approved automatically: its AI review is green.'
+            : `Approved${q.approved_by ? ` by ${q.approved_by}` : ''}${q.approved_at ? `, ${dateTime(q.approved_at)}` : ''}.`}{' '}
+          Saving a change sends it back to review.
         </Notice>
       )}
-      {save.isSuccess && !dirty && save.data.id === q.id && <Notice tone="info">Saved as version {q.version}.</Notice>}
+      {save.isSuccess && !dirty && save.data.id === q.id && !approved && (
+        <Notice tone="info">Saved as version {q.version}. When it’s right, approve it.</Notice>
+      )}
+      {approval.isError && !conflict && (
+        <Notice tone="error" title={Object.keys(fields).length ? 'It can’t be approved yet: fix the marked fields' : 'Couldn’t change the approval'}>
+          {Object.keys(fields).length ? null : describe(approval.error)}
+        </Notice>
+      )}
       {conflict && (
         <Notice tone="error" title="Someone saved this question after you opened it">
           Copy what you changed, then{' '}
@@ -291,7 +323,15 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
             </details>
           </div>
           {q.reviews.map((r) => (
-            <AIReview key={`${r.test}-${r.qid}`} review={r} />
+            <AIReview
+              key={`${r.test}-${r.qid}`}
+              review={r}
+              form={form}
+              saved={initial}
+              mcq={mcq}
+              fixApplied={q.versions.some((v) => v.source === 'ai_fix')}
+              onApply={(patch) => setForm((f) => ({ ...f, ...patch, choices: { ...f.choices, ...patch.choices } }))}
+            />
           ))}
           <History question={q} onLoad={(content) => setForm(formOf(content as Parameters<typeof formOf>[0]))} />
         </div>
@@ -390,8 +430,129 @@ function whyLines(r: Rec): string[] {
   return [...out];
 }
 
+// A proposed fix as form changes: {"stem": …, "choices.B": …, "key": "C",
+// "accepted": [...]}. Null if it names a field the form doesn't have.
+type Patch = Partial<Omit<Form, 'choices'>> & { choices?: Record<string, string> };
+function patchOf(fix: Rec, mcq: boolean): Patch | null {
+  const p: Patch = {};
+  for (const [field, v] of Object.entries(fix)) {
+    const choice = /^choices\.([A-D])$/.exec(field)?.[1];
+    if (field === 'passage' || field === 'stem') p[field] = str(v);
+    else if (field === 'key' && mcq) p.correct = str(v);
+    else if (field === 'accepted' && !mcq && Array.isArray(v)) p.accepted = v.map(String).join(', ');
+    else if (choice && mcq) p.choices = { ...p.choices, [choice]: str(v) };
+    else return null;
+  }
+  return Object.keys(p).length ? p : null;
+}
+
+// A word-by-word comparison: what stays, what goes, what comes; long runs
+// that stay are cut to a few words either side.
+type Seg = { kind: 'same' | 'del' | 'ins'; text: string };
+function diffWords(before: string, after: string): Seg[] {
+  const a = before.split(/(\s+)/);
+  const b = after.split(/(\s+)/);
+  const n = a.length;
+  const m = b.length;
+  const lcs = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--)
+    for (let j = m - 1; j >= 0; j--) lcs[i]![j] = a[i] === b[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
+  const out: Seg[] = [];
+  const push = (kind: Seg['kind'], text: string) => {
+    const last = out[out.length - 1];
+    if (last?.kind === kind) last.text += text;
+    else out.push({ kind, text });
+  };
+  let i = 0;
+  let j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && a[i] === b[j]) {
+      push('same', a[i++]!);
+      j++;
+    } else if (i < n && (j >= m || lcs[i + 1]![j]! >= lcs[i]![j + 1]!)) push('del', a[i++]!);
+    else push('ins', b[j++]!);
+  }
+  return out.map((sg, k) => {
+    if (sg.kind !== 'same') return sg;
+    const words = sg.text.split(/(\s+)/);
+    if (words.length <= 13) return sg;
+    const head = k > 0 ? words.slice(0, 6).join('') : '';
+    const tail = k < out.length - 1 ? words.slice(-6).join('') : '';
+    return { kind: 'same', text: `${head.trimEnd()}${head ? ' ' : ''}…${tail ? ' ' : ''}${tail.trimStart()}` };
+  });
+}
+
+const FIELD: Record<string, string> = { passage: 'Passage', stem: 'Question', correct: 'Answer key', accepted: 'Accepted answers' };
+
+function ProposedFix({ fix, saved, form, mcq, onApply }: { fix: Rec; saved: Form; form: Form; mcq: boolean; onApply: (p: Patch) => void }) {
+  const patch = patchOf(fix, mcq);
+  if (!patch) {
+    return (
+      <div>
+        <div className="small muted">The AI’s proposed fix (apply it by hand if it’s right)</div>
+        <pre className="pre small">{JSON.stringify(fix, null, 1)}</pre>
+      </div>
+    );
+  }
+  // Each change: the field, as saved, in the form, and as the fix has it.
+  const rows: [string, string, string, string][] = [];
+  for (const [k, v] of Object.entries(patch)) {
+    if (k === 'choices') {
+      for (const [l, t] of Object.entries(v as Record<string, string>)) rows.push([`Choice ${l}`, saved.choices[l] ?? '', form.choices[l] ?? '', t]);
+    } else {
+      rows.push([FIELD[k] ?? k, String(saved[k as keyof Form] ?? ''), String(form[k as keyof Form] ?? ''), String(v)]);
+    }
+  }
+  if (rows.every(([, was, , next]) => was === next)) return <p className="small muted ai-summary">Its proposed fix is in the saved question.</p>;
+  const inForm = rows.every(([, , now, next]) => now === next);
+  return (
+    <div className="ai-fix">
+      <div className="toolbar" style={{ justifyContent: 'space-between' }}>
+        <b>The AI’s proposed fix</b>
+        {inForm ? (
+          <span className="small muted">Applied in the form: check it, then Save and Approve.</span>
+        ) : (
+          <button className="btn small" onClick={() => onApply(patch)}>
+            Apply fix
+          </button>
+        )}
+      </div>
+      {rows.map(([label, was, , next]) => (
+        <div key={label} className="ai-fix-row">
+          <div className="small faint">{label}</div>
+          <div className="small ai-fix-diff">
+            {diffWords(was, next).map((sg, k) =>
+              sg.kind === 'same' ? (
+                <span key={k}>{sg.text}</span>
+              ) : (
+                <span key={k} className={sg.kind === 'del' ? 'ai-fix-old' : 'ai-fix-new'}>
+                  {sg.text}
+                </span>
+              ),
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** The AI review, summed up; everything it recorded is one click away. */
-function AIReview({ review }: { review: Question['reviews'][number] }) {
+function AIReview({
+  review,
+  form,
+  saved,
+  mcq,
+  fixApplied,
+  onApply,
+}: {
+  review: Question['reviews'][number];
+  form: Form;
+  saved: Form;
+  mcq: boolean;
+  fixApplied: boolean;
+  onApply: (p: Patch) => void;
+}) {
   const r = obj(review.record);
   const adj = obj(r.adjudication);
   const ex = obj(r.explanation);
@@ -423,6 +584,12 @@ function AIReview({ review }: { review: Question['reviews'][number] }) {
           ))}
         </ul>
       )}
+      {r.proposed_fix != null &&
+        (fixApplied ? (
+          <p className="small muted ai-summary">Its proposed fix was applied automatically (see History; you can load the earlier version).</p>
+        ) : (
+          <ProposedFix fix={obj(r.proposed_fix)} saved={saved} form={form} mcq={mcq} onApply={onApply} />
+        ))}
       <details>
         <summary className="small muted">Full review</summary>
         <dl className="facts">
@@ -473,12 +640,6 @@ function AIReview({ review }: { review: Question['reviews'][number] }) {
             ))}
           </ul>
         )}
-        {r.proposed_fix != null && (
-          <div>
-            <div className="small muted">Proposed fix (apply it in the editor if it’s right)</div>
-            <pre className="pre small">{JSON.stringify(r.proposed_fix, null, 1)}</pre>
-          </div>
-        )}
       </details>
       {Object.keys(images).length > 0 && (
         <details>
@@ -507,7 +668,11 @@ function History({ question: q, onLoad }: { question: Question; onLoad: (content
             <span className="small faint">v{v.version}</span>
             <span className="toolbar" style={{ justifyContent: 'space-between' }}>
               <span>
-                {v.source === 'import' ? 'Loaded from the AI review' : `Edited by ${v.created_by ?? 'an editor'}`}
+                {v.source === 'import'
+                  ? 'Loaded from the AI review'
+                  : v.source === 'ai_fix'
+                    ? 'Fixed by the AI review (its proposed fix)'
+                    : `Edited by ${v.created_by ?? 'an editor'}`}
                 <span className="small faint"> · {dateTime(v.created_at)}</span>
               </span>
               {v.version !== q.version && (
