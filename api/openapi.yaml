@@ -1275,7 +1275,7 @@ components:
                 required: [version, source, created_by, created_at, content]
                 properties:
                   version: { type: integer }
-                  source: { type: string, enum: [import, editor] }
+                  source: { type: string, enum: [import, ai_fix, editor], description: "ai_fix: the fix the AI review proposed, applied to a question it approved" }
                   created_by: { type: [string, "null"] }
                   created_at: { type: string, format: date-time }
                   content: { type: object }

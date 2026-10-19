@@ -11,6 +11,39 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const applyAIFix = `-- name: ApplyAIFix :one
+UPDATE questions
+SET passage = $1, stem = $2, choices = $3,
+    correct = $4, accepted = $5::text[],
+    version = version + 1, updated_at = now()
+WHERE id = $6
+RETURNING version
+`
+
+type ApplyAIFixParams struct {
+	Passage  pgtype.Text
+	Stem     string
+	Choices  []byte
+	Correct  pgtype.Text
+	Accepted []string
+	ID       pgtype.UUID
+}
+
+// The AI review's fix, as a new version; the question stays approved.
+func (q *Queries) ApplyAIFix(ctx context.Context, arg ApplyAIFixParams) (int32, error) {
+	row := q.db.QueryRow(ctx, applyAIFix,
+		arg.Passage,
+		arg.Stem,
+		arg.Choices,
+		arg.Correct,
+		arg.Accepted,
+		arg.ID,
+	)
+	var version int32
+	err := row.Scan(&version)
+	return version, err
+}
+
 const approveQuestion = `-- name: ApproveQuestion :exec
 UPDATE questions SET status = 'approved', approved_at = now(), approved_by = $1, auto_approved = false
 WHERE id = $2
@@ -71,7 +104,8 @@ func (q *Queries) CreateTest(ctx context.Context, arg CreateTestParams) (Practic
 
 const deleteOrphanQuestions = `-- name: DeleteOrphanQuestions :execrows
 DELETE FROM questions q
-WHERE (q.status = 'review' OR q.auto_approved) AND q.version = 1
+WHERE (q.status = 'review' OR q.auto_approved)
+  AND NOT EXISTS (SELECT 1 FROM question_versions v WHERE v.question_id = q.id AND v.source = 'editor')
   AND NOT EXISTS (SELECT 1 FROM practice_test_questions tq WHERE tq.question_id = q.id)
 `
 
@@ -427,6 +461,44 @@ func (q *Queries) LockQuestion(ctx context.Context, id pgtype.UUID) (Question, e
 	return i, err
 }
 
+const pendingAIFixes = `-- name: PendingAIFixes :many
+SELECT q.id, r.fix::jsonb AS fix
+FROM questions q
+CROSS JOIN LATERAL (
+    SELECT record->'proposed_fix' AS fix FROM question_ai_reviews
+    WHERE question_id = q.id AND jsonb_typeof(record->'proposed_fix') = 'object'
+    ORDER BY imported_at, id LIMIT 1
+) r
+WHERE q.auto_approved AND q.version = 1
+`
+
+type PendingAIFixesRow struct {
+	ID  pgtype.UUID
+	Fix []byte
+}
+
+// Questions the AI review approved whose review proposed a fix not yet
+// applied (a repeat takes the first review's fix).
+func (q *Queries) PendingAIFixes(ctx context.Context) ([]PendingAIFixesRow, error) {
+	rows, err := q.db.Query(ctx, pendingAIFixes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PendingAIFixesRow
+	for rows.Next() {
+		var i PendingAIFixesRow
+		if err := rows.Scan(&i.ID, &i.Fix); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const questionPlaces = `-- name: QuestionPlaces :many
 SELECT tq.question_id, t.code, tq.subject, tq.module, tq.position
 FROM practice_test_questions tq
@@ -695,12 +767,13 @@ const touchedQuestions = `-- name: TouchedQuestions :one
 SELECT count(DISTINCT q.id)::int
 FROM practice_test_questions tq
 JOIN questions q ON q.id = tq.question_id
-WHERE tq.test_id = $1 AND ((q.status = 'approved' AND NOT q.auto_approved) OR q.version > 1)
+WHERE tq.test_id = $1
+  AND ((q.status = 'approved' AND NOT q.auto_approved)
+       OR EXISTS (SELECT 1 FROM question_versions v WHERE v.question_id = q.id AND v.source = 'editor'))
 `
 
-// Questions of a test that people have already worked on: approved by a
-// person, or changed after the import. A test with any of these can't be
-// reloaded.
+// Questions of a test that people have already worked on: approved or
+// changed by a person. A test with any of these can't be reloaded.
 func (q *Queries) TouchedQuestions(ctx context.Context, testID pgtype.UUID) (int32, error) {
 	row := q.db.QueryRow(ctx, touchedQuestions, testID)
 	var column_1 int32

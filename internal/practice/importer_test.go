@@ -72,6 +72,10 @@ func TestImport(t *testing.T) {
 		case subject == "english" && module == 1 && n == 5:
 			rec["stem"] = "Shared question, curly ‘quotes’?"
 			rec["risk"] = "yellow"
+		case subject == "math" && module == 1 && n == 7:
+			rec["proposed_fix"] = map[string]string{"choices.A": "fixed a", "stem": "Fixed stem?"}
+		case subject == "math" && module == 1 && n == 8:
+			rec["proposed_fix"] = map[string]string{"question": "?"} // nothing it can apply
 		case subject == "english" && module == 1 && n == 6:
 			rec["passage"] = "The guide, however; was late."
 			rec["stem"] = "Which choice conforms?"
@@ -95,6 +99,23 @@ func TestImport(t *testing.T) {
 	}
 	if n := count(`SELECT count(*) FROM questions WHERE ai_risk = 'yellow' AND status = 'review'`); n != 1 {
 		t.Error("the yellow question was approved")
+	}
+
+	// Their proposed fixes are applied as a version of their own; one that
+	// can't be applied sends its question to review.
+	fixed, err := im.ApplyAIFixes(ctx)
+	if err != nil || fixed.Applied != 1 || fixed.Review != 1 {
+		t.Fatalf("fixes: %+v %v", fixed, err)
+	}
+	if n := count(`SELECT count(*) FROM questions q JOIN question_versions v ON v.question_id = q.id AND v.version = 2
+		WHERE q.stem = 'Fixed stem?' AND q.choices->>'A' = 'fixed a' AND q.auto_approved AND v.source = 'ai_fix' AND v.created_by = 'AI review'`); n != 1 {
+		t.Error("the fix wasn't applied as an AI version")
+	}
+	if n := count(`SELECT count(*) FROM questions WHERE stem LIKE 'Question math-m1-08%' AND status = 'review' AND NOT auto_approved`); n != 1 {
+		t.Error("the question with a fix that can't be applied stayed approved")
+	}
+	if again, err := im.ApplyAIFixes(ctx); err != nil || again.Applied+again.Review != 0 {
+		t.Errorf("fixes run twice: %+v %v", again, err)
 	}
 
 	// DAY3 repeats two DAY2 questions, written with other spacing and quotes

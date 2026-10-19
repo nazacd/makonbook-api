@@ -355,25 +355,18 @@ func (s *Service) Update(ctx context.Context, id, editor string, e Edit) (Questi
 			ID: uid, Passage: optText(deref(e.Passage)), Stem: e.Stem, Figures: figures, Explanation: e.Explanation,
 			Domain: e.Domain, Skill: e.Skill, Difficulty: optText(e.Difficulty),
 		}
-		content := map[string]any{
-			"passage": e.Passage, "stem": e.Stem, "figures": e.Figures, "explanation": e.Explanation,
-			"domain": e.Domain, "skill": e.Skill, "difficulty": e.Difficulty,
-		}
 		if cur.Type == "mcq" {
 			p.Choices, _ = json.Marshal(e.Choices)
 			p.Correct = optText(e.Correct)
-			content["choices"], content["correct"] = e.Choices, e.Correct
 		} else {
 			p.Accepted = e.Accepted
-			content["accepted"] = e.Accepted
 		}
 		version, err := q.UpdateQuestion(ctx, p)
 		if err != nil {
 			return err
 		}
-		snapshot, _ := json.Marshal(content)
 		return q.InsertVersion(ctx, practicedb.InsertVersionParams{
-			QuestionID: uid, Version: version, Content: snapshot, Source: "editor", CreatedBy: optText(editor),
+			QuestionID: uid, Version: version, Content: e.snapshot(cur.Type), Source: "editor", CreatedBy: optText(editor),
 		})
 	})
 	if err != nil {
@@ -419,6 +412,21 @@ func (s *Service) SetApproval(ctx context.Context, id, by string, version int32,
 		return Question{}, err
 	}
 	return s.Question(ctx, id)
+}
+
+// snapshot is the content as a version keeps it.
+func (e Edit) snapshot(qtype string) []byte {
+	content := map[string]any{
+		"passage": e.Passage, "stem": e.Stem, "figures": e.Figures, "explanation": e.Explanation,
+		"domain": e.Domain, "skill": e.Skill, "difficulty": e.Difficulty,
+	}
+	if qtype == "mcq" {
+		content["choices"], content["correct"] = e.Choices, e.Correct
+	} else {
+		content["accepted"] = e.Accepted
+	}
+	b, _ := json.Marshal(content)
+	return b
 }
 
 // editOf is a stored question as an edit of itself, to check it.

@@ -6,14 +6,15 @@ SELECT * FROM practice_tests WHERE code = @code;
 -- name: CreateTest :one
 INSERT INTO practice_tests (code, title) VALUES (@code, @title) RETURNING *;
 
--- Questions of a test that people have already worked on: approved by a
--- person, or changed after the import. A test with any of these can't be
--- reloaded.
+-- Questions of a test that people have already worked on: approved or
+-- changed by a person. A test with any of these can't be reloaded.
 -- name: TouchedQuestions :one
 SELECT count(DISTINCT q.id)::int
 FROM practice_test_questions tq
 JOIN questions q ON q.id = tq.question_id
-WHERE tq.test_id = @test_id AND ((q.status = 'approved' AND NOT q.auto_approved) OR q.version > 1);
+WHERE tq.test_id = @test_id
+  AND ((q.status = 'approved' AND NOT q.auto_approved)
+       OR EXISTS (SELECT 1 FROM question_versions v WHERE v.question_id = q.id AND v.source = 'editor'));
 
 -- name: DeleteTest :exec
 DELETE FROM practice_tests WHERE id = @id;
@@ -21,7 +22,8 @@ DELETE FROM practice_tests WHERE id = @id;
 -- Questions no test uses any more and nobody has touched (left behind by a reload).
 -- name: DeleteOrphanQuestions :execrows
 DELETE FROM questions q
-WHERE (q.status = 'review' OR q.auto_approved) AND q.version = 1
+WHERE (q.status = 'review' OR q.auto_approved)
+  AND NOT EXISTS (SELECT 1 FROM question_versions v WHERE v.question_id = q.id AND v.source = 'editor')
   AND NOT EXISTS (SELECT 1 FROM practice_test_questions tq WHERE tq.question_id = q.id);
 
 -- A new question; nothing comes back if one with the same text exists. A
@@ -161,3 +163,24 @@ ON CONFLICT (key) DO NOTHING;
 -- Which of these uploaded images exist.
 -- name: ExistingImages :many
 SELECT key FROM practice_images WHERE key = ANY (@keys::text[]);
+
+-- Questions the AI review approved whose review proposed a fix not yet
+-- applied (a repeat takes the first review's fix).
+-- name: PendingAIFixes :many
+SELECT q.id, r.fix::jsonb AS fix
+FROM questions q
+CROSS JOIN LATERAL (
+    SELECT record->'proposed_fix' AS fix FROM question_ai_reviews
+    WHERE question_id = q.id AND jsonb_typeof(record->'proposed_fix') = 'object'
+    ORDER BY imported_at, id LIMIT 1
+) r
+WHERE q.auto_approved AND q.version = 1;
+
+-- The AI review's fix, as a new version; the question stays approved.
+-- name: ApplyAIFix :one
+UPDATE questions
+SET passage = sqlc.narg('passage'), stem = @stem, choices = sqlc.narg('choices'),
+    correct = sqlc.narg('correct'), accepted = sqlc.narg('accepted')::text[],
+    version = version + 1, updated_at = now()
+WHERE id = @id
+RETURNING version;

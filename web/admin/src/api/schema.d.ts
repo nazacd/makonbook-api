@@ -1003,8 +1003,11 @@ export interface components {
             /** @description Newest first */
             versions: {
                 version: number;
-                /** @enum {string} */
-                source: "import" | "editor";
+                /**
+                 * @description ai_fix: the fix the AI review proposed, applied to a question it approved
+                 * @enum {string}
+                 */
+                source: "import" | "ai_fix" | "editor";
                 created_by: string | null;
                 /** Format: date-time */
                 created_at: string;
