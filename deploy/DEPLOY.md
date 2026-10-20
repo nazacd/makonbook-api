@@ -401,7 +401,18 @@ picture; the log says `redrew open posts`). Decided ones keep their pictures.
 | Publish approved tests now (the worker does it every 5 minutes) | `docker compose run --rm api practice publish` |
 | Review bot: what it did | `docker compose logs --tail 100 bot` |
 | Draw a question picture | `docker compose run --rm -v /tmp:/out api practice picture DAY3 english-m2-04 fix /out/q.png` |
+| Test the app as a real teacher and student | `/opt/makonbook-api/test-accounts.sh` (below) |
 | Stop / start | `docker compose stop` / `docker compose up -d` |
+
+**Testing with real accounts.** `deploy/test-accounts.sh` (copy it once:
+`scp deploy/test-accounts.sh root@makonbook.uz:/opt/makonbook-api/`, then
+`chmod 700` it) picks a teacher who teaches a group now and a student of that
+group, both never signed in, and prints their phone numbers and default
+passwords. Test in the app, then type `done` (or press Ctrl+C): it deletes the
+password, username and sessions the test gave them and the student's practice
+attempts from the test, so both are as they were. Attendance marks made while
+testing are real and stay; the script says if there were any. To borrow
+particular people: `TEST_TEACHER_ID=… TEST_STUDENT_ID=… ./test-accounts.sh`.
 
 The shared `db` container is its own Compose project, `/opt/sat-makon/postgres`.
 Restarting it briefly interrupts every site; `down -v` there would delete every
