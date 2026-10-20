@@ -5,6 +5,9 @@
 #   makonbook-api         HTTP API (makonbook serve), reached by the edge
 #                         nginx (makonbook-nginx) as http://makonbook-api:8080
 #   makonbook-api-worker  HolliHop sync (makonbook worker)
+# and a headless Chrome that draws question pictures:
+#   makonbook-renderer    reached only by the API, on the internal `render`
+#                         network (no internet), at ws://makonbook-renderer:9222
 #
 # Postgres is the shared `db` container on sat_makon_network; this stack uses
 # its own database and non-superuser role (makonbook_api). No host ports are
@@ -42,6 +45,14 @@ services:
     <<: *common
     container_name: makonbook-api
     command: ["serve"]
+    environment:
+      APP_ENV: production
+      HTTP_ADDR: ":8080"
+      TRUST_PROXY: "true"
+      RENDERER_URL: ws://makonbook-renderer:9222
+    networks:
+      - sat_makon_network
+      - render
     expose:
       - "8080"
     mem_limit: 512m
@@ -58,6 +69,29 @@ services:
     command: ["worker"]
     mem_limit: 256m
 
+  # Question pictures (spec 9.4): the API opens a page with everything inline
+  # and takes a picture, one at a time. Pinned; update on purpose.
+  renderer:
+    image: chromedp/headless-shell:155.0.8059.26
+    container_name: makonbook-renderer
+    restart: always
+    networks:
+      - render
+    mem_limit: 700m
+    shm_size: 256m
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 networks:
   sat_makon_network:
     external: true
+  render:
+    internal: true # the renderer reaches nothing outside it

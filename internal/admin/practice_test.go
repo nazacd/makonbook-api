@@ -142,6 +142,11 @@ func TestPracticeEditor(t *testing.T) {
 		t.Errorf("stale approval change: %d %v", status, body)
 	}
 
+	// Export image needs the renderer; this server has none.
+	if status, body, _ := e.do("POST", "/v1/admin/practice/questions/"+id+"/picture", teacher, edit, true); status != 503 || code(body) != "unavailable" {
+		t.Errorf("picture without a renderer: %d %v", status, body)
+	}
+
 	// Taxonomy for the form.
 	_, body, _ = e.do("GET", "/v1/admin/practice/taxonomy", teacher, nil, false)
 	if _, ok := body["subjects"].(map[string]any)["math"].(map[string]any)["Algebra"]; !ok {

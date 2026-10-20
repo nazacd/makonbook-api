@@ -318,6 +318,30 @@ upload button answers "image uploads aren't set up on the server".
 A test in the pilot's old format (DAY1) is refused until its review is re-run.
 Every test stays locked until a teacher has approved all its questions.
 
+## Question pictures (renderer)
+
+Question pictures (the editors' **Export image**, and later the teachers'
+Telegram group) are drawn by a headless Chrome, the `renderer` service in
+`docker-compose.yml` (`chromedp/headless-shell`, pinned; about 535 MB of disk,
+up to 700 MB of memory while drawing, about 90 MB idle). It is on an internal
+network only the API reaches, with no internet: the API hands it each page
+whole. Compose sets `RENDERER_URL` for the API, so after copying the new
+`docker-compose.yml`:
+
+```bash
+docker compose pull renderer && docker compose up -d
+```
+
+To check it, draw one question into `/tmp` on the server:
+
+```bash
+docker compose run --rm -v /tmp:/out api practice picture DAY3 english-m2-04 original /out/q.png
+```
+
+`original` is the bank's own question (its text from the questionbank's
+`original.jsonl`, its screenshots); `fix` the AI's fixed version with the
+changes highlighted; `question` the question as it is now.
+
 ## Everyday operations
 
 | Task | Command (in `/opt/makonbook-api`) |
@@ -329,6 +353,7 @@ Every test stays locked until a teacher has approved all its questions.
 | Sync blocked by the mass-change guard, change is real | `docker compose run --rm api sync full --allow-mass-change` |
 | Migration state | `docker compose run --rm api migrate status` |
 | Practice tests and their review progress | `docker compose run --rm api practice list` |
+| Draw a question picture | `docker compose run --rm -v /tmp:/out api practice picture DAY3 english-m2-04 fix /out/q.png` |
 | Stop / start | `docker compose stop` / `docker compose up -d` |
 
 The shared `db` container is its own Compose project, `/opt/sat-makon/postgres`.

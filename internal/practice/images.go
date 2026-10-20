@@ -90,6 +90,37 @@ func storeImage(ctx context.Context, pool *pgxpool.Pool, uploads Store, data []b
 	return Image{Key: key, Width: cfg.Width, Height: cfg.Height}, nil
 }
 
+// Bank reads the bank's images: SAT MAKON's R2 bucket, read only.
+type Bank interface {
+	Get(ctx context.Context, key string) (r2.Object, error)
+}
+
+// ErrBankOff means the server can't read the bank's images (R2_*).
+var ErrBankOff = errors.New("images are not configured on the server")
+
+// bankPrefixes: the bank stores keys without the "media/" its bucket uses;
+// a few objects sit at the bare key.
+var bankPrefixes = []string{"media/", ""}
+
+// Figure returns a question image by its key: an upload from MakonBook's
+// bucket, anything else from the bank's. ErrNotFound if neither has it.
+func (s *Service) Figure(ctx context.Context, key string) (r2.Object, error) {
+	if strings.HasPrefix(key, UploadPrefix) {
+		return s.GetImage(ctx, key)
+	}
+	if s.bank == nil {
+		return r2.Object{}, ErrBankOff
+	}
+	for _, prefix := range bankPrefixes {
+		obj, err := s.bank.Get(ctx, prefix+key)
+		if errors.Is(err, r2.ErrNotFound) {
+			continue
+		}
+		return obj, err
+	}
+	return r2.Object{}, ErrNotFound
+}
+
 // GetImage returns an uploaded image from the bucket.
 func (s *Service) GetImage(ctx context.Context, key string) (r2.Object, error) {
 	if s.uploads == nil {

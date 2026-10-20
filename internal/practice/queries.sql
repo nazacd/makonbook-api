@@ -191,3 +191,9 @@ SET passage = sqlc.narg('passage'), stem = @stem, choices = sqlc.narg('choices')
     version = version + 1, updated_at = now()
 WHERE id = @id
 RETURNING version;
+
+-- A question by its place in a reviewed test, as the questionbank names it.
+-- name: QuestionByQID :one
+SELECT r.question_id FROM question_ai_reviews r
+JOIN practice_tests t ON t.id = r.test_id
+WHERE t.code = @code AND r.qid = @qid;

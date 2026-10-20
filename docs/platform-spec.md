@@ -302,6 +302,15 @@ section (College Board uses IRT; we can't reproduce it exactly).
   asks for (optional). Posted in batches (about 10 a day), the next when one is decided. An editor's
   decision in the panel comes first and closes the vote; a later edit sends the question back to review.
   The images are drawn on the server by a headless browser (its own container).
+- **Question pictures** (built: phase 3, step 4.1): a fixed template, not AI. The page (web/admin's
+  `src/card`, built apart into `dist/card` with its fonts and logo inline) is opened whole in a headless
+  Chrome (`renderer` container, internal network, no internet) by `internal/platform/render`; the API
+  fills it at the moment it's needed (`practice.Service.Picture`) with the question and its images as
+  data URLs, and takes a 2560 px wide picture (16:9 at least, taller when the question needs it). Three
+  kinds: **original** (the bank's own question: its text from the questionbank's `original.jsonl`,
+  imported into the review record, and its screenshots in place), **fix** (the AI's fixed version, its
+  changes highlighted) and **question** (the editor's **Export image**: what is in the form, saved or
+  not). Math in the picture is KaTeX's HTML with its fonts; answer choices draw math full size.
 
 ### 9.5 Publishing and on device (planned)
 - Publishing a test builds an **immutable package** (all questions, answers, explanations, conversion table)

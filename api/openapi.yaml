@@ -927,6 +927,39 @@ paths:
           description: "`invalid_question`, with `fields`: it can't be approved as it is"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/admin/practice/questions/{id}/picture:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: test, in: query, required: false, schema: { type: string }, description: "The test whose place the picture shows (a question can be in several)." }
+    post:
+      summary: Draw the question as a picture (editors' Export image)
+      description: |
+        Draws the content sent (the editor's form, saved or not) on the
+        question picture template the Telegram group's pictures use, and
+        returns it as a PNG to download. Needs the renderer (RENDERER_URL).
+      operationId: adminPracticePicture
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PracticeQuestionEdit" }
+      responses:
+        "200":
+          description: The picture, 2560 px wide.
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
   /v1/admin/practice/taxonomy:
     get:
       summary: The digital SAT's domains and skills, per subject (editors)

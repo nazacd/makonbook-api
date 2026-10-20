@@ -5,10 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nazacd/makonbook-api/internal/platform/config"
 	"github.com/nazacd/makonbook-api/internal/platform/r2"
+	"github.com/nazacd/makonbook-api/internal/platform/render"
 	"github.com/nazacd/makonbook-api/internal/practice"
+	adminweb "github.com/nazacd/makonbook-api/web/admin"
 )
 
 const practiceUsage = `
@@ -18,12 +23,18 @@ const practiceUsage = `
                             test in it). Tests already loaded are skipped; --replace reloads
                             them, as long as no question in them was approved or edited
   practice list             tests and how far their review has come
+  practice picture <test> <qid> original|fix|question <out.png>
+                            draw a question picture (as the Telegram group gets it), e.g.
+                            practice picture DAY3 english-m2-04 fix /tmp/q.png; needs
+                            RENDERER_URL
 `
 
 func validPracticeArgs(args []string) bool {
 	switch {
 	case len(args) == 2 && args[1] == "list":
 		return true
+	case len(args) == 6 && args[1] == "picture":
+		return args[4] == "original" || args[4] == "fix" || args[4] == "question"
 	case len(args) >= 3 && args[1] == "import":
 		return args[2] != "--replace" || len(args) >= 4
 	}
@@ -36,12 +47,11 @@ func runPractice(ctx context.Context, cfg config.Config, args []string, stdout i
 		return err
 	}
 	defer pool.Close()
-	im := practice.Importer{Pool: pool}
-	if cfg.R2UploadsBucket != "" { // for the figures the fix step drew
-		im.Uploads = &r2.Client{Endpoint: cfg.R2UploadsEndpoint, Bucket: cfg.R2UploadsBucket, Region: cfg.R2Region,
-			AccessKey: cfg.R2UploadsAccessKeyID, SecretKey: cfg.R2UploadsSecretAccessKey}
-	}
+	im := practice.Importer{Pool: pool, Uploads: uploadsClient(cfg)} // the figures the fix step drew
 
+	if args[1] == "picture" {
+		return practicePicture(ctx, cfg, pool, args[2], args[3], args[4], args[5], stdout)
+	}
 	if args[1] == "list" {
 		tests, err := practice.NewService(pool, nil).Tests(ctx)
 		if err != nil {
@@ -80,7 +90,7 @@ func runPractice(ctx context.Context, cfg config.Config, args []string, stdout i
 			var s practice.Summary
 			s, err = im.Import(ctx, t, replace)
 			if err == nil && s.Refreshed > 0 {
-				fmt.Fprintf(stdout, "%-8s already loaded; %d AI reviews updated (fixes added)\n", s.Code, s.Refreshed)
+				fmt.Fprintf(stdout, "%-8s already loaded; %d AI reviews updated (fixes or the bank's text added)\n", s.Code, s.Refreshed)
 				continue
 			}
 			if err == nil {
@@ -112,4 +122,42 @@ func runPractice(ctx context.Context, cfg config.Config, args []string, stdout i
 		return fmt.Errorf("%d of %d tests not loaded", failed, len(files))
 	}
 	return nil
+}
+
+// practicePicture draws one question picture into a file.
+func practicePicture(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, test, qid, kind, out string, stdout io.Writer) error {
+	if cfg.RendererURL == "" {
+		return errors.New("set RENDERER_URL (the renderer container's DevTools address)")
+	}
+	page, err := adminweb.CardPage()
+	if err != nil {
+		return err
+	}
+	svc := practice.NewService(pool, uploadsClient(cfg)).WithPictures(&render.Browser{URL: cfg.RendererURL}, page)
+	if cfg.R2Endpoint != "" {
+		svc.WithBank(&r2.Client{Endpoint: cfg.R2Endpoint, Bucket: cfg.R2Bucket, Region: cfg.R2Region,
+			AccessKey: cfg.R2AccessKeyID, SecretKey: cfg.R2SecretAccessKey})
+	}
+	id, err := svc.QuestionID(ctx, test, qid)
+	if err != nil {
+		return fmt.Errorf("%s %s: %w", test, qid, err)
+	}
+	png, _, err := svc.Picture(ctx, id, kind, test, nil)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(out, png, 0o600); err != nil { //nolint:gosec // the operator names the file
+		return err
+	}
+	fmt.Fprintf(stdout, "wrote %s (%d KB)\n", out, len(png)/1024)
+	return nil
+}
+
+// uploadsClient is MakonBook's bucket, or nil (a nil interface) when it isn't set.
+func uploadsClient(cfg config.Config) practice.Store {
+	if cfg.R2UploadsBucket == "" {
+		return nil
+	}
+	return &r2.Client{Endpoint: cfg.R2UploadsEndpoint, Bucket: cfg.R2UploadsBucket, Region: cfg.R2Region,
+		AccessKey: cfg.R2UploadsAccessKeyID, SecretKey: cfg.R2UploadsSecretAccessKey}
 }

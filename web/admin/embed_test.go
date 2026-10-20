@@ -45,3 +45,27 @@ func TestHandler(t *testing.T) {
 		t.Errorf("not built: %d", w.Code)
 	}
 }
+
+func TestCardPage(t *testing.T) {
+	fsys := fstest.MapFS{
+		"dist/card/card.html": {Data: []byte(`<head><script type="module" crossorigin src="/assets/card-1.js"></script>` +
+			`<link rel="stylesheet" crossorigin href="/assets/style-1.css"></head><body><div id="root"></div></body>`)},
+		"dist/card/assets/card-1.js":   {Data: []byte(`window.renderCard = () => "</script>";`)},
+		"dist/card/assets/style-1.css": {Data: []byte(`body{color:red}`)},
+	}
+	page, err := cardPage(fsys, "dist/card")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(page, "/assets/") || !strings.Contains(page, `<style>body{color:red}</style>`) ||
+		!strings.Contains(page, `<script type="module">window.renderCard = () => "<\/script>";</script>`) {
+		t.Errorf("page: %s", page)
+	}
+	if _, err := cardPage(fstest.MapFS{}, "dist/card"); err == nil {
+		t.Error("no page: no error")
+	}
+	// The real build, when there is one.
+	if real, err := CardPage(); err == nil && !strings.Contains(real, "renderCard") {
+		t.Error("the built page has no renderCard")
+	}
+}

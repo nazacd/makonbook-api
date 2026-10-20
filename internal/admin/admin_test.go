@@ -172,7 +172,7 @@ func setup(t *testing.T) *env {
 	figs, uploads := fakeFigures{}, fakeFigures{}
 	panel := Panel{
 		Lessons: lessonsSvc, Attendance: attendance.NewService(pool, lessonsSvc), People: people.NewDirectory(pool), Location: tashkent,
-		Practice: practice.NewService(pool, uploads), Figures: figs,
+		Practice: practice.NewService(pool, uploads).WithBank(figs),
 	}
 	mux := http.NewServeMux()
 	NewHandler(svc, panel, false, false).Register(mux)

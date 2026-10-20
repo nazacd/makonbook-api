@@ -15,7 +15,9 @@ import {
 import { ErrorNotice, Loading, Notice } from '../components/ui';
 import { dateTime } from '../lib/dates';
 import { AlsoIn, placeLabel, RiskChip, StatusChip, SUBJECT } from './common';
+import { diffWords } from './diff';
 import { figuresIn } from './format';
+import { downloadPicture } from './picture';
 import { RichEditor } from './RichEditor';
 import { figureUrl, RichText } from './RichText';
 
@@ -120,8 +122,9 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
     return out;
   }
 
-  function submit() {
-    const body: QuestionEdit = {
+  // The form as the API takes it, for Save and Export image.
+  function bodyOf(): QuestionEdit {
+    return {
       version: q.version,
       passage: form.passage.trim() ? form.passage : null,
       stem: form.stem,
@@ -134,7 +137,24 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
       skill: form.skill,
       difficulty: (form.difficulty || '') as QuestionEdit['difficulty'],
     };
-    save.mutate(body);
+  }
+
+  function submit() {
+    save.mutate(bodyOf());
+  }
+
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  async function exportPicture() {
+    setExporting(true);
+    setExportError(null);
+    try {
+      await downloadPicture(q.id, testCode, bodyOf());
+    } catch (e) {
+      setExportError(describe(e));
+    } finally {
+      setExporting(false);
+    }
   }
 
   const domains = taxonomy.data?.subjects[q.subject] ?? {};
@@ -167,6 +187,9 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
         </div>
         <div className="toolbar">
           {testCode && <PrevNext test={testCode} id={q.id} />}
+          <button className="btn secondary" disabled={exporting} title="Download the question as a picture, as it is in the form" onClick={() => void exportPicture()}>
+            {exporting ? 'Drawing…' : 'Export image'}
+          </button>
           <button className="btn secondary" disabled={!dirty || save.isPending} onClick={() => setForm(initial)}>
             Undo changes
           </button>
@@ -206,6 +229,7 @@ function Editor({ question: q, save }: { question: Question; save: ReturnType<ty
       {save.isSuccess && !dirty && save.data.id === q.id && !approved && (
         <Notice tone="info">Saved as version {q.version}. When it’s right, approve it.</Notice>
       )}
+      {exportError && <Notice tone="error" title="Couldn’t export the picture">{exportError}</Notice>}
       {approval.isError && !conflict && (
         <Notice tone="error" title={Object.keys(fields).length ? 'It can’t be approved yet: fix the marked fields' : 'Couldn’t change the approval'}>
           {Object.keys(fields).length ? null : describe(approval.error)}
@@ -444,42 +468,6 @@ function patchOf(fix: Rec, mcq: boolean): Patch | null {
     else return null;
   }
   return Object.keys(p).length ? p : null;
-}
-
-// A word-by-word comparison: what stays, what goes, what comes; long runs
-// that stay are cut to a few words either side.
-type Seg = { kind: 'same' | 'del' | 'ins'; text: string };
-function diffWords(before: string, after: string): Seg[] {
-  const a = before.split(/(\s+)/);
-  const b = after.split(/(\s+)/);
-  const n = a.length;
-  const m = b.length;
-  const lcs = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i--)
-    for (let j = m - 1; j >= 0; j--) lcs[i]![j] = a[i] === b[j] ? lcs[i + 1]![j + 1]! + 1 : Math.max(lcs[i + 1]![j]!, lcs[i]![j + 1]!);
-  const out: Seg[] = [];
-  const push = (kind: Seg['kind'], text: string) => {
-    const last = out[out.length - 1];
-    if (last?.kind === kind) last.text += text;
-    else out.push({ kind, text });
-  };
-  let i = 0;
-  let j = 0;
-  while (i < n || j < m) {
-    if (i < n && j < m && a[i] === b[j]) {
-      push('same', a[i++]!);
-      j++;
-    } else if (i < n && (j >= m || lcs[i + 1]![j]! >= lcs[i]![j + 1]!)) push('del', a[i++]!);
-    else push('ins', b[j++]!);
-  }
-  return out.map((sg, k) => {
-    if (sg.kind !== 'same') return sg;
-    const words = sg.text.split(/(\s+)/);
-    if (words.length <= 13) return sg;
-    const head = k > 0 ? words.slice(0, 6).join('') : '';
-    const tail = k < out.length - 1 ? words.slice(-6).join('') : '';
-    return { kind: 'same', text: `${head.trimEnd()}${head ? ' ' : ''}…${tail ? ' ' : ''}${tail.trimStart()}` };
-  });
 }
 
 const FIELD: Record<string, string> = {

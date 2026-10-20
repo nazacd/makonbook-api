@@ -1,7 +1,6 @@
 package admin
 
 import (
-	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -10,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
-	"github.com/nazacd/makonbook-api/internal/platform/r2"
 	"github.com/nazacd/makonbook-api/internal/practice"
 )
 
@@ -19,15 +17,6 @@ const (
 	CodeConflict        = "version_conflict"
 	CodeInvalidQuestion = "invalid_question"
 )
-
-// Figures reads question images (SAT MAKON's R2 bucket, read only).
-type Figures interface {
-	Get(ctx context.Context, key string) (r2.Object, error)
-}
-
-// figurePrefixes: the bank stores keys without the "media/" its bucket uses;
-// a few objects sit at the bare key.
-var figurePrefixes = []string{"media/", ""}
 
 var figureKey = regexp.MustCompile(`^[\p{L}\p{N}._/ ()\-]+$`)
 
@@ -38,6 +27,7 @@ func (h *Handler) registerPractice(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/admin/practice/questions/{id}", h.RequireEditor(h.practiceQuestion))
 	mux.HandleFunc("PUT /v1/admin/practice/questions/{id}", h.RequireEditor(h.practiceUpdate))
 	mux.HandleFunc("POST /v1/admin/practice/questions/{id}/approval", h.RequireEditor(h.practiceApproval))
+	mux.HandleFunc("POST /v1/admin/practice/questions/{id}/picture", h.RequireEditor(h.practicePicture))
 	mux.HandleFunc("GET /v1/admin/practice/taxonomy", h.RequireEditor(h.practiceTaxonomy))
 	mux.HandleFunc("GET /v1/admin/practice/figures", h.RequireEditor(h.practiceFigure))
 	mux.HandleFunc("POST /v1/admin/practice/images", h.RequireEditor(h.practiceUpload))
@@ -194,46 +184,54 @@ func (h *Handler) practiceTaxonomy(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, r, http.StatusOK, taxonomyResponse{Subjects: practice.Taxonomy})
 }
 
-// practiceFigure serves a question image from R2 to the editor's page.
+// practiceFigure serves a question image to the editor's page: an upload
+// from MakonBook's bucket, the bank's from SAT MAKON's.
 func (h *Handler) practiceFigure(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
 	if len(key) > 300 || !figureKey.MatchString(key) || strings.Contains(key, "..") || strings.HasPrefix(key, "/") {
 		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "not an image key")
 		return
 	}
-	if strings.HasPrefix(key, practice.UploadPrefix) {
-		obj, err := h.panel.Practice.GetImage(r.Context(), key)
-		switch {
-		case errors.Is(err, practice.ErrNotFound):
-			httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, "no such image")
-		case errors.Is(err, practice.ErrUploadsOff):
-			httpx.WriteError(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, err.Error())
-		case err != nil:
-			httpx.Logger(r.Context()).Warn("uploaded image", "key", key, "err", err)
-			httpx.WriteError(w, r, http.StatusBadGateway, httpx.CodeUnavailable, "the image store didn't answer")
-		default:
-			writeImage(w, obj.ContentType, obj.Body)
-		}
-		return
-	}
-	if h.panel.Figures == nil {
-		httpx.WriteError(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "images are not configured on the server")
-		return
-	}
-	for _, prefix := range figurePrefixes {
-		obj, err := h.panel.Figures.Get(r.Context(), prefix+key)
-		if errors.Is(err, r2.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			httpx.Logger(r.Context()).Warn("figure", "key", key, "err", err)
-			httpx.WriteError(w, r, http.StatusBadGateway, httpx.CodeUnavailable, "the image store didn't answer")
-			return
-		}
+	obj, err := h.panel.Practice.Figure(r.Context(), key)
+	switch {
+	case errors.Is(err, practice.ErrNotFound):
+		httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, "no such image")
+	case errors.Is(err, practice.ErrUploadsOff), errors.Is(err, practice.ErrBankOff):
+		httpx.WriteError(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, err.Error())
+	case err != nil:
+		httpx.Logger(r.Context()).Warn("figure", "key", key, "err", err)
+		httpx.WriteError(w, r, http.StatusBadGateway, httpx.CodeUnavailable, "the image store didn't answer")
+	default:
 		writeImage(w, obj.ContentType, obj.Body)
+	}
+}
+
+// practicePicture draws the question as the editor has it (the form's
+// content, not yet saved) for Export image: a PNG to download.
+func (h *Handler) practicePicture(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+	var e practice.Edit
+	if !httpx.DecodeJSON(w, r, &e) {
 		return
 	}
-	httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, "no such image")
+	png, name, err := h.panel.Practice.Picture(r.Context(), r.PathValue("id"), "question", r.URL.Query().Get("test"), &e)
+	switch {
+	case errors.Is(err, practice.ErrNotFound):
+		httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, "no such question")
+		return
+	case errors.Is(err, practice.ErrPicturesOff):
+		httpx.WriteError(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, err.Error())
+		return
+	case err != nil:
+		httpx.Logger(r.Context()).Error("question picture", "err", err)
+		httpx.WriteError(w, r, http.StatusBadGateway, httpx.CodeUnavailable, "couldn't draw the picture; try again")
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(png) //nolint:gosec // a PNG we drew, sent as a download
 }
 
 func oneOf(s string, options ...string) bool {

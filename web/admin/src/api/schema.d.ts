@@ -690,6 +690,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/practice/questions/{id}/picture": {
+        parameters: {
+            query?: {
+                /** @description The test whose place the picture shows (a question can be in several). */
+                test?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Draw the question as a picture (editors' Export image)
+         * @description Draws the content sent (the editor's form, saved or not) on the
+         *     question picture template the Telegram group's pictures use, and
+         *     returns it as a PNG to download. Needs the renderer (RENDERER_URL).
+         */
+        post: operations["adminPracticePicture"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/practice/taxonomy": {
         parameters: {
             query?: never;
@@ -2495,6 +2522,44 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    adminPracticePicture: {
+        parameters: {
+            query?: {
+                /** @description The test whose place the picture shows (a question can be in several). */
+                test?: string;
+            };
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PracticeQuestionEdit"];
+            };
+        };
+        responses: {
+            /** @description The picture, 2560 px wide. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            502: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     adminPracticeTaxonomy: {
