@@ -80,3 +80,22 @@ func TestPut(t *testing.T) {
 		t.Errorf("put: %v %q", err, got)
 	}
 }
+
+// The example in AWS's S3 documentation ("Authenticating Requests: Using
+// Query Parameters"), with its published signature.
+func TestPresign(t *testing.T) {
+	c := &Client{Region: "us-east-1", AccessKey: "AKIAIOSFODNN7EXAMPLE", SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		Now: func() time.Time { return time.Date(2013, 5, 24, 0, 0, 0, 0, time.UTC) }}
+	q := c.presignQuery("examplebucket.s3.amazonaws.com", "/test.txt", 24*time.Hour)
+	want := "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request" +
+		"&X-Amz-Date=20130524T000000Z&X-Amz-Expires=86400&X-Amz-SignedHeaders=host" +
+		"&X-Amz-Signature=aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404"
+	if q != want {
+		t.Errorf("query:\n got %s\nwant %s", q, want)
+	}
+	c.Endpoint, c.Bucket = "https://acct.r2.cloudflarestorage.com", "makonbook"
+	u, err := c.PresignGet("p/img/a b.png", time.Hour)
+	if err != nil || !strings.HasPrefix(u, "https://acct.r2.cloudflarestorage.com/makonbook/p/img/a%20b.png?X-Amz-Algorithm=") {
+		t.Errorf("url: %s %v", u, err)
+	}
+}

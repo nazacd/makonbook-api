@@ -318,6 +318,16 @@ upload button answers "image uploads aren't set up on the server".
 A test in the pilot's old format (DAY1) is refused until its review is re-run.
 Every test stays locked until a teacher has approved all its questions.
 
+**Publishing to students.** The `worker` publishes every test whose questions
+are all approved, within 5 minutes ("practice: published a test" in its log):
+it builds the test's package (a numbered version that never changes), copies
+its images into MakonBook's bucket under `p/img/`, and the apps download both
+(the images through links the API signs, valid for 6 hours, straight from R2).
+A later edit makes a new version once the test is approved again; until then
+students keep the last one. It needs both `R2_*` (to read the bank's images)
+and `R2_UPLOADS_*`. To publish at once: `docker compose run --rm api practice
+publish`. `practice list` shows `OPEN v2` for a test students have.
+
 ## Question pictures (renderer)
 
 Question pictures (the editors' **Export image**, and later the teachers'
@@ -388,6 +398,7 @@ picture; the log says `redrew open posts`). Decided ones keep their pictures.
 | Sync blocked by the mass-change guard, change is real | `docker compose run --rm api sync full --allow-mass-change` |
 | Migration state | `docker compose run --rm api migrate status` |
 | Practice tests and their review progress | `docker compose run --rm api practice list` |
+| Publish approved tests now (the worker does it every 5 minutes) | `docker compose run --rm api practice publish` |
 | Review bot: what it did | `docker compose logs --tail 100 bot` |
 | Draw a question picture | `docker compose run --rm -v /tmp:/out api practice picture DAY3 english-m2-04 fix /out/q.png` |
 | Stop / start | `docker compose stop` / `docker compose up -d` |

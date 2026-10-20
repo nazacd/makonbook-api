@@ -67,8 +67,10 @@ func Handler(d Deps) http.Handler {
 	lessons.NewHandler(lessonsSvc, d.Location, authHandler.Require).Register(mux)
 	attendanceSvc := attendance.NewService(d.Pool, lessonsSvc)
 	attendance.NewHandler(attendanceSvc, d.Location, authHandler.Require).Register(mux)
+	practiceSvc := practiceService(d)
+	practice.NewHandler(practiceSvc, d.Location, authHandler.Require).Register(mux)
 	panel := admin.Panel{
-		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory, Practice: practiceService(d),
+		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory, Practice: practiceSvc,
 		Location: d.Location, WriteEnabled: d.HolliHopWriteEnabled,
 	}
 	admin.NewHandler(admin.NewService(d.Pool, d.HolliHop), panel, d.TrustProxy, d.SecureCookies).Register(mux)

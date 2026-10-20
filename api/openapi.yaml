@@ -420,6 +420,177 @@ paths:
           description: "`invalid_code` (not a MakonBook code, or forged), `code_expired` (scan the current one)"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/practice/tests:
+    get:
+      summary: Every practice test, open or locked (students and teachers)
+      description: |
+        A test opens once every question in it is approved and the server has
+        published it (within minutes); `version` is then its latest published
+        version. A locked test has `version: null` and shows how far its
+        review has come (`approved` of `questions`). A published test stays
+        open at its last version while an edited question is reviewed again.
+      operationId: practiceTests
+      tags: [practice]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The catalog, in test order
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tests]
+                properties:
+                  tests: { type: array, items: { $ref: "#/components/schemas/PracticeCatalogTest" } }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/practice/tests/{code}/package:
+    get:
+      summary: A published version of a test, to take offline
+      description: |
+        The package (questions, keys, explanations, score scales) and a link
+        to each of its images, valid until `expires_at` (6 hours): download
+        them right away. A version never changes once published; images are
+        named by their bytes, so a file already on the device needn't be
+        fetched again.
+      operationId: practicePackage
+      tags: [practice]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: code, in: path, required: true, schema: { type: string }, example: DAY12 }
+        - name: version
+          in: query
+          description: A version; the latest when left out
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: The package and image links
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [package, images, expires_at]
+                properties:
+                  package: { $ref: "#/components/schemas/PracticePackage" }
+                  images:
+                    type: object
+                    description: Image file → download link
+                    additionalProperties: { type: string, format: uri }
+                  expires_at: { type: string, format: date-time }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404":
+          description: "`not_found`: no such test, or not published (yet), or no such version"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /v1/practice/attempts:
+    post:
+      summary: Upload a finished attempt (students)
+      description: |
+        Sent when the device is online, with the id the device gave the
+        attempt: sending it again returns the stored attempt, so a retry
+        after a lost answer is safe. The server grades it from the version's
+        keys; its scores are the ones teachers see.
+      operationId: savePracticeAttempt
+      tags: [practice]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, test, version, sections, started_at, finished_at, answers]
+              properties:
+                id: { type: string, format: uuid }
+                test: { type: string, description: The test's code }
+                version: { type: integer }
+                sections:
+                  type: array
+                  description: The sections taken, in order
+                  items: { type: string, enum: [english, math] }
+                started_at: { type: string, format: date-time }
+                finished_at: { type: string, format: date-time }
+                answers:
+                  type: array
+                  description: One per question seen, in the sections taken; blank answers are null
+                  items:
+                    type: object
+                    required: [subject, module, position, answer, seconds]
+                    properties:
+                      subject: { type: string, enum: [english, math] }
+                      module: { type: integer, enum: [1, 2] }
+                      position: { type: integer }
+                      answer: { type: [string, "null"], description: "A letter, or a grid-in answer as typed" }
+                      seconds: { type: integer, minimum: 0, maximum: 21600, description: Time spent on the question }
+      responses:
+        "200":
+          description: The stored attempt
+          content: { application/json: { schema: { $ref: "#/components/schemas/PracticeAttempt" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "409":
+          description: "`attempt_id_taken`: another student sent an attempt with this id"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_attempt`: no such test version, a section or question not in it, an answer given twice, times out of order"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/me/practice/attempts:
+    get:
+      summary: The student's attempts, latest first
+      operationId: myPracticeAttempts
+      tags: [practice]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The attempts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [attempts]
+                properties:
+                  attempts: { type: array, items: { $ref: "#/components/schemas/PracticeAttempt" } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/teacher/groups/{id}/practice:
+    get:
+      summary: A group's students and their practice attempts (its teachers)
+      operationId: groupPractice
+      tags: [practice]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: The students enrolled now, by name, each with their attempts latest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [students]
+                properties:
+                  students:
+                    type: array
+                    items:
+                      type: object
+                      required: [client_id, first_name, last_name, attempts]
+                      properties:
+                        client_id: { type: integer }
+                        first_name: { type: string }
+                        last_name: { type: string }
+                        attempts: { type: array, items: { $ref: "#/components/schemas/PracticeAttempt" } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a teacher, or not this group's"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /v1/admin/login:
     post:
       summary: Admin sign-in with HolliHop credentials
@@ -1205,7 +1376,7 @@ components:
 
     PracticeTestSummary:
       type: object
-      required: [code, title, questions, approved, red, yellow, shared, open]
+      required: [code, title, questions, approved, red, yellow, shared, open, published]
       properties:
         code: { type: string, description: "The bank's test id, e.g. DAY12" }
         title: { type: string }
@@ -1215,6 +1386,126 @@ components:
         yellow: { type: integer, description: Yellow questions not yet approved }
         shared: { type: integer, description: Questions other tests use too }
         open: { type: boolean, description: "Every question approved: students can take it" }
+        published: { type: integer, description: "The latest published version; 0 while never published" }
+
+    PracticeCatalogTest:
+      type: object
+      required: [code, title, english, math, questions, approved, version, bytes, published_at]
+      properties:
+        code: { type: string, example: DAY12 }
+        title: { type: string }
+        english: { type: integer, description: Questions in Reading and Writing }
+        math: { type: integer, description: Questions in Math }
+        questions: { type: integer }
+        approved: { type: integer }
+        version: { type: [integer, "null"], description: The latest published version; null while locked }
+        bytes: { type: [integer, "null"], description: "The download's size: the package and its images" }
+        published_at: { type: [string, "null"], format: date-time }
+
+    PracticePackage:
+      type: object
+      description: |
+        A published version of a test (format 1). Sections come in Bluebook
+        order (Reading and Writing, then Math), each with two timed modules.
+        Text uses the stored content format: paragraphs, `\( \)` and
+        `\[ \]` math, `*i*`, `**b**`, `<u>`, `- ` lists, pipe tables and
+        `![alt](r2:key)` images, whose files `images` names.
+      required: [format, code, title, version, published_at, sections, images]
+      properties:
+        format: { type: integer, enum: [1] }
+        code: { type: string }
+        title: { type: string }
+        version: { type: integer }
+        published_at: { type: string, format: date-time }
+        sections:
+          type: array
+          items:
+            type: object
+            required: [subject, modules, scale]
+            properties:
+              subject: { type: string, enum: [english, math] }
+              scale:
+                type: array
+                items: { type: integer }
+                description: The estimated 200–800 section score for each number right (index 0 … questions)
+              modules:
+                type: array
+                items:
+                  type: object
+                  required: [module, minutes, questions]
+                  properties:
+                    module: { type: integer, enum: [1, 2] }
+                    minutes: { type: integer }
+                    questions:
+                      type: array
+                      items: { $ref: "#/components/schemas/PracticePackageQuestion" }
+        images:
+          type: object
+          description: An image's key (as the text uses it) → its file
+          additionalProperties:
+            type: object
+            required: [file, bytes, width, height]
+            properties:
+              file: { type: string }
+              bytes: { type: integer }
+              width: { type: integer }
+              height: { type: integer }
+
+    PracticePackageQuestion:
+      type: object
+      required: [id, version, position, type, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty]
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer, description: The question's own version }
+        position: { type: integer }
+        type: { type: string, enum: [mcq, grid_in] }
+        passage: { type: [string, "null"] }
+        stem: { type: string }
+        choices:
+          type: [object, "null"]
+          description: A–D for mcq
+          additionalProperties: { type: string }
+        figures:
+          type: array
+          items:
+            type: object
+            required: [key, kind, alt]
+            properties:
+              key: { type: string }
+              kind: { type: string }
+              alt: { type: string }
+        correct: { type: [string, "null"], description: The letter, for mcq }
+        accepted:
+          type: [array, "null"]
+          items: { type: string }
+          description: "Grid-in: every form accepted; the same number in another form (.5 for 1/2) counts too"
+        explanation: { type: string }
+        domain: { type: string }
+        skill: { type: string }
+        difficulty: { type: [string, "null"], enum: [easy, medium, hard, null] }
+
+    PracticeAttempt:
+      type: object
+      required: [id, test, title, version, sections, started_at, finished_at, scores, total]
+      properties:
+        id: { type: string, format: uuid }
+        test: { type: string }
+        title: { type: string }
+        version: { type: integer }
+        sections: { type: array, items: { type: string, enum: [english, math] } }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        scores:
+          type: object
+          description: Per section taken (english, math)
+          additionalProperties:
+            type: object
+            required: [raw, questions, score]
+            properties:
+              raw: { type: integer, description: Questions right }
+              questions: { type: integer }
+              score: { type: integer, description: "Estimated, 200–800" }
+        total: { type: [integer, "null"], description: "Both sections' sum (400–1600) when both were taken" }
 
     PracticePlace:
       type: object

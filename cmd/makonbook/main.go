@@ -6,7 +6,7 @@
 //	makonbook migrate up|down|status     manage database migrations
 //	makonbook reset-password student|teacher <id>
 //	makonbook admin …                    admin panel access (see adminUsage)
-//	makonbook practice import|list       practice tests (see practiceUsage)
+//	makonbook practice import|list|publish|picture   practice tests (see practiceUsage)
 //	makonbook review-bot                 the teachers' Telegram group review
 package main
 
@@ -246,6 +246,12 @@ func worker(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Log:           log,
 	}
 	go writer.Loop(ctx, 30*time.Second)
+	// Tests whose questions are all approved are published (spec 9.5).
+	if cfg.R2UploadsBucket != "" {
+		go publishingService(cfg, pool).PublishLoop(ctx, 5*time.Minute, log)
+	} else {
+		log.Warn("R2_UPLOADS_* not set: practice tests aren't published")
+	}
 	return newRunner(cfg, pool, log).Loop(ctx, cfg.SyncInterval, cfg.SyncFullAt)
 }
 

@@ -23,6 +23,8 @@ const practiceUsage = `
                             test in it). Tests already loaded are skipped; --replace reloads
                             them, as long as no question in them was approved or edited
   practice list             tests and how far their review has come
+  practice publish          publish every test whose questions are all approved and that changed
+                            since its last version (the worker does this every few minutes)
   practice picture <test> <qid> original|fix|question <out.png>
                             draw a question picture (as the Telegram group gets it), e.g.
                             practice picture DAY3 english-m2-04 fix /tmp/q.png; needs
@@ -31,7 +33,7 @@ const practiceUsage = `
 
 func validPracticeArgs(args []string) bool {
 	switch {
-	case len(args) == 2 && args[1] == "list":
+	case len(args) == 2 && (args[1] == "list" || args[1] == "publish"):
 		return true
 	case len(args) == 6 && args[1] == "picture":
 		return args[4] == "original" || args[4] == "fix" || args[4] == "question"
@@ -52,6 +54,16 @@ func runPractice(ctx context.Context, cfg config.Config, args []string, stdout i
 	if args[1] == "picture" {
 		return practicePicture(ctx, cfg, pool, args[2], args[3], args[4], args[5], stdout)
 	}
+	if args[1] == "publish" {
+		published, err := publishingService(cfg, pool).Publish(ctx)
+		for _, p := range published {
+			fmt.Fprintf(stdout, "%-8s published version %d (%d KB with images)\n", p.Code, p.Version, p.Bytes/1024)
+		}
+		if err == nil && len(published) == 0 {
+			fmt.Fprintln(stdout, "Nothing new to publish.")
+		}
+		return err
+	}
 	if args[1] == "list" {
 		tests, err := practice.NewService(pool, nil).Tests(ctx)
 		if err != nil {
@@ -65,7 +77,10 @@ func runPractice(ctx context.Context, cfg config.Config, args []string, stdout i
 			if t.Open {
 				state = "OPEN"
 			}
-			fmt.Fprintf(stdout, "%-8s %-6s approved %3d/%d  to review: red %d, yellow %d  shared with other tests: %d\n",
+			if t.Published > 0 {
+				state += fmt.Sprintf(" v%d", t.Published)
+			}
+			fmt.Fprintf(stdout, "%-8s %-9s approved %3d/%d  to review: red %d, yellow %d  shared with other tests: %d\n",
 				t.Code, state, t.Approved, t.Questions, t.Red, t.Yellow, t.Shared)
 		}
 		return nil
@@ -161,6 +176,17 @@ func picturingService(cfg config.Config, pool *pgxpool.Pool) (*practice.Service,
 			AccessKey: cfg.R2AccessKeyID, SecretKey: cfg.R2SecretAccessKey})
 	}
 	return svc, nil
+}
+
+// publishingService is the practice service that publishes tests: it reads
+// both image buckets and writes MakonBook's.
+func publishingService(cfg config.Config, pool *pgxpool.Pool) *practice.Service {
+	svc := practice.NewService(pool, uploadsClient(cfg))
+	if cfg.R2Endpoint != "" {
+		svc.WithBank(&r2.Client{Endpoint: cfg.R2Endpoint, Bucket: cfg.R2Bucket, Region: cfg.R2Region,
+			AccessKey: cfg.R2AccessKeyID, SecretKey: cfg.R2SecretAccessKey})
+	}
+	return svc
 }
 
 // uploadsClient is MakonBook's bucket, or nil (a nil interface) when it isn't set.
