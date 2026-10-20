@@ -130,21 +130,22 @@ func (q *Queries) DropReasonRequest(ctx context.Context, userID int64) error {
 }
 
 const insertPost = `-- name: InsertPost :one
-INSERT INTO group_posts (question_id, version, test_code, qid, risk, caption, chat_id, photo_ids, vote_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO group_posts (question_id, version, test_code, qid, risk, caption, chat_id, photo_ids, vote_id, picture_version)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id
 `
 
 type InsertPostParams struct {
-	QuestionID pgtype.UUID
-	Version    int32
-	TestCode   string
-	Qid        string
-	Risk       string
-	Caption    string
-	ChatID     int64
-	PhotoIds   []int64
-	VoteID     int64
+	QuestionID     pgtype.UUID
+	Version        int32
+	TestCode       string
+	Qid            string
+	Risk           string
+	Caption        string
+	ChatID         int64
+	PhotoIds       []int64
+	VoteID         int64
+	PictureVersion string
 }
 
 func (q *Queries) InsertPost(ctx context.Context, arg InsertPostParams) (int64, error) {
@@ -158,6 +159,7 @@ func (q *Queries) InsertPost(ctx context.Context, arg InsertPostParams) (int64, 
 		arg.ChatID,
 		arg.PhotoIds,
 		arg.VoteID,
+		arg.PictureVersion,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -194,7 +196,7 @@ func (q *Queries) OpenCount(ctx context.Context) (int32, error) {
 }
 
 const overtakenPosts = `-- name: OvertakenPosts :many
-SELECT p.id, p.question_id, p.version, p.test_code, p.qid, p.risk, p.caption, p.chat_id, p.photo_ids, p.vote_id, p.status, p.approvals, p.denials, p.posted_at, p.decided_at
+SELECT p.id, p.question_id, p.version, p.test_code, p.qid, p.risk, p.caption, p.chat_id, p.photo_ids, p.vote_id, p.status, p.approvals, p.denials, p.posted_at, p.decided_at, p.picture_version
 FROM group_posts p
 JOIN questions q ON q.id = p.question_id
 WHERE p.status = 'open' AND (q.status = 'approved' OR q.version <> p.version)
@@ -227,6 +229,7 @@ func (q *Queries) OvertakenPosts(ctx context.Context) ([]GroupPost, error) {
 			&i.Denials,
 			&i.PostedAt,
 			&i.DecidedAt,
+			&i.PictureVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -250,7 +253,7 @@ func (q *Queries) PendingReason(ctx context.Context, userID int64) (int64, error
 }
 
 const post = `-- name: Post :one
-SELECT id, question_id, version, test_code, qid, risk, caption, chat_id, photo_ids, vote_id, status, approvals, denials, posted_at, decided_at FROM group_posts WHERE id = $1
+SELECT id, question_id, version, test_code, qid, risk, caption, chat_id, photo_ids, vote_id, status, approvals, denials, posted_at, decided_at, picture_version FROM group_posts WHERE id = $1
 `
 
 func (q *Queries) Post(ctx context.Context, id int64) (GroupPost, error) {
@@ -272,6 +275,7 @@ func (q *Queries) Post(ctx context.Context, id int64) (GroupPost, error) {
 		&i.Denials,
 		&i.PostedAt,
 		&i.DecidedAt,
+		&i.PictureVersion,
 	)
 	return i, err
 }
@@ -282,6 +286,20 @@ UPDATE review_bot SET update_offset = $1
 
 func (q *Queries) SaveOffset(ctx context.Context, updateOffset int64) error {
 	_, err := q.db.Exec(ctx, saveOffset, updateOffset)
+	return err
+}
+
+const setPictureVersion = `-- name: SetPictureVersion :exec
+UPDATE group_posts SET picture_version = $1 WHERE id = $2
+`
+
+type SetPictureVersionParams struct {
+	PictureVersion string
+	ID             int64
+}
+
+func (q *Queries) SetPictureVersion(ctx context.Context, arg SetPictureVersionParams) error {
+	_, err := q.db.Exec(ctx, setPictureVersion, arg.PictureVersion, arg.ID)
 	return err
 }
 
@@ -307,6 +325,48 @@ func (q *Queries) Settings(ctx context.Context) (ReviewBot, error) {
 		&i.LastTopupOn,
 	)
 	return i, err
+}
+
+const stalePictures = `-- name: StalePictures :many
+SELECT id, question_id, version, test_code, qid, risk, caption, chat_id, photo_ids, vote_id, status, approvals, denials, posted_at, decided_at, picture_version FROM group_posts WHERE status = 'open' AND picture_version <> $1 ORDER BY id
+`
+
+// Open posts drawn with another version of the picture page.
+func (q *Queries) StalePictures(ctx context.Context, pictureVersion string) ([]GroupPost, error) {
+	rows, err := q.db.Query(ctx, stalePictures, pictureVersion)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GroupPost
+	for rows.Next() {
+		var i GroupPost
+		if err := rows.Scan(
+			&i.ID,
+			&i.QuestionID,
+			&i.Version,
+			&i.TestCode,
+			&i.Qid,
+			&i.Risk,
+			&i.Caption,
+			&i.ChatID,
+			&i.PhotoIds,
+			&i.VoteID,
+			&i.Status,
+			&i.Approvals,
+			&i.Denials,
+			&i.PostedAt,
+			&i.DecidedAt,
+			&i.PictureVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const tally = `-- name: Tally :one

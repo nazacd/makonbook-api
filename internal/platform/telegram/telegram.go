@@ -177,6 +177,25 @@ func (b *Bot) SendPhotos(ctx context.Context, chatID int64, photos []Photo) ([]M
 	return ms, json.Unmarshal(raw, &ms)
 }
 
+// EditPhoto replaces the picture of a photo message the bot sent (one in an
+// album too), with its caption.
+func (b *Bot) EditPhoto(ctx context.Context, chatID, messageID int64, photo Photo) error {
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	_ = w.WriteField("chat_id", fmt.Sprint(chatID))
+	_ = w.WriteField("message_id", fmt.Sprint(messageID))
+	j, _ := json.Marshal(map[string]string{"type": "photo", "media": "attach://p", "caption": photo.Caption})
+	_ = w.WriteField("media", string(j))
+	if err := attach(w, "p", photo.PNG); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	_, err := b.post(ctx, "editMessageMedia", w.FormDataContentType(), &body)
+	return err
+}
+
 func attach(w *multipart.Writer, name string, png []byte) error {
 	part, err := w.CreateFormFile(name, name+".png")
 	if err != nil {

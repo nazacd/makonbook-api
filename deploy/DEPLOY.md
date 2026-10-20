@@ -373,6 +373,10 @@ Once:
 The bot starts posting at the next full hour between 08:00 and 23:00. To stop
 it for a while: `docker compose stop bot`.
 
+When an update changes how question pictures look, the bot replaces the photos
+of the questions still open in the group when it restarts (a few seconds per
+picture; the log says `redrew open posts`). Decided ones keep their pictures.
+
 ## Everyday operations
 
 | Task | Command (in `/opt/makonbook-api`) |

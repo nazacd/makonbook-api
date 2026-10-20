@@ -16,9 +16,19 @@ func TestBot(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		method := strings.TrimPrefix(r.URL.Path, "/botTOKEN/")
 		switch method {
-		case "sendMediaGroup":
+		case "sendMediaGroup", "editMessageMedia":
 			if err := r.ParseMultipartForm(1 << 20); err != nil {
 				t.Fatal(err)
+			}
+			if method == "editMessageMedia" {
+				f, _, err := r.FormFile("p")
+				if err != nil {
+					t.Fatal(err)
+				}
+				b, _ := io.ReadAll(f)
+				got = append(got, method+" "+r.FormValue("chat_id")+" "+r.FormValue("message_id")+" "+r.FormValue("media")+" "+string(b))
+				_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":7,"chat":{"id":-100}}}`)
+				return
 			}
 			f, _, err := r.FormFile("p1")
 			if err != nil {
@@ -59,6 +69,10 @@ func TestBot(t *testing.T) {
 	}
 	if err := b.EditMessage(t.Context(), -100, 9, "same", nil); !NotModified(err) {
 		t.Errorf("not modified: %v", err)
+	}
+	if err := b.EditPhoto(t.Context(), -100, 7, Photo{PNG: []byte("new"), Caption: "Original"}); err != nil ||
+		got[2] != `editMessageMedia -100 7 {"caption":"Original","media":"attach://p","type":"photo"} new` {
+		t.Errorf("edit photo: %v %s", err, got[2])
 	}
 	var e *Error
 	if err := b.AnswerCallback(t.Context(), "q", "hi", ""); !errors.As(err, &e) || e.RetryAfter != 3*time.Second {

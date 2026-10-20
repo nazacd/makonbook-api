@@ -306,7 +306,9 @@ section (College Board uses IRT; we can't reproduce it exactly).
   of its own and the question is approved. Denied: it goes to the editors' queue, with the reasons the bot
   asks for (optional). Posted in batches (about 10 a day), the next when one is decided. An editor's
   decision in the panel comes first and closes the vote; a later edit sends the question back to review.
-  The images are drawn on the server by a headless browser (its own container).
+  The images are drawn on the server by a headless browser (its own container). When an update changes the
+  picture page, the bot draws its open posts again on start and replaces their photos in place
+  (`editMessageMedia`; each post keeps the page version it was drawn with, `group_posts.picture_version`).
 - **Question pictures** (built: phase 3, step 4.1): a fixed template, not AI. The page (web/admin's
   `src/card`, built apart into `dist/card` with its fonts and logo inline) is opened whole in a headless
   Chrome (`renderer` container, internal network, no internet) by `internal/platform/render`; the API
