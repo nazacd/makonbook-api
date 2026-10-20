@@ -5,14 +5,17 @@ package adminweb
 import (
 	"embed"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"path"
+	"regexp"
 	"strings"
 )
 
-// dist/app is written by `npm run build` (the Docker image does it). Without
-// it, the panel answers that it isn't built.
+// dist/app (the panel) and dist/card (the question picture page) are
+// written by `npm run build` (the Docker image does it). Without them, the
+// panel answers that it isn't built.
 //
 //go:embed all:dist
 var files embed.FS
@@ -83,4 +86,44 @@ func handler(app fs.FS) http.Handler {
 		h.Set("Cache-Control", "no-cache")
 		http.ServeFileFS(w, r, app, "index.html")
 	})
+}
+
+var (
+	cardScript = regexp.MustCompile(`<script type="module" crossorigin src="/(assets/[^"]+\.js)"></script>`)
+	cardStyle  = regexp.MustCompile(`<link rel="stylesheet" crossorigin href="/(assets/[^"]+\.css)">`)
+)
+
+// CardPage is the question picture page (dist/card, built by
+// vite.card.config.ts) as one document, its script and styles inline, for
+// a headless browser to open with nothing to load.
+func CardPage() (string, error) {
+	return cardPage(files, "dist/card")
+}
+
+func cardPage(fsys fs.FS, dir string) (string, error) {
+	html, err := fs.ReadFile(fsys, dir+"/card.html")
+	if err != nil {
+		return "", fmt.Errorf("the question picture page isn't built (npm run build in web/admin): %w", err)
+	}
+	page := string(html)
+	for _, part := range []struct {
+		re       *regexp.Regexp
+		tag, end string
+	}{
+		{cardScript, `<script type="module">`, "</script>"},
+		{cardStyle, "<style>", "</style>"},
+	} {
+		m := part.re.FindStringSubmatch(page)
+		if m == nil {
+			return "", fmt.Errorf("card.html: no %s to inline", part.tag)
+		}
+		body, err := fs.ReadFile(fsys, dir+"/"+m[1])
+		if err != nil {
+			return "", err
+		}
+		// Its closing tag inside the code would end the element early.
+		inline := strings.ReplaceAll(string(body), part.end[:len(part.end)-1], `<\`+part.end[1:len(part.end)-1])
+		page = strings.Replace(page, m[0], part.tag+inline+part.end, 1)
+	}
+	return page, nil
 }

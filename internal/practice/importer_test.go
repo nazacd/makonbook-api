@@ -292,12 +292,19 @@ func TestFixStep(t *testing.T) {
 		}
 	})
 
-	// Loading the test again brings in the fix and uploads its figure.
+	// The bank's own text comes from original.jsonl beside the test.
+	if err := os.WriteFile(filepath.Join(root, "DAY6", "original.jsonl"),
+		[]byte(`{"qid": "math-m1-02", "passage": null, "question": "If $x=2$...", "choices": null, "answer": "4"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Loading the test again brings in the fix and the bank's text, and
+	// uploads the figure.
 	if _, err := (Importer{Pool: pool}).Import(ctx, write(fixed), false); err == nil {
 		t.Error("figures loaded without an uploads bucket")
 	}
 	s, err := im.Import(ctx, write(fixed), false)
-	if err != nil || s.Refreshed != 1 {
+	if err != nil || s.Refreshed != 1 { // one record had both
 		t.Fatalf("refresh: %+v %v", s, err)
 	}
 	if !bytes.Equal(store[key], buf.Bytes()) {
@@ -310,6 +317,9 @@ func TestFixStep(t *testing.T) {
 	var note string
 	if err := pool.QueryRow(ctx, `SELECT record->'fix'->>'note' FROM question_ai_reviews WHERE qid = 'math-m1-02'`).Scan(&note); err != nil || note != "Redrawn." {
 		t.Errorf("the review has no fix: %q %v", note, err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT record->'original'->>'question' FROM question_ai_reviews WHERE qid = 'math-m1-02'`).Scan(&note); err != nil || note != "If $x=2$..." {
+		t.Errorf("the review has no bank text: %q %v", note, err)
 	}
 	if _, err := im.Import(ctx, write(fixed), false); !errors.Is(err, ErrImported) {
 		t.Errorf("nothing new: %v", err)

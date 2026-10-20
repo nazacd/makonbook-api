@@ -79,8 +79,8 @@ func (im Importer) ApplyAIFixes(ctx context.Context) (FixSummary, error) {
 }
 
 // applyFix patches the content with a proposed fix: {"stem": "…"},
-// {"choices.B": "…"}, {"key": "C"}, {"accepted": ["3/4", ".75"]}. False if
-// it names anything else.
+// {"choices.B": "…"}, {"key": "C"}, {"accepted": ["3/4", ".75"]},
+// {"explanation": "…"}. False if it names anything else.
 func applyFix(e *Edit, qtype string, fix map[string]json.RawMessage) bool {
 	if len(fix) == 0 {
 		return false
@@ -102,6 +102,8 @@ func applyFix(e *Edit, qtype string, fix map[string]json.RawMessage) bool {
 			e.Passage = &text
 		case field == "stem":
 			e.Stem = text
+		case field == "explanation":
+			e.Explanation = text
 		case field == "key" && qtype == "mcq":
 			e.Correct = text
 		case isChoice && qtype == "mcq" && e.Choices != nil && len(letter) == 1 && letter >= "A" && letter <= "D":

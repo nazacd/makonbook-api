@@ -61,6 +61,11 @@ type Config struct {
 	// defaults to R2_ENDPOINT_URL (the same Cloudflare account).
 	R2UploadsEndpoint, R2UploadsBucket, R2UploadsAccessKeyID, R2UploadsSecretAccessKey string
 
+	// RendererURL is the DevTools address of the headless Chrome that draws
+	// question pictures (the renderer container), e.g. ws://renderer:9222.
+	// Optional; without it there are no pictures.
+	RendererURL string
+
 	TelegramBotToken    string
 	TelegramAlertChatID string
 }
@@ -160,6 +165,11 @@ func Load(getenv func(string) string) (Config, error) {
 	if up := cfg.R2UploadsBucket + cfg.R2UploadsAccessKeyID + cfg.R2UploadsSecretAccessKey; up != "" &&
 		(cfg.R2UploadsBucket == "" || cfg.R2UploadsAccessKeyID == "" || cfg.R2UploadsSecretAccessKey == "" || cfg.R2UploadsEndpoint == "") {
 		errs = append(errs, errors.New("R2_UPLOADS_BUCKET, R2_UPLOADS_ACCESS_KEY_ID and R2_UPLOADS_SECRET_ACCESS_KEY must be set together, with R2_UPLOADS_ENDPOINT_URL or R2_ENDPOINT_URL"))
+	}
+
+	cfg.RendererURL = strings.TrimSpace(getenv("RENDERER_URL"))
+	if cfg.RendererURL != "" && !strings.HasPrefix(cfg.RendererURL, "ws://") && !strings.HasPrefix(cfg.RendererURL, "http://") {
+		errs = append(errs, errors.New("RENDERER_URL: want ws://host:port"))
 	}
 
 	cfg.TelegramBotToken = getenv("TELEGRAM_BOT_TOKEN")

@@ -22,7 +22,6 @@ type Panel struct {
 	Attendance *attendance.Service
 	People     *people.Directory
 	Practice   *practice.Service
-	Figures    Figures        // nil: images not configured
 	Location   *time.Location // school time zone, for "today"
 	// WriteEnabled: attendance is really written to HolliHop (not dry run).
 	WriteEnabled bool

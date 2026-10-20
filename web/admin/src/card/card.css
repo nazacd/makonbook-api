@@ -1,0 +1,79 @@
+/* A question picture: 1280 CSS px wide (drawn at 2x), at least 16:9, white
+   with the purple accent, like Bluebook. Fonts come with the page (main.tsx),
+   since the drawing browser has none of its own. */
+
+:root {
+  --accent: #8b5cf6;
+  --accent-soft: #f5f3ff;
+  --mark: #e9d5ff;
+  --ink: #111827;
+  --muted: #6b7280;
+  --line: #d1d5db;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: #fff; }
+body { font-family: 'Inter', sans-serif; color: var(--ink); -webkit-font-smoothing: antialiased; }
+
+.card { width: 1280px; min-height: 720px; display: flex; flex-direction: column; background: #fff; }
+
+header {
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  height: 76px; padding: 0 40px; border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 12px; font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
+.brand img { width: 40px; height: 40px; border-radius: 9px; }
+.where { display: flex; align-items: center; gap: 14px; font-size: 17px; color: var(--muted); }
+.label { padding: 6px 14px; border-radius: 999px; font-size: 15px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.label.original { background: #f3f4f6; color: #374151; }
+.label.fix { background: var(--accent); color: #fff; }
+
+main { flex: 1; display: flex; padding: 36px 48px 44px; }
+.two main { gap: 0; }
+.passage, .question { flex: 1; min-width: 0; font-size: 21px; line-height: 1.6; }
+.passage { padding-right: 40px; }
+.divider { width: 2px; background: var(--line); align-self: stretch; }
+.two .question { padding-left: 40px; }
+.question.centred { flex: 0 1 900px; margin: 0 auto; }
+
+.rich p { margin: 0 0 14px; }
+.rich p:last-child { margin-bottom: 0; }
+.rich p.blank { margin: 0; }
+.rich ul { margin: 0 0 14px; padding-left: 28px; }
+.rich .figure, .shot { display: block; max-width: 100%; max-height: 380px; margin: 12px auto; }
+.shot { border: 1px solid #e5e7eb; border-radius: 6px; }
+.rich .math.display { display: block; text-align: center; margin: 10px 0; }
+.rich-table { border-collapse: collapse; margin: 12px auto; }
+.rich-table th, .rich-table td { border: 1.5px solid #9ca3af; padding: 6px 18px; min-width: 80px; text-align: center; vertical-align: middle; }
+.rich-table th { background: #f3f4f6; font-weight: 700; }
+.question > .rich, .question > .shot { margin-bottom: 22px; }
+
+mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 2px; box-shadow: 0 2px 0 var(--accent); }
+mark:has(.katex), mark:has(img) { display: inline-block; padding: 3px 4px; } /* tall math: the box grows with it */
+
+.choices { list-style: none; margin: 24px 0 0; padding: 0; display: grid; gap: 14px; }
+.choices li {
+  display: flex; align-items: center; gap: 18px; padding: 14px 18px; min-height: 64px;
+  border: 1.5px solid var(--line); border-radius: 12px; font-size: 20px;
+}
+.choices li.right { border: 2.5px solid var(--accent); background: var(--accent-soft); }
+.letter {
+  flex: none; width: 36px; height: 36px; border-radius: 50%; border: 1.5px solid #4b5563;
+  display: grid; place-items: center; font-size: 17px; font-weight: 700;
+}
+.right .letter { background: var(--accent); border-color: var(--accent); color: #fff; }
+.letter.changed { box-shadow: 0 0 0 4px var(--mark); }
+.choices .text { flex: 1; min-width: 0; }
+.choices .text .rich p { margin: 0; }
+.choices .shot { margin: 6px 0; max-height: 160px; }
+.check { flex: none; width: 30px; height: 30px; color: var(--accent); }
+
+.gridin { margin-top: 28px; display: grid; gap: 8px; justify-items: center; }
+.gridin-label { font-size: 16px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+.gridin-box {
+  min-width: 260px; padding: 14px 28px; border: 2.5px solid var(--accent); border-radius: 12px;
+  background: var(--accent-soft); font-size: 26px; font-weight: 700; text-align: center;
+}
+.gridin-box.changed { box-shadow: 0 0 0 4px var(--mark); }
+
+.katex { font-size: 1.08em; }

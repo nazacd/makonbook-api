@@ -499,6 +499,25 @@ func (q *Queries) PendingAIFixes(ctx context.Context) ([]PendingAIFixesRow, erro
 	return items, nil
 }
 
+const questionByQID = `-- name: QuestionByQID :one
+SELECT r.question_id FROM question_ai_reviews r
+JOIN practice_tests t ON t.id = r.test_id
+WHERE t.code = $1 AND r.qid = $2
+`
+
+type QuestionByQIDParams struct {
+	Code string
+	Qid  string
+}
+
+// A question by its place in a reviewed test, as the questionbank names it.
+func (q *Queries) QuestionByQID(ctx context.Context, arg QuestionByQIDParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, questionByQID, arg.Code, arg.Qid)
+	var question_id pgtype.UUID
+	err := row.Scan(&question_id)
+	return question_id, err
+}
+
 const questionPlaces = `-- name: QuestionPlaces :many
 SELECT tq.question_id, t.code, tq.subject, tq.module, tq.position
 FROM practice_test_questions tq

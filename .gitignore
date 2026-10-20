@@ -10,4 +10,5 @@ coverage.*
 # Admin panel (web/admin): dependencies and the build are never committed.
 /web/admin/node_modules/
 /web/admin/dist/app/
+/web/admin/dist/card/
 /web/admin/*.tsbuildinfo

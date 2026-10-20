@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -146,7 +147,52 @@ func Read(path string) (Test, error) {
 		return Test{}, err
 	}
 	defer func() { _ = f.Close() }()
-	return parse(f, path)
+	t, err := parse(f, path)
+	if err != nil {
+		return t, err
+	}
+	return t, t.addOriginals(filepath.Join(filepath.Dir(path), "original.jsonl"))
+}
+
+// addOriginals puts the bank's own text of each question (original.jsonl
+// next to questions.jsonl, from the questionbank) into its record, as
+// "original", for the teachers' comparison. No file: nothing to add.
+func (t *Test) addOriginals(path string) error {
+	data, err := os.ReadFile(path) //nolint:gosec // next to the operator-given test
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	byQID := map[string]json.RawMessage{}
+	for n, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var o struct {
+			QID string `json:"qid"`
+		}
+		if err := json.Unmarshal([]byte(line), &o); err != nil || o.QID == "" {
+			return fmt.Errorf("%s line %d: not a question's original", path, n+1)
+		}
+		byQID[o.QID] = json.RawMessage(line)
+	}
+	for i, r := range t.Records {
+		o, ok := byQID[r.QID]
+		if !ok {
+			continue
+		}
+		var rec map[string]json.RawMessage
+		if err := json.Unmarshal(r.raw, &rec); err != nil {
+			return err
+		}
+		rec["original"] = o
+		if t.Records[i].raw, err = json.Marshal(rec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func parse(r io.Reader, path string) (Test, error) {

@@ -40,6 +40,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/platform/migrate"
 	"github.com/nazacd/makonbook-api/internal/platform/postgres"
 	"github.com/nazacd/makonbook-api/internal/platform/r2"
+	"github.com/nazacd/makonbook-api/internal/platform/render"
 	hhsync "github.com/nazacd/makonbook-api/internal/sync"
 )
 
@@ -187,6 +188,11 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 			AccessKey: cfg.R2UploadsAccessKeyID, SecretKey: cfg.R2UploadsSecretAccessKey}
 	} else {
 		log.Warn("R2_UPLOADS_* not set: editors can't upload images")
+	}
+	if cfg.RendererURL != "" {
+		deps.Renderer = &render.Browser{URL: cfg.RendererURL}
+	} else {
+		log.Warn("RENDERER_URL not set: no question pictures")
 	}
 	if cfg.HolliHopBaseURL != "" && cfg.HolliHopAuthKey != "" {
 		deps.HolliHop = hollihop.New(cfg.HolliHopBaseURL, cfg.HolliHopAuthKey)

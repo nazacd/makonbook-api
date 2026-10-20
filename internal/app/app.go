@@ -17,6 +17,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
 	"github.com/nazacd/makonbook-api/internal/platform/r2"
+	"github.com/nazacd/makonbook-api/internal/platform/render"
 	"github.com/nazacd/makonbook-api/internal/practice"
 	"github.com/nazacd/makonbook-api/internal/system"
 	"github.com/nazacd/makonbook-api/internal/system/systemdb"
@@ -43,6 +44,9 @@ type Deps struct {
 	// Uploads is MakonBook's own R2 bucket, for editors' images; nil when
 	// not configured.
 	Uploads *r2.Client
+	// Renderer draws question pictures (a headless Chrome); nil when not
+	// configured.
+	Renderer *render.Browser
 	// AdminHost serves the admin panel (empty: no panel).
 	AdminHost string
 }
@@ -64,11 +68,8 @@ func Handler(d Deps) http.Handler {
 	attendanceSvc := attendance.NewService(d.Pool, lessonsSvc)
 	attendance.NewHandler(attendanceSvc, d.Location, authHandler.Require).Register(mux)
 	panel := admin.Panel{
-		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory, Practice: practice.NewService(d.Pool, uploadStore(d.Uploads)),
+		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory, Practice: practiceService(d),
 		Location: d.Location, WriteEnabled: d.HolliHopWriteEnabled,
-	}
-	if d.Figures != nil {
-		panel.Figures = d.Figures
 	}
 	admin.NewHandler(admin.NewService(d.Pool, d.HolliHop), panel, d.TrustProxy, d.SecureCookies).Register(mux)
 
@@ -108,6 +109,24 @@ func adminHost(host string, panel, api http.Handler) http.Handler {
 }
 
 // uploadStore keeps a nil client a nil interface (no uploads).
+// practiceService is the practice service with what is configured: the
+// two image buckets and the picture renderer.
+func practiceService(d Deps) *practice.Service {
+	svc := practice.NewService(d.Pool, uploadStore(d.Uploads))
+	if d.Figures != nil {
+		svc.WithBank(d.Figures)
+	}
+	if d.Renderer != nil {
+		page, err := adminweb.CardPage()
+		if err != nil {
+			d.Log.Warn("no question pictures", "err", err)
+		} else {
+			svc.WithPictures(d.Renderer, page)
+		}
+	}
+	return svc
+}
+
 func uploadStore(c *r2.Client) practice.Store {
 	if c == nil {
 		return nil

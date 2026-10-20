@@ -33,13 +33,28 @@ func (e *InvalidError) Error() string {
 
 // Service is what the admin panel reads and changes in the question bank.
 type Service struct {
-	pool    *pgxpool.Pool
-	uploads Store // nil: uploads not configured
+	pool     *pgxpool.Pool
+	uploads  Store    // nil: uploads not configured
+	bank     Bank     // nil: the bank's images not configured
+	pictures Pictures // nil: question pictures not configured
+	page     string   // the question picture page (web/admin's CardPage)
 }
 
 // NewService: uploads is MakonBook's image bucket, or nil.
 func NewService(pool *pgxpool.Pool, uploads Store) *Service {
 	return &Service{pool: pool, uploads: uploads}
+}
+
+// WithBank gives the service the bank's images (SAT MAKON's bucket).
+func (s *Service) WithBank(b Bank) *Service {
+	s.bank = b
+	return s
+}
+
+// WithPictures lets the service draw question pictures with p, from page.
+func (s *Service) WithPictures(p Pictures, page string) *Service {
+	s.pictures, s.page = p, page
+	return s
 }
 
 // TestSummary is one test and how far its review has come.
