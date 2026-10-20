@@ -299,6 +299,10 @@ To load new tests every night instead, add to `crontab -e`:
 Questions the AI review rated green are approved as they load; if the review
 proposed a small fix for one (a typo, a missing word), the import applies it
 as a version of its own ("Fixed by the AI review" in the question's history).
+When the fix step has run on tests already loaded, `practice import` adds the
+fixes to them ("already loaded; N AI reviews updated") and uploads the figures
+it redrew (`figures/` in the questionbank) to MakonBook's bucket, so it needs
+the `R2_UPLOADS_*` settings.
 Editors then work on them in the admin panel (Practice tests). To show the
 questions' figures and the bank's original screenshots there, set the `R2_*`
 variables in `.env` (see `env.production.example`; a **read-only** R2 token)

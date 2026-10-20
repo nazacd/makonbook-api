@@ -653,6 +653,36 @@ func (q *Queries) RaiseRisk(ctx context.Context, arg RaiseRiskParams) (pgtype.UU
 	return id, err
 }
 
+const refreshAIReview = `-- name: RefreshAIReview :execrows
+UPDATE question_ai_reviews SET record = $1
+WHERE test_id = $2 AND qid = $3 AND risk = $4 AND verdict = $5
+  AND record IS DISTINCT FROM $1::jsonb
+`
+
+type RefreshAIReviewParams struct {
+	Record  []byte
+	TestID  pgtype.UUID
+	Qid     string
+	Risk    string
+	Verdict string
+}
+
+// A loaded test's review record, again with what the fix step added. Only
+// while its risk and verdict are the same: a changed review is a reload.
+func (q *Queries) RefreshAIReview(ctx context.Context, arg RefreshAIReviewParams) (int64, error) {
+	result, err := q.db.Exec(ctx, refreshAIReview,
+		arg.Record,
+		arg.TestID,
+		arg.Qid,
+		arg.Risk,
+		arg.Verdict,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const testProgress = `-- name: TestProgress :many
 SELECT t.code, t.title,
        count(*)::int AS questions,

@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"github.com/nazacd/makonbook-api/internal/platform/config"
+	"github.com/nazacd/makonbook-api/internal/platform/r2"
 	"github.com/nazacd/makonbook-api/internal/practice"
 )
 
@@ -36,6 +37,10 @@ func runPractice(ctx context.Context, cfg config.Config, args []string, stdout i
 	}
 	defer pool.Close()
 	im := practice.Importer{Pool: pool}
+	if cfg.R2UploadsBucket != "" { // for the figures the fix step drew
+		im.Uploads = &r2.Client{Endpoint: cfg.R2UploadsEndpoint, Bucket: cfg.R2UploadsBucket, Region: cfg.R2Region,
+			AccessKey: cfg.R2UploadsAccessKeyID, SecretKey: cfg.R2UploadsSecretAccessKey}
+	}
 
 	if args[1] == "list" {
 		tests, err := practice.NewService(pool, nil).Tests(ctx)
@@ -74,6 +79,10 @@ func runPractice(ctx context.Context, cfg config.Config, args []string, stdout i
 		if err == nil {
 			var s practice.Summary
 			s, err = im.Import(ctx, t, replace)
+			if err == nil && s.Refreshed > 0 {
+				fmt.Fprintf(stdout, "%-8s already loaded; %d AI reviews updated (fixes added)\n", s.Code, s.Refreshed)
+				continue
+			}
 			if err == nil {
 				verb := "loaded"
 				if s.Replaced {

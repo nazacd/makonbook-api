@@ -234,6 +234,7 @@ button.chip.selected { border-color: currentColor; }
 .ai-summary { margin: 0; }
 .ai-fix { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--accent-soft); }
 .ai-fix-row { display: grid; gap: 2px; }
+.ai-fix-figure { max-width: 100%; max-height: 240px; justify-self: start; background: #fff; border-radius: 6px; }
 .ai-fix-diff { white-space: pre-wrap; line-height: 1.6; }
 .ai-fix-old { color: var(--danger); text-decoration: line-through; background: rgba(248, 113, 113, 0.12); }
 .ai-fix-new { color: var(--success); background: rgba(52, 211, 153, 0.12); }
