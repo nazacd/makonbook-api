@@ -342,6 +342,37 @@ docker compose run --rm -v /tmp:/out api practice picture DAY3 english-m2-04 ori
 `original.jsonl`, its screenshots); `fix` the AI's fixed version with the
 changes highlighted; `question` the question as it is now.
 
+## The teachers' group review bot
+
+The `bot` service (`makonbook review-bot`) posts each yellow or red question
+that has an AI fix to the teachers' Telegram group: the bank's original and the
+AI's fix as pictures, then Approve / Deny. One vote per Telegram account,
+hidden totals until the decision: red needs 10 approvals or 5 denials, yellow
+5 and 5. Approved: the fix is applied (a version "Teachers' group") and the
+question approved. Denied: it stays for the editors, with the reasons the bot
+asks each teacher who denied in a private chat. It posts one question an hour
+from 08:00 to 23:00 (Tashkent) and at 13:00 tops up to 20 open; nothing at
+night. Questions an editor has already changed, or that need a person (a photo
+to replace), are left to the editors.
+
+Once:
+
+1. In Telegram, **@BotFather → /newbot**; keep the token. Then **/mybots → the
+   bot → Bot Settings → Allow Groups → on**.
+2. Add the bot to the teachers' group and make it an **admin** (it only needs
+   to post messages).
+3. On the server, in `.env`: `TELEGRAM_REVIEW_TOKEN=<the token>`, leave
+   `TELEGRAM_REVIEW_CHAT_ID` empty, and `docker compose up -d`.
+4. `docker compose logs bot`: the line `added to or removed from a chat` shows
+   the group's ID (a negative number like `-1001234567890`; Telegram keeps the
+   news of the bot being added for a day). If it isn't there, write
+   `/start@<the bot's username>` in the group and look again (a line `a
+   group's ID`). Put it in `.env` as `TELEGRAM_REVIEW_CHAT_ID` and
+   `docker compose up -d` again.
+
+The bot starts posting at the next full hour between 08:00 and 23:00. To stop
+it for a while: `docker compose stop bot`.
+
 ## Everyday operations
 
 | Task | Command (in `/opt/makonbook-api`) |
@@ -353,6 +384,7 @@ changes highlighted; `question` the question as it is now.
 | Sync blocked by the mass-change guard, change is real | `docker compose run --rm api sync full --allow-mass-change` |
 | Migration state | `docker compose run --rm api migrate status` |
 | Practice tests and their review progress | `docker compose run --rm api practice list` |
+| Review bot: what it did | `docker compose logs --tail 100 bot` |
 | Draw a question picture | `docker compose run --rm -v /tmp:/out api practice picture DAY3 english-m2-04 fix /out/q.png` |
 | Stop / start | `docker compose stop` / `docker compose up -d` |
 

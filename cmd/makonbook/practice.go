@@ -126,17 +126,9 @@ func runPractice(ctx context.Context, cfg config.Config, args []string, stdout i
 
 // practicePicture draws one question picture into a file.
 func practicePicture(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, test, qid, kind, out string, stdout io.Writer) error {
-	if cfg.RendererURL == "" {
-		return errors.New("set RENDERER_URL (the renderer container's DevTools address)")
-	}
-	page, err := adminweb.CardPage()
+	svc, err := picturingService(cfg, pool)
 	if err != nil {
 		return err
-	}
-	svc := practice.NewService(pool, uploadsClient(cfg)).WithPictures(&render.Browser{URL: cfg.RendererURL}, page)
-	if cfg.R2Endpoint != "" {
-		svc.WithBank(&r2.Client{Endpoint: cfg.R2Endpoint, Bucket: cfg.R2Bucket, Region: cfg.R2Region,
-			AccessKey: cfg.R2AccessKeyID, SecretKey: cfg.R2SecretAccessKey})
 	}
 	id, err := svc.QuestionID(ctx, test, qid)
 	if err != nil {
@@ -151,6 +143,24 @@ func practicePicture(ctx context.Context, cfg config.Config, pool *pgxpool.Pool,
 	}
 	fmt.Fprintf(stdout, "wrote %s (%d KB)\n", out, len(png)/1024)
 	return nil
+}
+
+// picturingService is the practice service that draws question pictures:
+// with the renderer, and both image buckets as configured.
+func picturingService(cfg config.Config, pool *pgxpool.Pool) (*practice.Service, error) {
+	if cfg.RendererURL == "" {
+		return nil, errors.New("set RENDERER_URL (the renderer container's DevTools address)")
+	}
+	page, err := adminweb.CardPage()
+	if err != nil {
+		return nil, err
+	}
+	svc := practice.NewService(pool, uploadsClient(cfg)).WithPictures(&render.Browser{URL: cfg.RendererURL}, page)
+	if cfg.R2Endpoint != "" {
+		svc.WithBank(&r2.Client{Endpoint: cfg.R2Endpoint, Bucket: cfg.R2Bucket, Region: cfg.R2Region,
+			AccessKey: cfg.R2AccessKeyID, SecretKey: cfg.R2SecretAccessKey})
+	}
+	return svc, nil
 }
 
 // uploadsClient is MakonBook's bucket, or nil (a nil interface) when it isn't set.

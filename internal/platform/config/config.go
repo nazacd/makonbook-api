@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -68,6 +69,12 @@ type Config struct {
 
 	TelegramBotToken    string
 	TelegramAlertChatID string
+
+	// The teachers' group review bot (makonbook review-bot): its own bot
+	// (from @BotFather) and the group it posts to. Without the group's ID
+	// the bot only logs the groups it is in, so it can be found.
+	TelegramReviewToken  string
+	TelegramReviewChatID int64
 }
 
 // Load reads configuration through getenv (os.Getenv in production, a map
@@ -170,6 +177,15 @@ func Load(getenv func(string) string) (Config, error) {
 	cfg.RendererURL = strings.TrimSpace(getenv("RENDERER_URL"))
 	if cfg.RendererURL != "" && !strings.HasPrefix(cfg.RendererURL, "ws://") && !strings.HasPrefix(cfg.RendererURL, "http://") {
 		errs = append(errs, errors.New("RENDERER_URL: want ws://host:port"))
+	}
+
+	cfg.TelegramReviewToken = strings.TrimSpace(getenv("TELEGRAM_REVIEW_TOKEN"))
+	if v := strings.TrimSpace(getenv("TELEGRAM_REVIEW_CHAT_ID")); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id == 0 {
+			errs = append(errs, errors.New("TELEGRAM_REVIEW_CHAT_ID: want the group's numeric ID, e.g. -1001234567890"))
+		}
+		cfg.TelegramReviewChatID = id
 	}
 
 	cfg.TelegramBotToken = getenv("TELEGRAM_BOT_TOKEN")

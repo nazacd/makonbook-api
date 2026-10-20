@@ -132,6 +132,47 @@ type Group struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type GroupDenyReason struct {
+	ID        int64
+	PostID    int64
+	UserID    int64
+	Name      string
+	Reason    string
+	CreatedAt pgtype.Timestamptz
+}
+
+type GroupPost struct {
+	ID         int64
+	QuestionID pgtype.UUID
+	Version    int32
+	TestCode   string
+	Qid        string
+	Risk       string
+	Caption    string
+	ChatID     int64
+	PhotoIds   []int64
+	VoteID     int64
+	Status     string
+	Approvals  int32
+	Denials    int32
+	PostedAt   pgtype.Timestamptz
+	DecidedAt  pgtype.Timestamptz
+}
+
+type GroupReasonRequest struct {
+	UserID  int64
+	PostID  int64
+	AskedAt pgtype.Timestamptz
+}
+
+type GroupVote struct {
+	PostID  int64
+	UserID  int64
+	Name    string
+	Approve bool
+	VotedAt pgtype.Timestamptz
+}
+
 type HollihopOutbox struct {
 	ID              int64
 	SessionID       pgtype.UUID
@@ -230,6 +271,19 @@ type QuestionVersion struct {
 	Source     string
 	CreatedBy  pgtype.Text
 	CreatedAt  pgtype.Timestamptz
+}
+
+type ReviewBot struct {
+	ID              bool
+	Paused          bool
+	RedApprovals    int16
+	RedDenials      int16
+	YellowApprovals int16
+	YellowDenials   int16
+	MaxOpen         int16
+	UpdateOffset    int64
+	LastPostAt      pgtype.Timestamptz
+	LastTopupOn     pgtype.Date
 }
 
 type ScheduleItem struct {

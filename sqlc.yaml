@@ -66,3 +66,11 @@ sql:
         package: practicedb
         out: internal/practice/practicedb
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/reviewbot/queries.sql
+    gen:
+      go:
+        package: reviewbotdb
+        out: internal/reviewbot/reviewbotdb
+        sql_package: pgx/v5
