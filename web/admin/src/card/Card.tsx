@@ -111,23 +111,27 @@ function bankParts(data: CardData): Parts {
 }
 
 function Choices({ correct, keyChanged = false, render }: { correct: string | null; keyChanged?: boolean; render: (letter: string) => ReactNode }) {
+  const known = LETTERS.some((l) => l === correct);
   return (
-    <ol className="choices">
-      {LETTERS.map((l) => {
-        const right = l === correct;
-        return (
-          <li key={l} className={right ? 'right' : undefined}>
-            <span className={`letter${right && keyChanged ? ' changed' : ''}`}>{l}</span>
-            <div className="text">{render(l)}</div>
-            {right && (
-              <svg className="check" viewBox="0 0 24 24" aria-label="correct">
-                <path d="M4 12.5l5 5L20 6.5" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            )}
-          </li>
-        );
-      })}
-    </ol>
+    <>
+      {!known && <div className="nokey">No correct answer is set for this question.</div>}
+      <ol className="choices">
+        {LETTERS.map((l) => {
+          const right = l === correct;
+          return (
+            <li key={l} className={right ? 'right' : undefined}>
+              <span className={`letter${right && keyChanged ? ' changed' : ''}`}>{l}</span>
+              <div className="text">{render(l)}</div>
+              {right && (
+                <svg className="check" viewBox="0 0 24 24" aria-label="correct">
+                  <path d="M4 12.5l5 5L20 6.5" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </>
   );
 }
 

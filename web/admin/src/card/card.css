@@ -48,8 +48,8 @@ main { flex: 1; display: flex; padding: 36px 48px 44px; }
 .rich-table th { background: #f3f4f6; font-weight: 700; }
 .question > .rich, .question > .shot { margin-bottom: 22px; }
 
-mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 2px; box-shadow: 0 2px 0 var(--accent); }
-mark:has(.katex), mark:has(img) { display: inline-block; padding: 3px 4px; } /* tall math: the box grows with it */
+mark { background: var(--mark); color: inherit; border-radius: 4px; padding: 0 3px; }
+mark:has(.katex), mark:has(img) { display: inline-block; padding: 1px 3px; } /* tall math: the box grows with it */
 
 .choices { list-style: none; margin: 24px 0 0; padding: 0; display: grid; gap: 14px; }
 .choices li {
@@ -67,6 +67,8 @@ mark:has(.katex), mark:has(img) { display: inline-block; padding: 3px 4px; } /* 
 .choices .text .rich p { margin: 0; }
 .choices .shot { margin: 6px 0; max-height: 160px; }
 .check { flex: none; width: 30px; height: 30px; color: var(--accent); }
+
+.nokey { margin-top: 18px; padding: 10px 16px; border-radius: 10px; background: #fef2f2; color: #b91c1c; font-size: 17px; font-weight: 600; }
 
 .gridin { margin-top: 28px; display: grid; gap: 8px; justify-items: center; }
 .gridin-label { font-size: 16px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
