@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -53,15 +54,20 @@ type Record struct {
 		Module  string `json:"module"`
 		Number  int    `json:"number"`
 	} `json:"source"`
-	Type        string            `json:"type"`
-	Passage     *string           `json:"passage"`
-	Stem        string            `json:"stem"`
-	Choices     map[string]string `json:"choices"`
-	Figures     []Figure          `json:"figures"`
-	Key         string            `json:"key"`
-	Accepted    []string          `json:"accepted"`
-	Verdict     string            `json:"verdict"`
-	Risk        string            `json:"risk"`
+	Type     string            `json:"type"`
+	Passage  *string           `json:"passage"`
+	Stem     string            `json:"stem"`
+	Choices  map[string]string `json:"choices"`
+	Figures  []Figure          `json:"figures"`
+	Key      string            `json:"key"`
+	Accepted []string          `json:"accepted"`
+	Verdict  string            `json:"verdict"`
+	// Fix is the fix step's corrected version (see tools/prompts/fix.md);
+	// the importer only needs the figures it drew.
+	Fix *struct {
+		Figures []Figure `json:"figures"`
+	} `json:"fix"`
+	Risk        string `json:"risk"`
 	Explanation struct {
 		Text string `json:"text"`
 	} `json:"explanation"`
@@ -96,6 +102,7 @@ type Summary struct {
 	Repeats   int // already stored from another test (or earlier in this one)
 	Risk      map[string]int
 	Replaced  bool
+	Refreshed int // a loaded test: reviews the fix step added to
 }
 
 var spaces = regexp.MustCompile(`\s+`)
@@ -255,13 +262,20 @@ func (r Record) ContentHash() string {
 // Importer loads reviewed tests into the database.
 type Importer struct {
 	Pool *pgxpool.Pool
+	// Uploads is MakonBook's bucket, for the figures the fix step drew
+	// (the questionbank's figures/); a test with any needs it.
+	Uploads Store
 }
 
-// Import loads one test in a single transaction. A test already loaded is
-// refused with ErrImported, unless replace is set and nobody has approved or
-// edited any of its questions yet.
+// Import loads one test in a single transaction. A test already loaded gets
+// what the fix step added to its reviews (Refreshed), or is refused with
+// ErrImported when there is nothing new, unless replace is set and nobody has
+// approved or edited any of its questions yet.
 func (im Importer) Import(ctx context.Context, t Test, replace bool) (Summary, error) {
 	sum := Summary{Code: t.Code, Questions: len(t.Records), Risk: map[string]int{}}
+	if err := im.storeFigures(ctx, t); err != nil {
+		return sum, err
+	}
 	err := pgx.BeginFunc(ctx, im.Pool, func(tx pgx.Tx) error {
 		q := practicedb.New(tx)
 		old, err := q.GetTestByCode(ctx, t.Code)
@@ -270,7 +284,15 @@ func (im Importer) Import(ctx context.Context, t Test, replace bool) (Summary, e
 		case err != nil:
 			return err
 		case !replace:
-			return ErrImported
+			n, err := refreshReviews(ctx, q, old.ID, t)
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				return ErrImported
+			}
+			sum.Refreshed = n
+			return nil
 		default:
 			touched, err := q.TouchedQuestions(ctx, old.ID)
 			if err != nil {
@@ -323,6 +345,75 @@ func (im Importer) Import(ctx context.Context, t Test, replace bool) (Summary, e
 		return nil
 	})
 	return sum, err
+}
+
+// refreshReviews puts a loaded test's records in again, where the fix step
+// changed them.
+func refreshReviews(ctx context.Context, q *practicedb.Queries, testID pgtype.UUID, t Test) (int, error) {
+	n := 0
+	for _, r := range t.Records {
+		rows, err := q.RefreshAIReview(ctx, practicedb.RefreshAIReviewParams{
+			Record: r.raw, TestID: testID, Qid: r.QID, Risk: r.Risk, Verdict: r.Verdict,
+		})
+		if err != nil {
+			return n, fmt.Errorf("%s: %w", r.QID, err)
+		}
+		n += int(rows)
+	}
+	return n, nil
+}
+
+var drawnKey = regexp.MustCompile(`^mb/[0-9a-f]{40}\.png$`)
+
+// storeFigures uploads the figures the fix step drew that aren't stored yet,
+// from figures/ next to the test folders. The name is the image's hash, as
+// for an editor's upload, so it is checked on the way.
+func (im Importer) storeFigures(ctx context.Context, t Test) error {
+	var keys []string
+	for _, r := range t.Records {
+		if r.Fix == nil {
+			continue
+		}
+		for _, f := range r.Fix.Figures {
+			if !drawnKey.MatchString(f.Key) {
+				return fmt.Errorf("%s: fix figure %q isn't a drawn figure's name", r.QID, f.Key)
+			}
+			keys = append(keys, f.Key)
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	if im.Uploads == nil {
+		return fmt.Errorf("the fixes have figures: set R2_UPLOADS_* to upload them")
+	}
+	have, err := practicedb.New(im.Pool).ExistingImages(ctx, keys)
+	if err != nil {
+		return err
+	}
+	stored := map[string]bool{}
+	for _, k := range have {
+		stored[k] = true
+	}
+	dir := filepath.Join(filepath.Dir(filepath.Dir(t.Path)), "figures")
+	for _, key := range keys {
+		if stored[key] {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, path.Base(key))) //nolint:gosec // a checked name in the operator's checkout
+		if err != nil {
+			return fmt.Errorf("fix figure: %w", err)
+		}
+		img, err := storeImage(ctx, im.Pool, im.Uploads, data, AIFixer)
+		if err != nil {
+			return fmt.Errorf("fix figure %s: %w", key, err)
+		}
+		if img.Key != key {
+			return fmt.Errorf("fix figure %s: its content doesn't match its name", key)
+		}
+		stored[key] = true
+	}
+	return nil
 }
 
 // storeQuestion inserts the question, or finds the stored one with the same

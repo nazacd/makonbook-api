@@ -1,12 +1,21 @@
 package practice
 
 import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/nazacd/makonbook-api/internal/platform/r2"
 	"github.com/nazacd/makonbook-api/internal/platform/testdb"
 )
 
@@ -219,5 +228,102 @@ func TestParseRejects(t *testing.T) {
 	}
 	if _, err := parse(strings.NewReader(cases["old pilot format"]), "x"); err == nil || !strings.Contains(err.Error(), "old format") {
 		t.Errorf("old format message: %v", err)
+	}
+}
+
+// memStore is a bucket in memory.
+type memStore map[string][]byte
+
+func (m memStore) Get(_ context.Context, key string) (r2.Object, error) {
+	b, ok := m[key]
+	if !ok {
+		return r2.Object{}, r2.ErrNotFound
+	}
+	return r2.Object{Body: b, ContentType: "image/png"}, nil
+}
+
+func (m memStore) Put(_ context.Context, key string, body []byte, _ string) error {
+	m[key] = body
+	return nil
+}
+
+func TestFixStep(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := t.Context()
+	root := t.TempDir()
+	file := filepath.Join(root, "DAY6", "questions.jsonl")
+	write := func(content string) Test {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(file), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		test, err := Read(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return test
+	}
+	store := memStore{}
+	im := Importer{Pool: pool, Uploads: store}
+	if _, err := im.Import(ctx, write(review(t, "DAY6", nil)), false); err != nil {
+		t.Fatal(err)
+	}
+
+	// The fix step redrew a figure: a PNG in figures/, named by its hash.
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewGray(image.Rect(0, 0, 40, 30))); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(buf.Bytes())
+	key := "mb/" + hex.EncodeToString(sum[:20]) + ".png"
+	if err := os.MkdirAll(filepath.Join(root, "figures"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "figures", key[3:]), buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fixed := review(t, "DAY6", func(subject string, module, n int, rec map[string]any) {
+		if subject == "math" && module == 1 && n == 2 {
+			rec["fix"] = map[string]any{"kinds": []string{"redrawn"}, "changes": map[string]string{"stem": "Redrawn?"},
+				"figures": []map[string]string{{"key": key, "kind": "graph", "alt": "a line"}}, "note": "Redrawn."}
+		}
+	})
+
+	// Loading the test again brings in the fix and uploads its figure.
+	if _, err := (Importer{Pool: pool}).Import(ctx, write(fixed), false); err == nil {
+		t.Error("figures loaded without an uploads bucket")
+	}
+	s, err := im.Import(ctx, write(fixed), false)
+	if err != nil || s.Refreshed != 1 {
+		t.Fatalf("refresh: %+v %v", s, err)
+	}
+	if !bytes.Equal(store[key], buf.Bytes()) {
+		t.Error("the figure isn't in the bucket")
+	}
+	var by string
+	if err := pool.QueryRow(ctx, `SELECT uploaded_by FROM practice_images WHERE key = $1`, key).Scan(&by); err != nil || by != AIFixer {
+		t.Errorf("figure record: %q %v", by, err)
+	}
+	var note string
+	if err := pool.QueryRow(ctx, `SELECT record->'fix'->>'note' FROM question_ai_reviews WHERE qid = 'math-m1-02'`).Scan(&note); err != nil || note != "Redrawn." {
+		t.Errorf("the review has no fix: %q %v", note, err)
+	}
+	if _, err := im.Import(ctx, write(fixed), false); !errors.Is(err, ErrImported) {
+		t.Errorf("nothing new: %v", err)
+	}
+
+	// A figure whose bytes don't match its name is refused.
+	if err := os.WriteFile(filepath.Join(root, "figures", key[3:]), append(buf.Bytes(), 0), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	delete(store, key)
+	if _, err := pool.Exec(ctx, `DELETE FROM practice_images`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := im.Import(ctx, write(fixed), false); err == nil || !strings.Contains(err.Error(), "doesn't match its name") {
+		t.Errorf("a changed figure: %v", err)
 	}
 }

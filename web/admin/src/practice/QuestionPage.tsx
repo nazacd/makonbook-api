@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useBlocker, useParams, useSearchParams } from 'react-router';
 
 import { ApiError, describe } from '../api/client';
@@ -437,7 +437,7 @@ function patchOf(fix: Rec, mcq: boolean): Patch | null {
   const p: Patch = {};
   for (const [field, v] of Object.entries(fix)) {
     const choice = /^choices\.([A-D])$/.exec(field)?.[1];
-    if (field === 'passage' || field === 'stem') p[field] = str(v);
+    if (field === 'passage' || field === 'stem' || field === 'explanation') p[field] = str(v);
     else if (field === 'key' && mcq) p.correct = str(v);
     else if (field === 'accepted' && !mcq && Array.isArray(v)) p.accepted = v.map(String).join(', ');
     else if (choice && mcq) p.choices = { ...p.choices, [choice]: str(v) };
@@ -482,9 +482,42 @@ function diffWords(before: string, after: string): Seg[] {
   });
 }
 
-const FIELD: Record<string, string> = { passage: 'Passage', stem: 'Question', correct: 'Answer key', accepted: 'Accepted answers' };
+const FIELD: Record<string, string> = {
+  passage: 'Passage',
+  stem: 'Question',
+  correct: 'Answer key',
+  accepted: 'Accepted answers',
+  explanation: 'Explanation',
+};
 
-function ProposedFix({ fix, saved, form, mcq, onApply }: { fix: Rec; saved: Form; form: Form; mcq: boolean; onApply: (p: Patch) => void }) {
+// Images in a compared text read as their description.
+const plain = (t: string) => t.replace(/!\[([^\]]*)\]\([^)]*\)/g, '[image: $1]');
+
+// The fix step's labels (tools/prompts/fix.md in the questionbank).
+const KIND: Record<string, { label: string; tone: string }> = {
+  corrected: { label: 'Corrected', tone: 'plain' },
+  restored: { label: 'Restored missing text', tone: 'plain' },
+  invented: { label: 'Made up by the AI', tone: 'warning' },
+  redrawn: { label: 'Figure redrawn', tone: 'plain' },
+};
+
+function ProposedFix({
+  fix,
+  saved,
+  form,
+  mcq,
+  onApply,
+  title = 'The AI’s proposed fix',
+  children,
+}: {
+  fix: Rec;
+  saved: Form;
+  form: Form;
+  mcq: boolean;
+  onApply: (p: Patch) => void;
+  title?: string;
+  children?: ReactNode;
+}) {
   const patch = patchOf(fix, mcq);
   if (!patch) {
     return (
@@ -508,7 +541,7 @@ function ProposedFix({ fix, saved, form, mcq, onApply }: { fix: Rec; saved: Form
   return (
     <div className="ai-fix">
       <div className="toolbar" style={{ justifyContent: 'space-between' }}>
-        <b>The AI’s proposed fix</b>
+        <b>{title}</b>
         {inForm ? (
           <span className="small muted">Applied in the form: check it, then Save and Approve.</span>
         ) : (
@@ -517,11 +550,12 @@ function ProposedFix({ fix, saved, form, mcq, onApply }: { fix: Rec; saved: Form
           </button>
         )}
       </div>
+      {children}
       {rows.map(([label, was, , next]) => (
         <div key={label} className="ai-fix-row">
           <div className="small faint">{label}</div>
           <div className="small ai-fix-diff">
-            {diffWords(was, next).map((sg, k) =>
+            {diffWords(plain(was), plain(next)).map((sg, k) =>
               sg.kind === 'same' ? (
                 <span key={k}>{sg.text}</span>
               ) : (
@@ -534,6 +568,42 @@ function ProposedFix({ fix, saved, form, mcq, onApply }: { fix: Rec; saved: Form
         </div>
       ))}
     </div>
+  );
+}
+
+/** The fix step's corrected version: what kind of change, why, and the change itself. */
+function FixView({ fix, saved, form, mcq, onApply }: { fix: Rec; saved: Form; form: Form; mcq: boolean; onApply: (p: Patch) => void }) {
+  const kinds = Array.isArray(fix.kinds) ? fix.kinds.map(String) : [];
+  const figures = arr(fix.figures);
+  const needsPerson = str(fix.needs_person);
+  const changes = obj(fix.changes);
+  return (
+    <>
+      {needsPerson && (
+        <Notice tone="warning" title="A person must step in">
+          {needsPerson}
+        </Notice>
+      )}
+      {Object.keys(changes).length === 0 ? (
+        <p className="small muted ai-summary">No change needed: {str(fix.note)}</p>
+      ) : (
+        <ProposedFix fix={changes} saved={saved} form={form} mcq={mcq} onApply={onApply} title="The AI’s fixed version">
+          <div className="toolbar">
+            {kinds.map((k) => (
+              <span key={k} className={`chip ${KIND[k]?.tone ?? 'plain'}`}>
+                {KIND[k]?.label ?? k}
+              </span>
+            ))}
+            <span className="small faint">{str(fix.confidence)} confidence</span>
+          </div>
+          <div className="small">{str(fix.note)}</div>
+          {figures.map((f) => (
+            <img key={str(f.key)} className="ai-fix-figure" src={figureUrl(str(f.key))} alt={str(f.alt)} />
+          ))}
+          {str(fix.check) && <div className="small muted">{str(fix.check)}</div>}
+        </ProposedFix>
+      )}
+    </>
   );
 }
 
@@ -584,12 +654,16 @@ function AIReview({
           ))}
         </ul>
       )}
-      {r.proposed_fix != null &&
+      {r.fix != null ? (
+        <FixView fix={obj(r.fix)} saved={saved} form={form} mcq={mcq} onApply={onApply} />
+      ) : (
+        r.proposed_fix != null &&
         (fixApplied ? (
           <p className="small muted ai-summary">Its proposed fix was applied automatically (see History; you can load the earlier version).</p>
         ) : (
           <ProposedFix fix={obj(r.proposed_fix)} saved={saved} form={form} mcq={mcq} onApply={onApply} />
-        ))}
+        ))
+      )}
       <details>
         <summary className="small muted">Full review</summary>
         <dl className="facts">

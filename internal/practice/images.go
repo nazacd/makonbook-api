@@ -13,6 +13,7 @@ import (
 	_ "image/png"  //
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	_ "golang.org/x/image/webp" //
 
 	"github.com/nazacd/makonbook-api/internal/platform/r2"
@@ -58,7 +59,12 @@ type Image struct {
 // UploadImage checks an image, puts it in the bucket and returns its key.
 // The key comes from the bytes, so the same file uploaded twice is one object.
 func (s *Service) UploadImage(ctx context.Context, data []byte, by string) (Image, error) {
-	if s.uploads == nil {
+	return storeImage(ctx, s.pool, s.uploads, data, by)
+}
+
+// storeImage checks an image, puts it in the bucket and records it.
+func storeImage(ctx context.Context, pool *pgxpool.Pool, uploads Store, data []byte, by string) (Image, error) {
+	if uploads == nil {
 		return Image{}, ErrUploadsOff
 	}
 	if len(data) == 0 || len(data) > MaxImageBytes {
@@ -71,10 +77,10 @@ func (s *Service) UploadImage(ctx context.Context, data []byte, by string) (Imag
 	}
 	sum := sha256.Sum256(data)
 	key := UploadPrefix + hex.EncodeToString(sum[:20]) + "." + t.ext
-	if err := s.uploads.Put(ctx, key, data, t.contentType); err != nil {
+	if err := uploads.Put(ctx, key, data, t.contentType); err != nil {
 		return Image{}, fmt.Errorf("upload image: %w", err)
 	}
-	err = practicedb.New(s.pool).InsertImage(ctx, practicedb.InsertImageParams{
+	err = practicedb.New(pool).InsertImage(ctx, practicedb.InsertImageParams{
 		Key: key, ContentType: t.contentType, Bytes: int32(len(data)), //nolint:gosec // ≤ 5 MB
 		Width: int32(cfg.Width), Height: int32(cfg.Height), UploadedBy: by, //nolint:gosec // ≤ 6000
 	})

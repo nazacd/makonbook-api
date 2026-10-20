@@ -60,6 +60,13 @@ VALUES (@question_id, @version, @content, @source, sqlc.narg('created_by'));
 INSERT INTO practice_test_questions (test_id, subject, module, position, question_id)
 VALUES (@test_id, @subject, @module, @position, @question_id);
 
+-- A loaded test's review record, again with what the fix step added. Only
+-- while its risk and verdict are the same: a changed review is a reload.
+-- name: RefreshAIReview :execrows
+UPDATE question_ai_reviews SET record = @record
+WHERE test_id = @test_id AND qid = @qid AND risk = @risk AND verdict = @verdict
+  AND record IS DISTINCT FROM @record::jsonb;
+
 -- name: InsertAIReview :exec
 INSERT INTO question_ai_reviews (question_id, test_id, qid, csv_id, risk, verdict, record)
 VALUES (@question_id, @test_id, @qid, @csv_id, @risk, @verdict, @record);

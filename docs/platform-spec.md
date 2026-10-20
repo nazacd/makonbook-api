@@ -46,7 +46,7 @@ Access (except placement) is limited to people who are active in HolliHop.
 | D18 | **Admin sign-in uses HolliHop credentials.** HolliHop checks the login and password (`GetMemberAuthKey`); MakonBook stores neither, nor the key HolliHop returns. HolliHop has no roles, so an **access list** in our DB says who may use the panel: **super admins** (every branch, manage the list) or **branch admins** limited to any set of offices — enforced in every admin query, not only in the page. Fired staff are refused at sign-in; removing someone from the list ends their sessions at once. | First grant is a server command (`makonbook admin grant`). |
 | D19 | **Practice content = SAT MAKON's own bank**, cleaned by an AI review before loading. | The bank is the teachers' own material. See 9.1. |
 | D20 | **Every active student sees every practice test**; a test stays **locked until all its questions are approved**. Scores are an **estimated 200–800**. | Tests open one by one as review finishes. |
-| D21 | **Editors** are a list of trusted teachers (any subject) granted by super admins; **reviewers** are teachers in a Telegram bot / Mini App, solving blind first. | Planned, 9.4. |
+| D21 | **Every question that isn't green gets an AI fix** (even made up, labelled so). It is approved one of two ways: by an **editor** in the panel (a list of trusted teachers granted by super admins), or by a **vote of the teachers' Telegram group** on the original next to the fixed version. No blind solving. | Changed 2026-10-20 (was: reviewers solve blind first). See 9.4. |
 
 ## 3. System overview
 
@@ -247,12 +247,18 @@ question is red until a teacher confirms. New tests are written later in the adm
   missing word: 25 questions), the import applies it as a version of its own (`ai_fix`, "Fixed by the AI
   review"), so the history shows it and an editor can undo it; a fix that can't be applied whole sends the
   question to review instead.
-- **Fixes the AI only proposes:** the AI never changes a question that isn't green. Its `proposed_fix` (whole
-  fields: passage, stem, a choice, the key, grid-in answers) is shown in the editor with the changed words
-  marked and an **Apply fix** button that fills the form; the editor checks the student view, saves and
-  approves. A blocking problem without a fix (words missing from the bank's text, two right answers) needs a
-  teacher to restore or rewrite it: the AI doesn't invent the bank's missing content.
-- **Approving in the editor** (until the Telegram reviewers): an editor approves the version they see
+- **The fix step** (questionbank `tools/review.py fix`, after a test's review): Opus writes a corrected version
+  of every question that isn't green, from the bank's original screenshots and the review's findings, labelled
+  by kind: **corrected** (typo, transcription), **restored** (missing words or data, from context), **invented**
+  (made up: a new distractor, a rewritten sentence; allowed, labelled), **redrawn** (a figure drawn again as
+  SVG, stored as PNG in the questionbank's `figures/` and uploaded to MakonBook's bucket on import). It solves
+  the fixed version again (`check`) and says when a person must step in (`needs_person`: a photo it can't
+  redraw). The fix sits beside the reviewed question (`fix` in the record); nothing changes until a person or
+  the group approves it. `practice import` brings fixes into tests already loaded.
+- **In the editor:** the AI summary shows the fixed version with the changed words marked and **Apply fix**,
+  which fills the form; the editor checks the student view, saves and approves. (Before the fix step, only the
+  adjudicator's `proposed_fix`, when it had one.)
+- **Approving in the editor** (beside the Telegram group vote): an editor approves the version they see
   (`POST …/questions/{id}/approval`, `409` if it changed meanwhile); it must pass the checks a save does, so
   a question without a key can't be approved. `approved_by` keeps who. An approval can be taken back.
 
@@ -284,9 +290,18 @@ section (College Board uses IRT; we can't reproduce it exactly).
   key) under `mb/<sha-256>.<ext>`; `practice_images` records each one. Served like the bank's images. A save
   that uses an image never uploaded is refused. The same bucket will hold the published test packages (9.5). Because of the math editor, the panel's CSP allows
   inline styles (scripts stay `'self'` only).
-- **Reviewers**: teachers review through a Telegram bot / Mini App. They solve each question blind first,
-  then see the key, explanation and AI findings and approve or report. The number of approvals needed
-  depends on the AI risk. Linked to MakonBook by phone number.
+- **The teachers' Telegram group** (planned, step 4; about 40 teachers). A bot posts each question that
+  isn't green as a pair of images: the bank's original screenshots, then the fixed version drawn like
+  Bluebook (white, purple accent, our logo and "MakonBook" in the header; R&W: passage left, question and
+  choices right; Math: centred; the correct choice marked; a grid-in shows its accepted answers separated
+  by commas), with the AI's changes highlighted and its note as the caption. Two buttons, **Approve** and
+  **Deny**: one vote per Telegram account, anyone in the group may vote, a vote can be changed until the
+  decision. The decision: **red** 10 approvals or 5 denials; **yellow** 5 approvals or 5 denials (settings).
+  Counts stay hidden until then, so votes don't follow each other. Approved: the fix is applied as a version
+  of its own and the question is approved. Denied: it goes to the editors' queue, with the reasons the bot
+  asks for (optional). Posted in batches (about 10 a day), the next when one is decided. An editor's
+  decision in the panel comes first and closes the vote; a later edit sends the question back to review.
+  The images are drawn on the server by a headless browser (its own container).
 
 ### 9.5 Publishing and on device (planned)
 - Publishing a test builds an **immutable package** (all questions, answers, explanations, conversion table)
@@ -496,7 +511,8 @@ Lesson days, sessions, QR, scanning, overrides, outbox write-back (dry-run until
 
 **Phase 3 — practice tests**
 1. Question bank + importer of AI-reviewed tests (built). 2. AI review of all 60 tests (running). 3. Editor panel
-(built). 4. Telegram review bot. 5. Approval rules and unlocking. 6. Mobile engine, Practice tab, teacher view.
+(built). Auto-approval of green questions, editors' Approve, the fix step (built). 4. The Telegram group vote
+(Bluebook-style images, Approve/Deny). 5. Unlocking tests. 6. Mobile engine, Practice tab, teacher view.
 
 **Phase 4 — vocabulary.** **Phase 5 — parents.** Later: Telegram login/reset, push notifications.
 
