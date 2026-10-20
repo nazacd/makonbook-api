@@ -2,7 +2,9 @@ package practice
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,6 +50,16 @@ type CardBank struct {
 	Choices  map[string]string `json:"choices"`
 	Answer   string            `json:"answer"`
 	Images   map[string]string `json:"images"`
+}
+
+// PictureVersion tells versions of the picture page apart: pictures drawn
+// with another version look different. Empty without pictures.
+func (s *Service) PictureVersion() string {
+	if s.page == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(s.page))
+	return hex.EncodeToString(sum[:8])
 }
 
 // Card is what the picture page draws (web/admin's src/card/types.ts).

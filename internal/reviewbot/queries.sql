@@ -39,8 +39,8 @@ ORDER BY length(r.code), r.code, r.qid
 LIMIT @lim;
 
 -- name: InsertPost :one
-INSERT INTO group_posts (question_id, version, test_code, qid, risk, caption, chat_id, photo_ids, vote_id)
-VALUES (@question_id, @version, @test_code, @qid, @risk, @caption, @chat_id, @photo_ids, @vote_id)
+INSERT INTO group_posts (question_id, version, test_code, qid, risk, caption, chat_id, photo_ids, vote_id, picture_version)
+VALUES (@question_id, @version, @test_code, @qid, @risk, @caption, @chat_id, @photo_ids, @vote_id, @picture_version)
 RETURNING id;
 
 -- name: Post :one
@@ -53,6 +53,13 @@ SELECT p.*
 FROM group_posts p
 JOIN questions q ON q.id = p.question_id
 WHERE p.status = 'open' AND (q.status = 'approved' OR q.version <> p.version);
+
+-- Open posts drawn with another version of the picture page.
+-- name: StalePictures :many
+SELECT * FROM group_posts WHERE status = 'open' AND picture_version <> @picture_version ORDER BY id;
+
+-- name: SetPictureVersion :exec
+UPDATE group_posts SET picture_version = @picture_version WHERE id = @id;
 
 -- name: Vote :exec
 INSERT INTO group_votes (post_id, user_id, name, approve)

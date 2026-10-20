@@ -24,7 +24,8 @@ type fakeTelegram struct {
 	messages []string // chat: text
 	edits    map[int64]string
 	kbs      map[int64]telegram.Keyboard
-	answers  []string // text or link
+	answers  []string         // text or link
+	redrawn  map[int64]string // photo message: picture, caption
 }
 
 func (f *fakeTelegram) id() int64 { f.next++; return f.next }
@@ -46,6 +47,11 @@ func (f *fakeTelegram) SendPhotos(_ context.Context, _ int64, p []telegram.Photo
 	return out, nil
 }
 
+func (f *fakeTelegram) EditPhoto(_ context.Context, _, messageID int64, p telegram.Photo) error {
+	f.redrawn[messageID] = string(p.PNG) + ", " + p.Caption
+	return nil
+}
+
 func (f *fakeTelegram) SendMessage(_ context.Context, chatID int64, text string, _ int64, _ telegram.Keyboard) (telegram.Message, error) {
 	f.messages = append(f.messages, fmt.Sprintf("%d: %s", chatID, text))
 	return telegram.Message{MessageID: f.id()}, nil
@@ -62,9 +68,14 @@ func (f *fakeTelegram) AnswerCallback(_ context.Context, _, text, link string) e
 }
 
 // drawing is the real practice service, without a browser.
-type drawing struct{ *practice.Service }
+type drawing struct {
+	*practice.Service
+	version string
+}
 
-func (d drawing) Picture(_ context.Context, _, kind, _ string, _ *practice.Edit) ([]byte, string, error) {
+func (d *drawing) PictureVersion() string { return d.version }
+
+func (d *drawing) Picture(_ context.Context, _, kind, _ string, _ *practice.Edit) ([]byte, string, error) {
 	return []byte(kind), kind + ".png", nil
 }
 
@@ -141,10 +152,11 @@ func TestGroupReview(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE review_bot SET max_open = 3`); err != nil {
 		t.Fatal(err)
 	}
-	tg := &fakeTelegram{edits: map[int64]string{}, kbs: map[int64]telegram.Keyboard{}}
+	tg := &fakeTelegram{edits: map[int64]string{}, kbs: map[int64]telegram.Keyboard{}, redrawn: map[int64]string{}}
 	svc := practice.NewService(pool, nil)
 	tashkent, _ := time.LoadLocation("Asia/Tashkent")
-	b := New(pool, tg, drawing{svc}, group, tashkent, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	pictures := &drawing{Service: svc, version: "v1"}
+	b := New(pool, tg, pictures, group, tashkent, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	b.username, b.pause = "makonbook_review_bot", 0
 	at := func(h, m int) time.Time { return time.Date(2026, 10, 21, h, m, 0, 0, tashkent) }
 	count := func(sql string, args ...any) int {
@@ -183,6 +195,24 @@ func TestGroupReview(t *testing.T) {
 	}
 	if n := count(`SELECT count(*) FROM group_posts WHERE qid IN ('math-m1-04', 'math-m1-05')`); n != 0 {
 		t.Error("posted a question a person must handle, or one without a fix")
+	}
+
+	// The same picture page: nothing to redraw. A new one (an update): every
+	// open post's photos are replaced in place, once.
+	if err := b.Redraw(ctx); err != nil || len(tg.redrawn) != 0 {
+		t.Fatalf("same page: %v %v", err, tg.redrawn)
+	}
+	pictures.version = "v2"
+	if err := b.Redraw(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sent := len(tg.photos[0]) + len(tg.photos[1]) + len(tg.photos[2])
+	if len(tg.redrawn) != sent || tg.redrawn[1] != "original, Original (the bank's)" || tg.redrawn[2] != "fix, AI fix (changes highlighted)" {
+		t.Fatalf("redrawn: %v (sent %d)", tg.redrawn, sent)
+	}
+	clear(tg.redrawn)
+	if err := b.Redraw(ctx); err != nil || len(tg.redrawn) != 0 {
+		t.Fatalf("redrew twice: %v %v", err, tg.redrawn)
 	}
 
 	post := func(qid string) (id, vote int64) {

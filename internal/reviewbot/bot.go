@@ -32,6 +32,7 @@ type Telegram interface {
 	Me(ctx context.Context) (telegram.User, error)
 	Updates(ctx context.Context, offset int64, wait time.Duration) ([]telegram.Update, error)
 	SendPhotos(ctx context.Context, chatID int64, photos []telegram.Photo) ([]telegram.Message, error)
+	EditPhoto(ctx context.Context, chatID, messageID int64, photo telegram.Photo) error
 	SendMessage(ctx context.Context, chatID int64, text string, replyTo int64, kb telegram.Keyboard) (telegram.Message, error)
 	EditMessage(ctx context.Context, chatID, messageID int64, text string, kb telegram.Keyboard) error
 	AnswerCallback(ctx context.Context, id, text, link string) error
@@ -41,6 +42,7 @@ type Telegram interface {
 type Practice interface {
 	GroupReady(ctx context.Context, id, test string) (practice.GroupPost, error)
 	Picture(ctx context.Context, id, kind, test string, edit *practice.Edit) ([]byte, string, error)
+	PictureVersion() string
 	ApproveByGroup(ctx context.Context, id string, version int32, test, approvedBy string) error
 }
 
@@ -80,6 +82,9 @@ func (b *Bot) Run(ctx context.Context) error {
 		b.log.Warn("TELEGRAM_REVIEW_CHAT_ID not set: add the bot to the teachers' group; its ID shows here")
 	}
 	b.log.Info("review bot started", "bot", "@"+me.Username, "group", b.chatID)
+	if err := b.Redraw(ctx); err != nil && ctx.Err() == nil {
+		b.log.Warn("review bot: redraw", "err", err)
+	}
 	var lastTick time.Time
 	for ctx.Err() == nil {
 		if err := b.poll(ctx); err != nil && ctx.Err() == nil {
@@ -203,13 +208,13 @@ func (b *Bot) Post(ctx context.Context, c reviewbotdb.CandidatesRow) error {
 	if err != nil {
 		return fmt.Errorf("original picture: %w", err)
 	}
-	photos := []telegram.Photo{{PNG: original, Caption: "Original (the bank's)"}}
+	photos := []telegram.Photo{{PNG: original, Caption: pictureCaption["original"]}}
 	if info.Changes {
 		fixed, _, err := b.practice.Picture(ctx, id, "fix", c.Test, nil)
 		if err != nil {
 			return fmt.Errorf("fix picture: %w", err)
 		}
-		photos = append(photos, telegram.Photo{PNG: fixed, Caption: "AI fix (changes highlighted)"})
+		photos = append(photos, telegram.Photo{PNG: fixed, Caption: pictureCaption["fix"]})
 	}
 	msgs, err := retry(ctx, func() ([]telegram.Message, error) { return b.tg.SendPhotos(ctx, b.chatID, photos) })
 	if err != nil {
@@ -234,6 +239,7 @@ func (b *Bot) Post(ctx context.Context, c reviewbotdb.CandidatesRow) error {
 	postID, err := reviewbotdb.New(b.pool).InsertPost(ctx, reviewbotdb.InsertPostParams{
 		QuestionID: c.ID, Version: c.Version, TestCode: c.Test, Qid: c.Qid, Risk: info.Risk,
 		Caption: caption, ChatID: b.chatID, PhotoIds: ids, VoteID: vote.MessageID,
+		PictureVersion: b.practice.PictureVersion(),
 	})
 	if err != nil {
 		return err
@@ -243,6 +249,67 @@ func (b *Bot) Post(ctx context.Context, c reviewbotdb.CandidatesRow) error {
 		return err
 	}
 	b.log.Info("review bot: posted", "test", c.Test, "qid", c.Qid, "post", postID)
+	return nil
+}
+
+// A post's pictures, in the order they're sent: the fix only when the AI
+// changed something.
+var (
+	pictureKinds   = []string{"original", "fix"}
+	pictureCaption = map[string]string{"original": "Original (the bank's)", "fix": "AI fix (changes highlighted)"}
+)
+
+// Redraw draws again the pictures of open posts drawn with another version
+// of the picture page (an update changed how questions look), and replaces
+// them in the group in place.
+func (b *Bot) Redraw(ctx context.Context) error {
+	version := b.practice.PictureVersion()
+	if version == "" || b.chatID == 0 {
+		return nil
+	}
+	q := reviewbotdb.New(b.pool)
+	posts, err := q.StalePictures(ctx, version)
+	if err != nil {
+		return err
+	}
+	redrawn := 0
+	for _, p := range posts {
+		if len(p.PhotoIds) > len(pictureKinds) {
+			continue
+		}
+		id := uuidString(p.QuestionID)
+		var failed error
+		for i, msg := range p.PhotoIds {
+			kind := pictureKinds[i]
+			png, _, err := b.practice.Picture(ctx, id, kind, p.TestCode, nil)
+			if err != nil {
+				failed = fmt.Errorf("%s picture: %w", kind, err)
+				break
+			}
+			sleep(ctx, b.pause) // edits count toward the group's limit like messages
+			_, err = retry(ctx, func() (struct{}, error) {
+				return struct{}{}, b.tg.EditPhoto(ctx, p.ChatID, msg, telegram.Photo{PNG: png, Caption: pictureCaption[kind]})
+			})
+			if err != nil && !telegram.NotModified(err) {
+				failed = err
+				break
+			}
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if failed != nil {
+			b.log.Warn("review bot: redraw", "post", p.ID, "err", failed)
+			continue
+		}
+		if err := q.SetPictureVersion(ctx, reviewbotdb.SetPictureVersionParams{ID: p.ID, PictureVersion: version}); err != nil {
+			return err
+		}
+		redrawn++
+	}
+	if redrawn > 0 {
+		b.log.Info("review bot: redrew open posts", "posts", redrawn)
+	}
 	return nil
 }
 

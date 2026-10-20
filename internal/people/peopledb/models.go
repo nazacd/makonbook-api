@@ -142,21 +142,22 @@ type GroupDenyReason struct {
 }
 
 type GroupPost struct {
-	ID         int64
-	QuestionID pgtype.UUID
-	Version    int32
-	TestCode   string
-	Qid        string
-	Risk       string
-	Caption    string
-	ChatID     int64
-	PhotoIds   []int64
-	VoteID     int64
-	Status     string
-	Approvals  int32
-	Denials    int32
-	PostedAt   pgtype.Timestamptz
-	DecidedAt  pgtype.Timestamptz
+	ID             int64
+	QuestionID     pgtype.UUID
+	Version        int32
+	TestCode       string
+	Qid            string
+	Risk           string
+	Caption        string
+	ChatID         int64
+	PhotoIds       []int64
+	VoteID         int64
+	Status         string
+	Approvals      int32
+	Denials        int32
+	PostedAt       pgtype.Timestamptz
+	DecidedAt      pgtype.Timestamptz
+	PictureVersion string
 }
 
 type GroupReasonRequest struct {
