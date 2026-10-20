@@ -530,7 +530,14 @@ GET|PUT|DELETE /v1/admin/access…       access list (super admins); GET /v1/adm
 
 - Routes: `(public)` — welcome, placement, login; `(student)`; `(teacher)`. Root layout picks by auth state/role. Placement offered on first launch and always reachable from the welcome screen.
 - New deps (check Expo SDK 57 docs before adding, per `AGENTS.md`): `expo-secure-store`, `expo-camera` (QR scanning), `react-native-qrcode-svg` (teacher QR, uses existing `react-native-svg`), `@tanstack/react-query`, `openapi-fetch`, `expo-file-system`, `expo-image`.
-- **Extract a generic test engine** from the placement flow (timer, navigator, eliminator, mark-for-review, resume, review). Placement and practice tests become two configurations of it.
+- **Practice tests** (built: phase 3, step 6; the mobile repo's AGENTS.md): a Practice tab — students download a
+  published version (package + images, stored on the phone) and take it offline: the full test or one section,
+  modules in order with Bluebook timing (32/35 min), mark for review, strike out choices, the Desmos calculator in
+  Math; progress is saved as they go and the clock stops while they're away. Finished attempts are graded on the
+  phone with the package's keys and scales (the same rules as the server), kept per person, and uploaded when
+  online; results show the estimated scores and every question with its explanation. Teachers get the Practice tab
+  with their groups and each student's attempts. The runner reuses the placement test's components (choices,
+  grid-in, timer, navigator, calculator) rather than one shared engine; the placement flow is unchanged.
 - Development builds via EAS (`development` profile exists). iOS via EAS Build + TestFlight (Apple Developer account required).
 - Agent feedback loop: run Claude Code **locally** on the computer the Android phone is plugged into; the agent installs/launches the dev build and takes screenshots via `adb`.
 
@@ -551,7 +558,7 @@ Lesson days, sessions, QR, scanning, overrides, outbox write-back (dry-run until
 1. Question bank + importer of AI-reviewed tests (built). 2. AI review of all 60 tests (running). 3. Editor panel
 (built). Auto-approval of green questions, editors' Approve, the fix step (built). 4. The Telegram group vote
 (Bluebook-style images, Approve/Deny) (built). 5. Unlocking tests: publishing, catalog, download, attempts
-(built). 6. Mobile engine, Practice tab, teacher view.
+(built). 6. Mobile: the Practice tab, offline test runner, results and review, teachers' group view (built).
 
 **Phase 4 — vocabulary.** **Phase 5 — parents.** Later: Telegram login/reset, push notifications.
 
