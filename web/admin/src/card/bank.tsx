@@ -1,100 +1,75 @@
-import katex from 'katex';
-import { Fragment, type ReactNode } from 'react';
+import { RichText } from '../practice/RichText';
 
-// Draws the bank's own text, as SAT MAKON typed it: plain text with line
-// breaks, $…$ math in Math questions, and a few HTML tags in R&W (<em>,
-// <strong>, <u>…). Everything is escaped except those tags and the math.
+// The bank's own text, as SAT MAKON typed it, is close to our content format
+// (../practice/format.ts): \( \) and \[ \] math, **bold**, <u>, "- " lists.
+// It differs in a few ways, turned here so it draws exactly like our own
+// text: <em>/<strong>, \$ for a dollar sign ($ itself is money, never math),
+// a lone * as a times sign in Math, lists right under their first line, and
+// in Reading and Writing, plain words set as a formula only to style them
+// (\( \textit{Night and Day} \), \( \underline{an\ ill-balanced\ axe} \)).
 
-const TAGS: Record<string, 'i' | 'b' | 'u' | 'sup' | 'sub'> = { em: 'i', i: 'i', strong: 'b', b: 'b', u: 'u', sup: 'sup', sub: 'sub' };
+const MATH = /(\\\([\s\S]*?\\\)|\\\[[\s\S]*?\\\])/;
 
-/** Splits text at $…$ math. A $ opens math only when a non-space follows it
- * and the next $ closes it with a non-space before it, so money ("costs $29
- * and $30") stays text. */
-export function splitDollars(text: string): { math: boolean; text: string }[] {
-  const out: { math: boolean; text: string }[] = [];
-  let plain = '';
-  let i = 0;
-  while (i < text.length) {
-    const open = text.indexOf('$', i);
-    if (open < 0) break;
-    const close = text.indexOf('$', open + 1);
-    const ok =
-      close > open + 1 &&
-      !/\s/.test(text[open + 1]!) &&
-      !/\s/.test(text[close - 1]!) &&
-      !text.slice(open + 1, close).includes('\n') &&
-      !/^\d[\d,]*(\.\d+)?$/.test(text.slice(open + 1, close).trim()); // "$5$" is still money-like text
-    if (!ok) {
-      plain += text.slice(i, open + 1);
-      i = open + 1;
-      continue;
-    }
-    plain += text.slice(i, open);
-    if (plain) out.push({ math: false, text: plain });
-    plain = '';
-    out.push({ math: true, text: text.slice(open + 1, close) });
-    i = close + 1;
+const STYLES: Record<string, [string, string]> = {
+  textit: ['*', '*'],
+  emph: ['*', '*'],
+  textbf: ['**', '**'],
+  underline: ['<u>', '</u>'],
+  text: ['', ''],
+};
+const ACCENTS: Record<string, string> = { "'": '\u0301', '`': '\u0300', '"': '\u0308', '~': '\u0303', '^': '\u0302' };
+
+/** A formula that only styles words, as those words in the content format;
+ * null for real math (or anything else), which stays a formula. */
+function styledWords(formula: string): string | null {
+  let t = formula.slice(2, -2);
+  t = t.replace(/\\(['`"~^])\{?([A-Za-z])\}?/g, (_, a: string, c: string) => (c + ACCENTS[a]).normalize('NFC'));
+  t = t.replace(/\{,\}/g, ',').replace(/\\[ ,;]/g, ' ');
+  for (;;) {
+    const next = t.replace(/\\(textit|emph|textbf|underline|text)\{([^{}]*)\}/g, (_, cmd: string, body: string) => {
+      const [open, close] = STYLES[cmd] ?? ['', ''];
+      const inner = body.trim();
+      return inner ? open + inner + close : '';
+    });
+    if (next === t) break;
+    t = next;
   }
-  plain += text.slice(i);
-  if (plain) out.push({ math: false, text: plain });
-  return out;
+  t = t.replace(/\{([^{}]*)\}/g, '$1').trim();
+  if (!t || /[\\^_{}]/.test(t)) return null;
+  return t;
 }
 
-function math(tex: string, key: number): ReactNode {
-  const html = katex.renderToString(tex, { output: 'html', throwOnError: false, trust: false, strict: false });
-  return <span key={key} className="math" dangerouslySetInnerHTML={{ __html: html }} />;
+/** The bank's text in the content format. */
+export function bankToContent(text: string | null | undefined, math: boolean): string {
+  if (!text) return '';
+  const converted = text
+    .replace(/\r\n?/g, '\n')
+    .split(MATH)
+    .map((part, i) => {
+      if (i % 2 === 1) return math ? part : (styledWords(part) ?? part);
+      let t = part
+        .replace(/\\\$/g, '$')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<(em|i)>([\s\S]*?)<\/\1>/gi, '*$2*')
+        .replace(/<(strong|b)>([\s\S]*?)<\/\1>/gi, '**$2**');
+      if (math) t = t.replace(/(?<!\*)\*(?!\*)/g, '∗'); // 1/2 * a: a times sign, not italics
+      return t;
+    })
+    .join('');
+  // A list starts a block of its own (format.ts reads a block whose lines all
+  // start with "- " as a list).
+  const lines = converted.split('\n');
+  const out: string[] = [];
+  lines.forEach((line, i) => {
+    const item = line.startsWith('- ');
+    const prev = lines[i - 1];
+    if (i > 0 && prev !== undefined && prev.trim() !== '' && item !== prev.startsWith('- ')) out.push('');
+    out.push(line);
+  });
+  return out.join('\n');
 }
 
-// One line or paragraph: tags open and close elements; text and math fill them.
-function line(src: string, mathOn: boolean): ReactNode[] {
-  type Frame = { tag: string; children: ReactNode[] };
-  const stack: Frame[] = [{ tag: '', children: [] }];
-  let k = 0;
-  const add = (n: ReactNode) => stack[stack.length - 1]!.children.push(n);
-  const flushText = (t: string) => {
-    for (const part of mathOn ? splitDollars(t) : [{ math: false, text: t }]) {
-      add(part.math ? math(part.text, k++) : <Fragment key={k++}>{part.text}</Fragment>);
-    }
-  };
-  for (const piece of src.split(/(<\/?[a-zA-Z]+\s*\/?>)/)) {
-    const m = /^<(\/?)([a-zA-Z]+)\s*\/?>$/.exec(piece);
-    const tag = m ? m[2]!.toLowerCase() : '';
-    if (m && tag === 'br') {
-      add(<br key={k++} />);
-    } else if (m && TAGS[tag] && !m[1]) {
-      stack.push({ tag, children: [] });
-    } else if (m && TAGS[tag] && m[1] && stack.length > 1 && stack[stack.length - 1]!.tag === tag) {
-      const f = stack.pop()!;
-      const El = TAGS[tag]!;
-      add(<El key={k++}>{f.children}</El>);
-    } else if (piece) {
-      flushText(piece);
-    }
-  }
-  while (stack.length > 1) {
-    const f = stack.pop()!; // an unclosed tag: keep its text
-    add(<Fragment key={k++}>{f.children}</Fragment>);
-  }
-  return stack[0]!.children;
-}
-
-export function BankText({ text, math: mathOn }: { text: string | null | undefined; math: boolean }) {
-  if (!text?.trim()) return null;
-  return (
-    <div className="rich">
-      {text
-        .trim()
-        .split(/\n\s*\n/)
-        .map((para, i) => (
-          <p key={i}>
-            {para.split('\n').map((l, j) => (
-              <Fragment key={j}>
-                {j > 0 && <br />}
-                {line(l, mathOn)}
-              </Fragment>
-            ))}
-          </p>
-        ))}
-    </div>
-  );
+export function BankText({ text, math, choice = false }: { text: string | null | undefined; math: boolean; choice?: boolean }) {
+  const content = bankToContent(text, math);
+  return content.trim() ? <RichText html displayStyle={choice} text={content} /> : null;
 }

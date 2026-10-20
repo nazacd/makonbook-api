@@ -90,7 +90,7 @@ function bankParts(data: CardData): Parts {
         correct={b.answer.trim().toUpperCase()}
         render={(l) => (
           <>
-            <BankText text={b.choices?.[l]} math={math} />
+            <BankText text={b.choices?.[l]} math={math} choice />
             {shot(l)}
           </>
         )}
