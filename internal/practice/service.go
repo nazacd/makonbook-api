@@ -35,6 +35,7 @@ func (e *InvalidError) Error() string {
 type Service struct {
 	pool     *pgxpool.Pool
 	uploads  Store    // nil: uploads not configured
+	signer   Signer   // links to the uploads bucket; nil: not configured
 	bank     Bank     // nil: the bank's images not configured
 	pictures Pictures // nil: question pictures not configured
 	page     string   // the question picture page (web/admin's CardPage)
@@ -42,7 +43,9 @@ type Service struct {
 
 // NewService: uploads is MakonBook's image bucket, or nil.
 func NewService(pool *pgxpool.Pool, uploads Store) *Service {
-	return &Service{pool: pool, uploads: uploads}
+	s := &Service{pool: pool, uploads: uploads}
+	s.signer, _ = uploads.(Signer)
+	return s
 }
 
 // WithBank gives the service the bank's images (SAT MAKON's bucket).
@@ -67,6 +70,9 @@ type TestSummary struct {
 	Yellow    int32  `json:"yellow"` // not yet approved
 	Shared    int32  `json:"shared"` // also used by other tests
 	Open      bool   `json:"open"`   // every question approved: students can take it
+	// Published is the latest published version (0: never published); the
+	// worker publishes a test a few minutes after it opens or changes.
+	Published int32 `json:"published"`
 }
 
 // Tests lists every test with its review progress.
@@ -78,7 +84,7 @@ func (s *Service) Tests(ctx context.Context) ([]TestSummary, error) {
 	out := make([]TestSummary, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, TestSummary{Code: r.Code, Title: r.Title, Questions: r.Questions, Approved: r.Approved,
-			Red: r.Red, Yellow: r.Yellow, Shared: r.Shared, Open: r.Approved == r.Questions})
+			Red: r.Red, Yellow: r.Yellow, Shared: r.Shared, Open: r.Approved == r.Questions, Published: r.Published})
 	}
 	return out, nil
 }

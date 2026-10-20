@@ -319,14 +319,29 @@ section (College Board uses IRT; we can't reproduce it exactly).
   changes highlighted) and **question** (the editor's **Export image**: what is in the form, saved or
   not). Math in the picture is KaTeX's HTML with its fonts; answer choices draw math full size.
 
-### 9.5 Publishing and on device (planned)
-- Publishing a test builds an **immutable package** (all questions, answers, explanations, conversion table)
-  + images, for offline download. Editing a question later creates a new test version on the next publish;
-  attempts stay tied to the version they used.
-- Catalog from API → download package + images → fully offline. Answers are in the package; nothing graded
-  on device is "official".
-- Attempt uploaded when online with a client-generated UUID (idempotent): answers, time per question, raw and
-  estimated scores. Teachers see attempts of students in their groups.
+### 9.5 Publishing and on device (built: phase 3, step 5)
+- **Publishing** (`practice.Service.Publish`; the worker every 5 minutes, or `makonbook practice publish`):
+  a test whose questions are all approved is built into an **immutable package** (`practice_test_versions`:
+  version 1, 2, …): its sections in Bluebook order (Reading and Writing, then Math), each module with its
+  time (32 and 35 minutes) and questions (text in the stored format, keys, accepted answers, explanations,
+  tags), each section's score scale, and the files of its images. A new version is made only when the
+  content changed (a hash of it). Images are copied into MakonBook's bucket under `p/img/<sha-256>.<ext>`
+  (`practice_published_images`, once per file). Editing a question later sends it back to review: students
+  keep the last version until the test is approved again, then get the next one.
+- **Scores:** each section's raw score (number right in both modules) → an **estimated 200–800**, from a
+  table stretched from College Board's published practice tests (`practice.Scale`); built into each package,
+  so the device and the server agree. Grid-ins are right when the answer is one of the accepted forms or the
+  same number (.5 = 1/2).
+- **Catalog** (`GET /v1/practice/tests`, students and teachers): every test; published ones open at their
+  latest version with their download size, the rest locked with their progress.
+- **Download** (`GET /v1/practice/tests/{code}/package[?version=]`): the package and a link to each image,
+  signed (SigV4 query) for 6 hours, straight from R2. The device stores both and works fully offline.
+- **Attempts** (`POST /v1/practice/attempts`): uploaded when online with the device's UUID (idempotent: a
+  repeat returns the stored one; another student's id is `409`): the sections taken (one or both), times,
+  answers with seconds per question. The server grades them again from that version's keys
+  (`practice_attempts.scores`); nothing graded on the device is official. `GET /v1/me/practice/attempts`:
+  the student's history. **Teachers** see the attempts of their groups' students
+  (`GET /v1/teacher/groups/{id}/practice`).
 
 ## 10. Placement test changes (mobile, small)
 
@@ -453,6 +468,11 @@ question_versions(question_id FK, version, content jsonb, source (import|editor)
 practice_tests(id uuid PK, code UNIQUE, title, created_at)
 practice_test_questions(test_id FK, subject, module, position, question_id FK, PRIMARY KEY(test_id, subject, module, position))
 question_ai_reviews(id, question_id FK, test_id FK, qid, csv_id, risk, verdict, record jsonb, UNIQUE(test_id, qid))
+-- built (phase 3, step 5): see 9.5
+practice_test_versions(test_id FK, version, content_hash, package jsonb, bytes, published_at, PRIMARY KEY(test_id, version))
+practice_published_images(file PK, content_type, bytes, width, height)
+practice_attempts(id uuid PK (the device's), student_client_id FK, (test_id, test_version) FK, sections text[],
+                  started_at, finished_at, answers jsonb, scores jsonb, received_at)
 ```
 
 ## 16. Hosting & data
@@ -486,9 +506,11 @@ POST /v1/attendance/scan               {session_id, window, sig, device_id}
 GET  /v1/me/attendance                 own attendance table (8.7)
 
 # practice (phase 3)
-GET  /v1/practice/tests                catalog
-GET  /v1/practice/tests/{id}/package   → signed URL to versioned package
-POST /v1/practice/attempts             idempotent by client UUID
+GET  /v1/practice/tests                catalog: open (published version) or locked (progress)
+GET  /v1/practice/tests/{code}/package package of a version + signed image links (6 h)
+POST /v1/practice/attempts             idempotent by client UUID; graded on the server
+GET  /v1/me/practice/attempts          the student's attempts
+GET  /v1/teacher/groups/{id}/practice  a group's students and their attempts
 
 # admin (cookie session, D18)
 POST /v1/admin/login                   {login, password} → HolliHop checks; access list; sets mb_admin
@@ -528,7 +550,8 @@ Lesson days, sessions, QR, scanning, overrides, outbox write-back (dry-run until
 **Phase 3 — practice tests**
 1. Question bank + importer of AI-reviewed tests (built). 2. AI review of all 60 tests (running). 3. Editor panel
 (built). Auto-approval of green questions, editors' Approve, the fix step (built). 4. The Telegram group vote
-(Bluebook-style images, Approve/Deny). 5. Unlocking tests. 6. Mobile engine, Practice tab, teacher view.
+(Bluebook-style images, Approve/Deny) (built). 5. Unlocking tests: publishing, catalog, download, attempts
+(built). 6. Mobile engine, Practice tab, teacher view.
 
 **Phase 4 — vocabulary.** **Phase 5 — parents.** Later: Telegram login/reset, push notifications.
 

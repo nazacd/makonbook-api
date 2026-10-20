@@ -203,6 +203,19 @@ type Office struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type PracticeAttempt struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	TestID          pgtype.UUID
+	TestVersion     int32
+	Sections        []string
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	Answers         []byte
+	Scores          []byte
+	ReceivedAt      pgtype.Timestamptz
+}
+
 type PracticeImage struct {
 	Key         string
 	ContentType string
@@ -210,6 +223,15 @@ type PracticeImage struct {
 	Width       int32
 	Height      int32
 	UploadedBy  string
+	CreatedAt   pgtype.Timestamptz
+}
+
+type PracticePublishedImage struct {
+	File        string
+	ContentType string
+	Bytes       int32
+	Width       int32
+	Height      int32
 	CreatedAt   pgtype.Timestamptz
 }
 
@@ -226,6 +248,15 @@ type PracticeTestQuestion struct {
 	Module     int16
 	Position   int16
 	QuestionID pgtype.UUID
+}
+
+type PracticeTestVersion struct {
+	TestID      pgtype.UUID
+	Version     int32
+	ContentHash string
+	Package     []byte
+	Bytes       int32
+	PublishedAt pgtype.Timestamptz
 }
 
 type Question struct {

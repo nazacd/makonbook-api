@@ -310,6 +310,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/practice/tests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every practice test, open or locked (students and teachers)
+         * @description A test opens once every question in it is approved and the server has
+         *     published it (within minutes); `version` is then its latest published
+         *     version. A locked test has `version: null` and shows how far its
+         *     review has come (`approved` of `questions`). A published test stays
+         *     open at its last version while an edited question is reviewed again.
+         */
+        get: operations["practiceTests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/practice/tests/{code}/package": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A published version of a test, to take offline
+         * @description The package (questions, keys, explanations, score scales) and a link
+         *     to each of its images, valid until `expires_at` (6 hours): download
+         *     them right away. A version never changes once published; images are
+         *     named by their bytes, so a file already on the device needn't be
+         *     fetched again.
+         */
+        get: operations["practicePackage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/practice/attempts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload a finished attempt (students)
+         * @description Sent when the device is online, with the id the device gave the
+         *     attempt: sending it again returns the stored attempt, so a retry
+         *     after a lost answer is safe. The server grades it from the version's
+         *     keys; its scores are the ones teachers see.
+         */
+        post: operations["savePracticeAttempt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/practice/attempts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The student's attempts, latest first */
+        get: operations["myPracticeAttempts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/teacher/groups/{id}/practice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A group's students and their practice attempts (its teachers) */
+        get: operations["groupPractice"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/login": {
         parameters: {
             query?: never;
@@ -937,6 +1042,115 @@ export interface components {
             shared: number;
             /** @description Every question approved: students can take it */
             open: boolean;
+            /** @description The latest published version; 0 while never published */
+            published: number;
+        };
+        PracticeCatalogTest: {
+            /** @example DAY12 */
+            code: string;
+            title: string;
+            /** @description Questions in Reading and Writing */
+            english: number;
+            /** @description Questions in Math */
+            math: number;
+            questions: number;
+            approved: number;
+            /** @description The latest published version; null while locked */
+            version: number | null;
+            /** @description The download's size: the package and its images */
+            bytes: number | null;
+            /** Format: date-time */
+            published_at: string | null;
+        };
+        /**
+         * @description A published version of a test (format 1). Sections come in Bluebook
+         *     order (Reading and Writing, then Math), each with two timed modules.
+         *     Text uses the stored content format: paragraphs, `\( \)` and
+         *     `\[ \]` math, `*i*`, `**b**`, `<u>`, `- ` lists, pipe tables and
+         *     `![alt](r2:key)` images, whose files `images` names.
+         */
+        PracticePackage: {
+            /** @enum {integer} */
+            format: 1;
+            code: string;
+            title: string;
+            version: number;
+            /** Format: date-time */
+            published_at: string;
+            sections: {
+                /** @enum {string} */
+                subject: "english" | "math";
+                /** @description The estimated 200–800 section score for each number right (index 0 … questions) */
+                scale: number[];
+                modules: {
+                    /** @enum {integer} */
+                    module: 1 | 2;
+                    minutes: number;
+                    questions: components["schemas"]["PracticePackageQuestion"][];
+                }[];
+            }[];
+            /** @description An image's key (as the text uses it) → its file */
+            images: {
+                [key: string]: {
+                    file: string;
+                    bytes: number;
+                    width: number;
+                    height: number;
+                };
+            };
+        };
+        PracticePackageQuestion: {
+            /** Format: uuid */
+            id: string;
+            /** @description The question's own version */
+            version: number;
+            position: number;
+            /** @enum {string} */
+            type: "mcq" | "grid_in";
+            passage: string | null;
+            stem: string;
+            /** @description A–D for mcq */
+            choices: {
+                [key: string]: string;
+            } | null;
+            figures: {
+                key: string;
+                kind: string;
+                alt: string;
+            }[];
+            /** @description The letter */
+            correct: string | null;
+            /** @description Grid-in: every form accepted; the same number in another form (.5 for 1/2) counts too */
+            accepted: string[] | null;
+            explanation: string;
+            domain: string;
+            skill: string;
+            /** @enum {string|null} */
+            difficulty: "easy" | "medium" | "hard" | null;
+        };
+        PracticeAttempt: {
+            /** Format: uuid */
+            id: string;
+            test: string;
+            title: string;
+            version: number;
+            sections: ("english" | "math")[];
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at: string;
+            /** @description Per section taken (english, math) */
+            scores: {
+                [key: string]: {
+                    /** @description Questions right */
+                    raw: number;
+                    questions: number;
+                    /** @description Estimated, 200–800 */
+                    score: number;
+                };
+            };
+            /** @description Both sections' sum (400–1600) when both were taken */
+            total: number | null;
         };
         PracticePlace: {
             test: string;
@@ -1858,6 +2072,215 @@ export interface operations {
             };
             /** @description `invalid_code` (not a MakonBook code, or forged), `code_expired` (scan the current one) */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    practiceTests: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The catalog, in test order */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        tests: components["schemas"]["PracticeCatalogTest"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    practicePackage: {
+        parameters: {
+            query?: {
+                /** @description A version; the latest when left out */
+                version?: number;
+            };
+            header?: never;
+            path: {
+                /** @example DAY12 */
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The package and image links */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        package: components["schemas"]["PracticePackage"];
+                        /** @description Image file → download link */
+                        images: {
+                            [key: string]: string;
+                        };
+                        /** Format: date-time */
+                        expires_at: string;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description `not_found`: no such test, or not published (yet), or no such version */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            503: components["responses"]["Error"];
+        };
+    };
+    savePracticeAttempt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    id: string;
+                    /** @description The test's code */
+                    test: string;
+                    version: number;
+                    /** @description The sections taken, in order */
+                    sections: ("english" | "math")[];
+                    /** Format: date-time */
+                    started_at: string;
+                    /** Format: date-time */
+                    finished_at: string;
+                    /** @description One per question seen, in the sections taken; blank answers are null */
+                    answers: {
+                        /** @enum {string} */
+                        subject: "english" | "math";
+                        /** @enum {integer} */
+                        module: 1 | 2;
+                        position: number;
+                        /** @description A letter, or a grid-in answer as typed */
+                        answer: string | null;
+                        /** @description Time spent on the question */
+                        seconds: number;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            /** @description The stored attempt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PracticeAttempt"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a student */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `attempt_id_taken`: another student sent an attempt with this id */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_attempt`: no such test version, a section or question not in it, an answer given twice, times out of order */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    myPracticeAttempts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The attempts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        attempts: components["schemas"]["PracticeAttempt"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    groupPractice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The students enrolled now, by name, each with their attempts latest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        students: {
+                            client_id: number;
+                            first_name: string;
+                            last_name: string;
+                            attempts: components["schemas"]["PracticeAttempt"][];
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a teacher, or not this group's */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

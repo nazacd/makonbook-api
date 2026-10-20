@@ -60,6 +60,103 @@ func (q *Queries) ApproveQuestion(ctx context.Context, arg ApproveQuestionParams
 	return err
 }
 
+const catalog = `-- name: Catalog :many
+SELECT t.code, t.title,
+       count(*)::int AS questions,
+       count(*) FILTER (WHERE q.status = 'approved')::int AS approved,
+       count(*) FILTER (WHERE tq.subject = 'english')::int AS english,
+       count(*) FILTER (WHERE tq.subject = 'math')::int AS math,
+       coalesce(v.version, 0)::int AS version, coalesce(v.bytes, 0)::int AS bytes, v.published_at
+FROM practice_tests t
+JOIN practice_test_questions tq ON tq.test_id = t.id
+JOIN questions q ON q.id = tq.question_id
+LEFT JOIN LATERAL (SELECT pv.version, pv.bytes, pv.published_at FROM practice_test_versions pv
+                   WHERE pv.test_id = t.id ORDER BY pv.version DESC LIMIT 1) v ON true
+GROUP BY t.id, v.version, v.bytes, v.published_at
+ORDER BY length(t.code), t.code
+`
+
+type CatalogRow struct {
+	Code        string
+	Title       string
+	Questions   int32
+	Approved    int32
+	English     int32
+	Math        int32
+	Version     int32
+	Bytes       int32
+	PublishedAt pgtype.Timestamptz
+}
+
+// For students: every test, its progress, and its latest published version.
+func (q *Queries) Catalog(ctx context.Context) ([]CatalogRow, error) {
+	rows, err := q.db.Query(ctx, catalog)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CatalogRow
+	for rows.Next() {
+		var i CatalogRow
+		if err := rows.Scan(
+			&i.Code,
+			&i.Title,
+			&i.Questions,
+			&i.Approved,
+			&i.English,
+			&i.Math,
+			&i.Version,
+			&i.Bytes,
+			&i.PublishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const completeTests = `-- name: CompleteTests :many
+
+SELECT t.id, t.code, t.title
+FROM practice_tests t
+WHERE EXISTS (SELECT 1 FROM practice_test_questions tq WHERE tq.test_id = t.id)
+  AND NOT EXISTS (SELECT 1 FROM practice_test_questions tq JOIN questions q ON q.id = tq.question_id
+                  WHERE tq.test_id = t.id AND q.status <> 'approved')
+ORDER BY length(t.code), t.code
+`
+
+type CompleteTestsRow struct {
+	ID    pgtype.UUID
+	Code  string
+	Title string
+}
+
+// Publishing (spec 9.5) ------------------------------------------------------
+// Tests whose questions are all approved: what can be published.
+func (q *Queries) CompleteTests(ctx context.Context) ([]CompleteTestsRow, error) {
+	rows, err := q.db.Query(ctx, completeTests)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CompleteTestsRow
+	for rows.Next() {
+		var i CompleteTestsRow
+		if err := rows.Scan(&i.ID, &i.Code, &i.Title); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countQuestions = `-- name: CountQuestions :one
 SELECT count(*)::int
 FROM questions q
@@ -152,6 +249,41 @@ func (q *Queries) ExistingImages(ctx context.Context, keys []string) ([]string, 
 	return items, nil
 }
 
+const getAttempt = `-- name: GetAttempt :one
+SELECT a.id, a.student_client_id, t.code, t.title, a.test_version, a.sections, a.started_at, a.finished_at, a.scores
+FROM practice_attempts a JOIN practice_tests t ON t.id = a.test_id
+WHERE a.id = $1
+`
+
+type GetAttemptRow struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Code            string
+	Title           string
+	TestVersion     int32
+	Sections        []string
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	Scores          []byte
+}
+
+func (q *Queries) GetAttempt(ctx context.Context, id pgtype.UUID) (GetAttemptRow, error) {
+	row := q.db.QueryRow(ctx, getAttempt, id)
+	var i GetAttemptRow
+	err := row.Scan(
+		&i.ID,
+		&i.StudentClientID,
+		&i.Code,
+		&i.Title,
+		&i.TestVersion,
+		&i.Sections,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Scores,
+	)
+	return i, err
+}
+
 const getQuestion = `-- name: GetQuestion :one
 SELECT id, subject, type, content_hash, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty, status, ai_risk, version, created_at, updated_at, approved_at, auto_approved, approved_by FROM questions WHERE id = $1
 `
@@ -204,6 +336,47 @@ func (q *Queries) GetTestByCode(ctx context.Context, code string) (PracticeTest,
 	return i, err
 }
 
+const groupStudents = `-- name: GroupStudents :many
+SELECT DISTINCT st.client_id, st.first_name, st.last_name
+FROM enrollments e JOIN students st ON st.client_id = e.student_client_id
+WHERE e.group_id = $1 AND st.deactivated_at IS NULL
+  AND (e.begin_date IS NULL OR e.begin_date <= $2::date)
+  AND (e.end_date IS NULL OR e.end_date >= $2::date)
+ORDER BY st.last_name, st.first_name
+`
+
+type GroupStudentsParams struct {
+	GroupID int32
+	Today   pgtype.Date
+}
+
+type GroupStudentsRow struct {
+	ClientID  int32
+	FirstName string
+	LastName  string
+}
+
+// The students enrolled in a group now.
+func (q *Queries) GroupStudents(ctx context.Context, arg GroupStudentsParams) ([]GroupStudentsRow, error) {
+	rows, err := q.db.Query(ctx, groupStudents, arg.GroupID, arg.Today)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GroupStudentsRow
+	for rows.Next() {
+		var i GroupStudentsRow
+		if err := rows.Scan(&i.ClientID, &i.FirstName, &i.LastName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertAIReview = `-- name: InsertAIReview :exec
 INSERT INTO question_ai_reviews (question_id, test_id, qid, csv_id, risk, verdict, record)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -232,6 +405,45 @@ func (q *Queries) InsertAIReview(ctx context.Context, arg InsertAIReviewParams) 
 	return err
 }
 
+const insertAttempt = `-- name: InsertAttempt :execrows
+
+INSERT INTO practice_attempts (id, student_client_id, test_id, test_version, sections, started_at, finished_at,
+                               answers, scores)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+ON CONFLICT (id) DO NOTHING
+`
+
+type InsertAttemptParams struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	TestID          pgtype.UUID
+	TestVersion     int32
+	Sections        []string
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	Answers         []byte
+	Scores          []byte
+}
+
+// Attempts --------------------------------------------------------------------
+func (q *Queries) InsertAttempt(ctx context.Context, arg InsertAttemptParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertAttempt,
+		arg.ID,
+		arg.StudentClientID,
+		arg.TestID,
+		arg.TestVersion,
+		arg.Sections,
+		arg.StartedAt,
+		arg.FinishedAt,
+		arg.Answers,
+		arg.Scores,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertImage = `-- name: InsertImage :exec
 INSERT INTO practice_images (key, content_type, bytes, width, height, uploaded_by)
 VALUES ($1, $2, $3, $4, $5, $6)
@@ -255,6 +467,31 @@ func (q *Queries) InsertImage(ctx context.Context, arg InsertImageParams) error 
 		arg.Width,
 		arg.Height,
 		arg.UploadedBy,
+	)
+	return err
+}
+
+const insertPublishedImage = `-- name: InsertPublishedImage :exec
+INSERT INTO practice_published_images (file, content_type, bytes, width, height)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (file) DO NOTHING
+`
+
+type InsertPublishedImageParams struct {
+	File        string
+	ContentType string
+	Bytes       int32
+	Width       int32
+	Height      int32
+}
+
+func (q *Queries) InsertPublishedImage(ctx context.Context, arg InsertPublishedImageParams) error {
+	_, err := q.db.Exec(ctx, insertPublishedImage,
+		arg.File,
+		arg.ContentType,
+		arg.Bytes,
+		arg.Width,
+		arg.Height,
 	)
 	return err
 }
@@ -312,6 +549,30 @@ func (q *Queries) InsertQuestion(ctx context.Context, arg InsertQuestionParams) 
 	return id, err
 }
 
+const insertTestVersion = `-- name: InsertTestVersion :exec
+INSERT INTO practice_test_versions (test_id, version, content_hash, package, bytes)
+VALUES ($1, $2, $3, $4, $5)
+`
+
+type InsertTestVersionParams struct {
+	TestID      pgtype.UUID
+	Version     int32
+	ContentHash string
+	Package     []byte
+	Bytes       int32
+}
+
+func (q *Queries) InsertTestVersion(ctx context.Context, arg InsertTestVersionParams) error {
+	_, err := q.db.Exec(ctx, insertTestVersion,
+		arg.TestID,
+		arg.Version,
+		arg.ContentHash,
+		arg.Package,
+		arg.Bytes,
+	)
+	return err
+}
+
 const insertVersion = `-- name: InsertVersion :exec
 INSERT INTO question_versions (question_id, version, content, source, created_by)
 VALUES ($1, $2, $3, $4, $5)
@@ -334,6 +595,23 @@ func (q *Queries) InsertVersion(ctx context.Context, arg InsertVersionParams) er
 		arg.CreatedBy,
 	)
 	return err
+}
+
+const latestTestVersion = `-- name: LatestTestVersion :one
+SELECT version, content_hash FROM practice_test_versions
+WHERE test_id = $1 ORDER BY version DESC LIMIT 1
+`
+
+type LatestTestVersionRow struct {
+	Version     int32
+	ContentHash string
+}
+
+func (q *Queries) LatestTestVersion(ctx context.Context, testID pgtype.UUID) (LatestTestVersionRow, error) {
+	row := q.db.QueryRow(ctx, latestTestVersion, testID)
+	var i LatestTestVersionRow
+	err := row.Scan(&i.Version, &i.ContentHash)
+	return i, err
 }
 
 const linkQuestion = `-- name: LinkQuestion :exec
@@ -489,6 +767,42 @@ func (q *Queries) PendingAIFixes(ctx context.Context) ([]PendingAIFixesRow, erro
 	for rows.Next() {
 		var i PendingAIFixesRow
 		if err := rows.Scan(&i.ID, &i.Fix); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const publishedImages = `-- name: PublishedImages :many
+SELECT file, bytes, width, height FROM practice_published_images WHERE file = ANY ($1::text[])
+`
+
+type PublishedImagesRow struct {
+	File   string
+	Bytes  int32
+	Width  int32
+	Height int32
+}
+
+func (q *Queries) PublishedImages(ctx context.Context, files []string) ([]PublishedImagesRow, error) {
+	rows, err := q.db.Query(ctx, publishedImages, files)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PublishedImagesRow
+	for rows.Next() {
+		var i PublishedImagesRow
+		if err := rows.Scan(
+			&i.File,
+			&i.Bytes,
+			&i.Width,
+			&i.Height,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -702,6 +1016,136 @@ func (q *Queries) RefreshAIReview(ctx context.Context, arg RefreshAIReviewParams
 	return result.RowsAffected(), nil
 }
 
+const studentAttempts = `-- name: StudentAttempts :many
+SELECT a.id, a.student_client_id, t.code, t.title, a.test_version, a.sections, a.started_at, a.finished_at, a.scores
+FROM practice_attempts a JOIN practice_tests t ON t.id = a.test_id
+WHERE a.student_client_id = ANY ($1::int[])
+ORDER BY a.finished_at DESC
+`
+
+type StudentAttemptsRow struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Code            string
+	Title           string
+	TestVersion     int32
+	Sections        []string
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	Scores          []byte
+}
+
+func (q *Queries) StudentAttempts(ctx context.Context, clientIds []int32) ([]StudentAttemptsRow, error) {
+	rows, err := q.db.Query(ctx, studentAttempts, clientIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []StudentAttemptsRow
+	for rows.Next() {
+		var i StudentAttemptsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.StudentClientID,
+			&i.Code,
+			&i.Title,
+			&i.TestVersion,
+			&i.Sections,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Scores,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const teachesGroup = `-- name: TeachesGroup :one
+SELECT EXISTS (
+    SELECT 1 FROM schedule_items s JOIN groups g ON g.id = s.group_id
+    WHERE s.group_id = $1 AND g.removed_at IS NULL AND $2::int = ANY (s.teacher_ids)
+      AND (s.end_date IS NULL OR s.end_date >= $3::date))
+`
+
+type TeachesGroupParams struct {
+	GroupID   int32
+	TeacherID int32
+	Today     pgtype.Date
+}
+
+// Whether a teacher teaches a group now or later (as people.TeacherGroups).
+func (q *Queries) TeachesGroup(ctx context.Context, arg TeachesGroupParams) (bool, error) {
+	row := q.db.QueryRow(ctx, teachesGroup, arg.GroupID, arg.TeacherID, arg.Today)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const testContent = `-- name: TestContent :many
+SELECT tq.module, tq.position, q.id, q.subject, q.type, q.content_hash, q.passage, q.stem, q.choices, q.figures, q.correct, q.accepted, q.explanation, q.domain, q.skill, q.difficulty, q.status, q.ai_risk, q.version, q.created_at, q.updated_at, q.approved_at, q.auto_approved, q.approved_by
+FROM practice_test_questions tq
+JOIN questions q ON q.id = tq.question_id
+WHERE tq.test_id = $1
+ORDER BY tq.subject, tq.module, tq.position
+`
+
+type TestContentRow struct {
+	Module   int16
+	Position int16
+	Question Question
+}
+
+// A test's questions in order: Reading and Writing first, as in Bluebook.
+func (q *Queries) TestContent(ctx context.Context, testID pgtype.UUID) ([]TestContentRow, error) {
+	rows, err := q.db.Query(ctx, testContent, testID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TestContentRow
+	for rows.Next() {
+		var i TestContentRow
+		if err := rows.Scan(
+			&i.Module,
+			&i.Position,
+			&i.Question.ID,
+			&i.Question.Subject,
+			&i.Question.Type,
+			&i.Question.ContentHash,
+			&i.Question.Passage,
+			&i.Question.Stem,
+			&i.Question.Choices,
+			&i.Question.Figures,
+			&i.Question.Correct,
+			&i.Question.Accepted,
+			&i.Question.Explanation,
+			&i.Question.Domain,
+			&i.Question.Skill,
+			&i.Question.Difficulty,
+			&i.Question.Status,
+			&i.Question.AiRisk,
+			&i.Question.Version,
+			&i.Question.CreatedAt,
+			&i.Question.UpdatedAt,
+			&i.Question.ApprovedAt,
+			&i.Question.AutoApproved,
+			&i.Question.ApprovedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const testProgress = `-- name: TestProgress :many
 SELECT t.code, t.title,
        count(*)::int AS questions,
@@ -709,7 +1153,8 @@ SELECT t.code, t.title,
        count(*) FILTER (WHERE q.ai_risk = 'red' AND q.status <> 'approved')::int AS red,
        count(*) FILTER (WHERE q.ai_risk = 'yellow' AND q.status <> 'approved')::int AS yellow,
        count(*) FILTER (WHERE EXISTS (SELECT 1 FROM practice_test_questions o
-                                      WHERE o.question_id = q.id AND o.test_id <> t.id))::int AS shared
+                                      WHERE o.question_id = q.id AND o.test_id <> t.id))::int AS shared,
+       coalesce((SELECT max(v.version) FROM practice_test_versions v WHERE v.test_id = t.id), 0)::int AS published
 FROM practice_tests t
 JOIN practice_test_questions tq ON tq.test_id = t.id
 JOIN questions q ON q.id = tq.question_id
@@ -725,6 +1170,7 @@ type TestProgressRow struct {
 	Red       int32
 	Yellow    int32
 	Shared    int32
+	Published int32
 }
 
 // Every test with how far its review has come. A test opens to students when
@@ -746,6 +1192,7 @@ func (q *Queries) TestProgress(ctx context.Context) ([]TestProgressRow, error) {
 			&i.Red,
 			&i.Yellow,
 			&i.Shared,
+			&i.Published,
 		); err != nil {
 			return nil, err
 		}
@@ -810,6 +1257,42 @@ func (q *Queries) TestSlots(ctx context.Context, testID pgtype.UUID) ([]TestSlot
 		return nil, err
 	}
 	return items, nil
+}
+
+const testVersion = `-- name: TestVersion :one
+SELECT t.id, t.code, t.title, v.version, v.package
+FROM practice_tests t
+JOIN practice_test_versions v ON v.test_id = t.id
+WHERE t.code = $1 AND ($2::int = 0 OR v.version = $2::int)
+ORDER BY v.version DESC
+LIMIT 1
+`
+
+type TestVersionParams struct {
+	Code    string
+	Version int32
+}
+
+type TestVersionRow struct {
+	ID      pgtype.UUID
+	Code    string
+	Title   string
+	Version int32
+	Package []byte
+}
+
+// A published version of a test; version 0 is the latest.
+func (q *Queries) TestVersion(ctx context.Context, arg TestVersionParams) (TestVersionRow, error) {
+	row := q.db.QueryRow(ctx, testVersion, arg.Code, arg.Version)
+	var i TestVersionRow
+	err := row.Scan(
+		&i.ID,
+		&i.Code,
+		&i.Title,
+		&i.Version,
+		&i.Package,
+	)
+	return i, err
 }
 
 const touchedQuestions = `-- name: TouchedQuestions :one

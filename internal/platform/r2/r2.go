@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -78,6 +79,57 @@ func (c *Client) Put(ctx context.Context, key string, body []byte, contentType s
 	return nil
 }
 
+// PresignGet returns a URL that downloads key without credentials until it
+// expires (SigV4 query signing; R2 accepts up to 7 days).
+func (c *Client) PresignGet(key string, expires time.Duration) (string, error) {
+	base, err := url.Parse(strings.TrimRight(c.Endpoint, "/"))
+	if err != nil || base.Host == "" {
+		return "", errors.New("r2: invalid endpoint")
+	}
+	path := "/" + escapePath(c.Bucket) + "/" + escapePath(key)
+	return base.Scheme + "://" + base.Host + path + "?" + c.presignQuery(base.Host, path, expires), nil
+}
+
+// presignQuery is the signed query string of a GET of the escaped path on host.
+func (c *Client) presignQuery(host, escapedPath string, expires time.Duration) string {
+	t := c.now().UTC()
+	stamp, day := t.Format("20060102T150405Z"), t.Format("20060102")
+	scope := day + "/" + c.region() + "/s3/aws4_request"
+	// Already in canonical (sorted, escaped) order.
+	query := "X-Amz-Algorithm=AWS4-HMAC-SHA256" +
+		"&X-Amz-Credential=" + url.QueryEscape(c.AccessKey+"/"+scope) +
+		"&X-Amz-Date=" + stamp +
+		"&X-Amz-Expires=" + strconv.Itoa(int(expires/time.Second)) +
+		"&X-Amz-SignedHeaders=host"
+	canonical := strings.Join([]string{
+		http.MethodGet, escapedPath, query, "host:" + host, "", "host", "UNSIGNED-PAYLOAD",
+	}, "\n")
+	toSign := "AWS4-HMAC-SHA256\n" + stamp + "\n" + scope + "\n" + hexSHA(canonical)
+	return query + "&X-Amz-Signature=" + hex.EncodeToString(mac(c.signingKey(day), toSign))
+}
+
+func (c *Client) now() time.Time {
+	if c.Now != nil {
+		return c.Now()
+	}
+	return time.Now()
+}
+
+func (c *Client) region() string {
+	if c.Region == "" {
+		return "auto"
+	}
+	return c.Region
+}
+
+func (c *Client) signingKey(day string) []byte {
+	key := mac([]byte("AWS4"+c.SecretKey), day)
+	for _, part := range []string{c.region(), "s3", "aws4_request"} {
+		key = mac(key, part)
+	}
+	return key
+}
+
 func (c *Client) do(ctx context.Context, method, key string, body []byte, contentType string) (*http.Response, error) {
 	base, err := url.Parse(strings.TrimRight(c.Endpoint, "/"))
 	if err != nil || base.Host == "" {
@@ -118,16 +170,8 @@ func (c *Client) do(ctx context.Context, method, key string, body []byte, conten
 // sign adds the SigV4 headers for a request to the escaped path whose body
 // has the given SHA-256 (hex).
 func (c *Client) sign(req *http.Request, escapedPath, payload string) {
-	now := time.Now
-	if c.Now != nil {
-		now = c.Now
-	}
-	t := now().UTC()
+	t := c.now().UTC()
 	stamp, day := t.Format("20060102T150405Z"), t.Format("20060102")
-	region := c.Region
-	if region == "" {
-		region = "auto"
-	}
 	req.Header.Set("x-amz-date", stamp)
 	req.Header.Set("x-amz-content-sha256", payload)
 
@@ -137,15 +181,10 @@ func (c *Client) sign(req *http.Request, escapedPath, payload string) {
 		"host:" + req.URL.Host, "x-amz-content-sha256:" + payload, "x-amz-date:" + stamp, "",
 		signed, payload,
 	}, "\n")
-	scope := day + "/" + region + "/s3/aws4_request"
+	scope := day + "/" + c.region() + "/s3/aws4_request"
 	toSign := "AWS4-HMAC-SHA256\n" + stamp + "\n" + scope + "\n" + hexSHA(canonical)
-
-	key := mac([]byte("AWS4"+c.SecretKey), day)
-	for _, part := range []string{region, "s3", "aws4_request"} {
-		key = mac(key, part)
-	}
 	req.Header.Set("Authorization", fmt.Sprintf("AWS4-HMAC-SHA256 Credential=%s/%s, SignedHeaders=%s, Signature=%s",
-		c.AccessKey, scope, signed, hex.EncodeToString(mac(key, toSign))))
+		c.AccessKey, scope, signed, hex.EncodeToString(mac(c.signingKey(day), toSign))))
 }
 
 // escapePath percent-encodes everything but unreserved characters and "/".

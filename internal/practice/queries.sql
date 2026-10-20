@@ -80,7 +80,8 @@ SELECT t.code, t.title,
        count(*) FILTER (WHERE q.ai_risk = 'red' AND q.status <> 'approved')::int AS red,
        count(*) FILTER (WHERE q.ai_risk = 'yellow' AND q.status <> 'approved')::int AS yellow,
        count(*) FILTER (WHERE EXISTS (SELECT 1 FROM practice_test_questions o
-                                      WHERE o.question_id = q.id AND o.test_id <> t.id))::int AS shared
+                                      WHERE o.question_id = q.id AND o.test_id <> t.id))::int AS shared,
+       coalesce((SELECT max(v.version) FROM practice_test_versions v WHERE v.test_id = t.id), 0)::int AS published
 FROM practice_tests t
 JOIN practice_test_questions tq ON tq.test_id = t.id
 JOIN questions q ON q.id = tq.question_id
@@ -197,3 +198,98 @@ RETURNING version;
 SELECT r.question_id FROM question_ai_reviews r
 JOIN practice_tests t ON t.id = r.test_id
 WHERE t.code = @code AND r.qid = @qid;
+
+-- Publishing (spec 9.5) ------------------------------------------------------
+
+-- Tests whose questions are all approved: what can be published.
+-- name: CompleteTests :many
+SELECT t.id, t.code, t.title
+FROM practice_tests t
+WHERE EXISTS (SELECT 1 FROM practice_test_questions tq WHERE tq.test_id = t.id)
+  AND NOT EXISTS (SELECT 1 FROM practice_test_questions tq JOIN questions q ON q.id = tq.question_id
+                  WHERE tq.test_id = t.id AND q.status <> 'approved')
+ORDER BY length(t.code), t.code;
+
+-- A test's questions in order: Reading and Writing first, as in Bluebook.
+-- name: TestContent :many
+SELECT tq.module, tq.position, sqlc.embed(q)
+FROM practice_test_questions tq
+JOIN questions q ON q.id = tq.question_id
+WHERE tq.test_id = @test_id
+ORDER BY tq.subject, tq.module, tq.position;
+
+-- name: LatestTestVersion :one
+SELECT version, content_hash FROM practice_test_versions
+WHERE test_id = @test_id ORDER BY version DESC LIMIT 1;
+
+-- name: InsertTestVersion :exec
+INSERT INTO practice_test_versions (test_id, version, content_hash, package, bytes)
+VALUES (@test_id, @version, @content_hash, @package, @bytes);
+
+-- name: PublishedImages :many
+SELECT file, bytes, width, height FROM practice_published_images WHERE file = ANY (@files::text[]);
+
+-- name: InsertPublishedImage :exec
+INSERT INTO practice_published_images (file, content_type, bytes, width, height)
+VALUES (@file, @content_type, @bytes, @width, @height)
+ON CONFLICT (file) DO NOTHING;
+
+-- For students: every test, its progress, and its latest published version.
+-- name: Catalog :many
+SELECT t.code, t.title,
+       count(*)::int AS questions,
+       count(*) FILTER (WHERE q.status = 'approved')::int AS approved,
+       count(*) FILTER (WHERE tq.subject = 'english')::int AS english,
+       count(*) FILTER (WHERE tq.subject = 'math')::int AS math,
+       coalesce(v.version, 0)::int AS version, coalesce(v.bytes, 0)::int AS bytes, v.published_at
+FROM practice_tests t
+JOIN practice_test_questions tq ON tq.test_id = t.id
+JOIN questions q ON q.id = tq.question_id
+LEFT JOIN LATERAL (SELECT pv.version, pv.bytes, pv.published_at FROM practice_test_versions pv
+                   WHERE pv.test_id = t.id ORDER BY pv.version DESC LIMIT 1) v ON true
+GROUP BY t.id, v.version, v.bytes, v.published_at
+ORDER BY length(t.code), t.code;
+
+-- A published version of a test; version 0 is the latest.
+-- name: TestVersion :one
+SELECT t.id, t.code, t.title, v.version, v.package
+FROM practice_tests t
+JOIN practice_test_versions v ON v.test_id = t.id
+WHERE t.code = @code AND (@version::int = 0 OR v.version = @version::int)
+ORDER BY v.version DESC
+LIMIT 1;
+
+-- Attempts --------------------------------------------------------------------
+
+-- name: InsertAttempt :execrows
+INSERT INTO practice_attempts (id, student_client_id, test_id, test_version, sections, started_at, finished_at,
+                               answers, scores)
+VALUES (@id, @student_client_id, @test_id, @test_version, @sections, @started_at, @finished_at, @answers, @scores)
+ON CONFLICT (id) DO NOTHING;
+
+-- name: GetAttempt :one
+SELECT a.id, a.student_client_id, t.code, t.title, a.test_version, a.sections, a.started_at, a.finished_at, a.scores
+FROM practice_attempts a JOIN practice_tests t ON t.id = a.test_id
+WHERE a.id = @id;
+
+-- name: StudentAttempts :many
+SELECT a.id, a.student_client_id, t.code, t.title, a.test_version, a.sections, a.started_at, a.finished_at, a.scores
+FROM practice_attempts a JOIN practice_tests t ON t.id = a.test_id
+WHERE a.student_client_id = ANY (@client_ids::int[])
+ORDER BY a.finished_at DESC;
+
+-- Whether a teacher teaches a group now or later (as people.TeacherGroups).
+-- name: TeachesGroup :one
+SELECT EXISTS (
+    SELECT 1 FROM schedule_items s JOIN groups g ON g.id = s.group_id
+    WHERE s.group_id = @group_id AND g.removed_at IS NULL AND @teacher_id::int = ANY (s.teacher_ids)
+      AND (s.end_date IS NULL OR s.end_date >= @today::date));
+
+-- The students enrolled in a group now.
+-- name: GroupStudents :many
+SELECT DISTINCT st.client_id, st.first_name, st.last_name
+FROM enrollments e JOIN students st ON st.client_id = e.student_client_id
+WHERE e.group_id = @group_id AND st.deactivated_at IS NULL
+  AND (e.begin_date IS NULL OR e.begin_date <= @today::date)
+  AND (e.end_date IS NULL OR e.end_date >= @today::date)
+ORDER BY st.last_name, st.first_name;
