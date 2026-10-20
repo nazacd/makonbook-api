@@ -430,9 +430,6 @@ func (im Importer) storeFigures(ctx context.Context, t Test) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	if im.Uploads == nil {
-		return fmt.Errorf("the fixes have figures: set R2_UPLOADS_* to upload them")
-	}
 	have, err := practicedb.New(im.Pool).ExistingImages(ctx, keys)
 	if err != nil {
 		return err
@@ -445,6 +442,9 @@ func (im Importer) storeFigures(ctx context.Context, t Test) error {
 	for _, key := range keys {
 		if stored[key] {
 			continue
+		}
+		if im.Uploads == nil {
+			return fmt.Errorf("the fixes have figures to upload: set R2_UPLOADS_*")
 		}
 		data, err := os.ReadFile(filepath.Join(dir, path.Base(key))) //nolint:gosec // a checked name in the operator's checkout
 		if err != nil {

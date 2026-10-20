@@ -159,7 +159,11 @@ type reviewFields struct {
 		Answer   string            `json:"answer"`
 	} `json:"original"`
 	Fix *struct {
-		Changes map[string]json.RawMessage `json:"changes"`
+		Kinds       []string                   `json:"kinds"`
+		Changes     map[string]json.RawMessage `json:"changes"`
+		Figures     []Figure                   `json:"figures"`
+		Note        string                     `json:"note"`
+		NeedsPerson *string                    `json:"needs_person"`
 	} `json:"fix"`
 }
 

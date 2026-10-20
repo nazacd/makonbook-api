@@ -353,36 +353,7 @@ func (s *Service) Update(ctx context.Context, id, editor string, e Edit) (Questi
 		if cur.Version != e.BaseVersion {
 			return ErrConflict
 		}
-		e.normalize(cur.Type)
-		bad := e.Validate(cur.Subject, cur.Type)
-		missing, err := missingUploads(ctx, q, e.Figures)
-		if err != nil {
-			return err
-		}
-		if len(missing) > 0 {
-			bad["figures"] = "this image was never uploaded: " + missing[0]
-		}
-		if len(bad) > 0 {
-			return &InvalidError{Fields: bad}
-		}
-		figures, _ := json.Marshal(e.Figures)
-		p := practicedb.UpdateQuestionParams{
-			ID: uid, Passage: optText(deref(e.Passage)), Stem: e.Stem, Figures: figures, Explanation: e.Explanation,
-			Domain: e.Domain, Skill: e.Skill, Difficulty: optText(e.Difficulty),
-		}
-		if cur.Type == "mcq" {
-			p.Choices, _ = json.Marshal(e.Choices)
-			p.Correct = optText(e.Correct)
-		} else {
-			p.Accepted = e.Accepted
-		}
-		version, err := q.UpdateQuestion(ctx, p)
-		if err != nil {
-			return err
-		}
-		return q.InsertVersion(ctx, practicedb.InsertVersionParams{
-			QuestionID: uid, Version: version, Content: e.snapshot(cur.Type), Source: "editor", CreatedBy: optText(editor),
-		})
+		return save(ctx, q, cur, e, "editor", editor)
 	})
 	if err != nil {
 		return Question{}, err
@@ -427,6 +398,41 @@ func (s *Service) SetApproval(ctx context.Context, id, by string, version int32,
 		return Question{}, err
 	}
 	return s.Question(ctx, id)
+}
+
+// save checks an edit of cur and stores it as a new version, by source
+// ("editor", "group") and by. An approved question goes back to review.
+func save(ctx context.Context, q *practicedb.Queries, cur practicedb.Question, e Edit, source, by string) error {
+	e.normalize(cur.Type)
+	bad := e.Validate(cur.Subject, cur.Type)
+	missing, err := missingUploads(ctx, q, e.Figures)
+	if err != nil {
+		return err
+	}
+	if len(missing) > 0 {
+		bad["figures"] = "this image was never uploaded: " + missing[0]
+	}
+	if len(bad) > 0 {
+		return &InvalidError{Fields: bad}
+	}
+	figures, _ := json.Marshal(e.Figures)
+	p := practicedb.UpdateQuestionParams{
+		ID: cur.ID, Passage: optText(deref(e.Passage)), Stem: e.Stem, Figures: figures, Explanation: e.Explanation,
+		Domain: e.Domain, Skill: e.Skill, Difficulty: optText(e.Difficulty),
+	}
+	if cur.Type == "mcq" {
+		p.Choices, _ = json.Marshal(e.Choices)
+		p.Correct = optText(e.Correct)
+	} else {
+		p.Accepted = e.Accepted
+	}
+	version, err := q.UpdateQuestion(ctx, p)
+	if err != nil {
+		return err
+	}
+	return q.InsertVersion(ctx, practicedb.InsertVersionParams{
+		QuestionID: cur.ID, Version: version, Content: e.snapshot(cur.Type), Source: source, CreatedBy: optText(by),
+	})
 }
 
 // snapshot is the content as a version keeps it.

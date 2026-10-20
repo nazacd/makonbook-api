@@ -7,6 +7,7 @@
 //	makonbook reset-password student|teacher <id>
 //	makonbook admin …                    admin panel access (see adminUsage)
 //	makonbook practice import|list       practice tests (see practiceUsage)
+//	makonbook review-bot                 the teachers' Telegram group review
 package main
 
 import (
@@ -52,6 +53,8 @@ commands:
   sync full|incremental [--allow-mass-change]
                             run one HolliHop sync now; --allow-mass-change applies a run
                             the mass-change guard blocked, once you've checked it is real
+  review-bot                run the teachers' Telegram group review (TELEGRAM_REVIEW_TOKEN,
+                            TELEGRAM_REVIEW_CHAT_ID, RENDERER_URL)
   migrate up|down|status    manage database migrations
   healthcheck               exit 0 if the local API answers /readyz (for Docker)
   reset-password student|teacher <id>
@@ -114,6 +117,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return runAdmin(ctx, cfg, args, stdout)
 	case "practice":
 		return runPractice(ctx, cfg, args, stdout)
+	case "review-bot":
+		return reviewBot(ctx, cfg, log)
 	case "reset-password":
 		id, _ := strconv.ParseInt(arg, 10, 32) // validated in validArgs
 		return resetPassword(ctx, cfg, sub, int32(id), stdout)
@@ -126,7 +131,7 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 // typo gets the usage text rather than a "DATABASE_URL is required" error.
 func validArgs(args []string) bool {
 	switch {
-	case len(args) == 1 && (args[0] == "serve" || args[0] == "worker"):
+	case len(args) == 1 && (args[0] == "serve" || args[0] == "worker" || args[0] == "review-bot"):
 		return true
 	case len(args) == 2 && args[0] == "migrate":
 		return args[1] == "up" || args[1] == "down" || args[1] == "status"

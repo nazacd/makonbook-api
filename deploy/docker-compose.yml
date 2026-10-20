@@ -5,6 +5,7 @@
 #   makonbook-api         HTTP API (makonbook serve), reached by the edge
 #                         nginx (makonbook-nginx) as http://makonbook-api:8080
 #   makonbook-api-worker  HolliHop sync (makonbook worker)
+#   makonbook-review-bot  the teachers' Telegram group review (makonbook review-bot)
 # and a headless Chrome that draws question pictures:
 #   makonbook-renderer    reached only by the API, on the internal `render`
 #                         network (no internet), at ws://makonbook-renderer:9222
@@ -68,6 +69,20 @@ services:
     container_name: makonbook-api-worker
     command: ["worker"]
     mem_limit: 256m
+
+  # The teachers' Telegram group review (spec 9.4): posts questions as
+  # pictures, counts votes. Off until TELEGRAM_REVIEW_TOKEN is set.
+  bot:
+    <<: *common
+    container_name: makonbook-review-bot
+    command: ["review-bot"]
+    environment:
+      APP_ENV: production
+      RENDERER_URL: ws://makonbook-renderer:9222
+    networks:
+      - sat_makon_network
+      - render
+    mem_limit: 128m
 
   # Question pictures (spec 9.4): the API opens a page with everything inline
   # and takes a picture, one at a time. Pinned; update on purpose.

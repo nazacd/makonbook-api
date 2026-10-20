@@ -26,8 +26,9 @@ const (
 	Scale = 2
 )
 
-// MaxHeight bounds a picture (CSS pixels), within Telegram's limits.
-const MaxHeight = 4000
+// MaxHeight bounds a picture (CSS pixels): Telegram takes a photo whose
+// width and height add up to at most 10,000 px (2560 + 7200 here).
+const MaxHeight = 3600
 
 // ErrOff means no renderer is configured (RENDERER_URL).
 var ErrOff = errors.New("question pictures aren't set up on the server")

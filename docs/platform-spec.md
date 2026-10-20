@@ -290,7 +290,12 @@ section (College Board uses IRT; we can't reproduce it exactly).
   key) under `mb/<sha-256>.<ext>`; `practice_images` records each one. Served like the bank's images. A save
   that uses an image never uploaded is refused. The same bucket will hold the published test packages (9.5). Because of the math editor, the panel's CSP allows
   inline styles (scripts stay `'self'` only).
-- **The teachers' Telegram group** (planned, step 4; about 40 teachers). A bot posts each question that
+- **The teachers' Telegram group** (built: phase 3, step 4.2, `internal/reviewbot`, `makonbook review-bot`;
+  about 40 teachers). Questions an editor has already changed, or whose fix needs a person, stay with the
+  editors; a question goes to the group only when its fix applies and passes the checks a save does
+  (`practice.GroupReady`), so the group's approval can always be applied (`ApproveByGroup`: a version
+  `group`, approved by "Teachers' group (N for, M against)"). Settings in `review_bot` (thresholds, open
+  limit, pause); posts, votes and deny reasons in `group_posts`, `group_votes`, `group_deny_reasons`. A bot posts each question that
   isn't green as a pair of images: the bank's original screenshots, then the fixed version drawn like
   Bluebook (white, purple accent, our logo and "MakonBook" in the header; R&W: passage left, question and
   choices right; Math: centred; the correct choice marked; a grid-in shows its accepted answers separated
