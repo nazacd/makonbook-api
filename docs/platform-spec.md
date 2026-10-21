@@ -388,6 +388,8 @@ any line is wrong; the command lists the problems. Images are copied to MakonBoo
   from two phones merge without conflicts. The phone uploads new entries (`POST /v1/vocab/reviews`, 200 at a time,
   idempotent by id) and fetches the ones it doesn't have (`GET /v1/me/vocab/reviews?after=<seq>`), e.g. on a new
   phone (`vocab_reviews`).
+- **Settings** are per phone: the lists turned on and new words a day (10/20/30/50). A phone where the student
+  never changed them (a new phone) counts the lists they already studied as on, so progress carries on.
 - **Teachers** (`GET /v1/teacher/groups/{id}/vocab`): per student, words started, words learned (next review 21
   days or more away, Anki's "mature"), reviews in the last 7 days, last review.
 
