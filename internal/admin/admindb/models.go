@@ -373,3 +373,58 @@ type Teacher struct {
 	UpdatedAt     pgtype.Timestamptz
 	ActivatedAt   pgtype.Timestamptz
 }
+
+type VocabDeck struct {
+	Singleton bool
+	Version   string
+	BuiltAt   pgtype.Timestamptz
+}
+
+type VocabImage struct {
+	File        string
+	ContentType string
+	Bytes       int32
+	Width       int32
+	Height      int32
+	CreatedAt   pgtype.Timestamptz
+}
+
+type VocabList struct {
+	ID        pgtype.UUID
+	Slug      string
+	Title     string
+	Position  int32
+	RemovedAt pgtype.Timestamptz
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
+
+type VocabReview struct {
+	Seq             int64
+	ID              pgtype.UUID
+	StudentClientID int32
+	WordID          pgtype.UUID
+	Rating          int16
+	ReviewedAt      pgtype.Timestamptz
+	DurationMs      int32
+	State           int16
+	Due             pgtype.Timestamptz
+	Stability       float32
+	Difficulty      float32
+	ScheduledDays   int32
+	ReceivedAt      pgtype.Timestamptz
+}
+
+type VocabWord struct {
+	ID           pgtype.UUID
+	ListID       pgtype.UUID
+	Position     int32
+	Word         string
+	PartOfSpeech pgtype.Text
+	Definition   string
+	Example      string
+	Image        pgtype.Text
+	RemovedAt    pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}

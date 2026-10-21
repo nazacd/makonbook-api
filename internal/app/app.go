@@ -21,6 +21,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/practice"
 	"github.com/nazacd/makonbook-api/internal/system"
 	"github.com/nazacd/makonbook-api/internal/system/systemdb"
+	"github.com/nazacd/makonbook-api/internal/vocab"
 	adminweb "github.com/nazacd/makonbook-api/web/admin"
 )
 
@@ -69,6 +70,7 @@ func Handler(d Deps) http.Handler {
 	attendance.NewHandler(attendanceSvc, d.Location, authHandler.Require).Register(mux)
 	practiceSvc := practiceService(d)
 	practice.NewHandler(practiceSvc, d.Location, authHandler.Require).Register(mux)
+	vocab.NewHandler(vocab.NewService(d.Pool, signer(d.Uploads)), d.Location, authHandler.Require).Register(mux)
 	panel := admin.Panel{
 		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory, Practice: practiceSvc,
 		Location: d.Location, WriteEnabled: d.HolliHopWriteEnabled,
@@ -127,6 +129,14 @@ func practiceService(d Deps) *practice.Service {
 		}
 	}
 	return svc
+}
+
+// signer keeps a nil client a nil interface (no image links).
+func signer(c *r2.Client) vocab.Signer {
+	if c == nil {
+		return nil
+	}
+	return c
 }
 
 func uploadStore(c *r2.Client) practice.Store {
