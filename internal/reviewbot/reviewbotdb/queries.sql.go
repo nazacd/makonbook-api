@@ -130,7 +130,7 @@ func (q *Queries) DropReasonRequest(ctx context.Context, userID int64) error {
 }
 
 const expiredPosts = `-- name: ExpiredPosts :many
-SELECT id, question_id, version, test_code, qid, risk, caption, chat_id, photo_ids, vote_id, status, approvals, denials, posted_at, decided_at, picture_version FROM group_posts WHERE status = 'open' AND posted_at < $1 ORDER BY id
+SELECT id, question_id, version, test_code, qid, risk, caption, chat_id, photo_ids, vote_id, status, approvals, denials, posted_at, decided_at, picture_version, outcome, outcome_shown FROM group_posts WHERE status = 'open' AND posted_at < $1 ORDER BY id
 `
 
 // Open posts that got too few votes to decide before the time given (now
@@ -161,6 +161,8 @@ func (q *Queries) ExpiredPosts(ctx context.Context, before pgtype.Timestamptz) (
 			&i.PostedAt,
 			&i.DecidedAt,
 			&i.PictureVersion,
+			&i.Outcome,
+			&i.OutcomeShown,
 		); err != nil {
 			return nil, err
 		}
@@ -230,7 +232,7 @@ func (q *Queries) OpenCount(ctx context.Context) (int32, error) {
 }
 
 const overtakenPosts = `-- name: OvertakenPosts :many
-SELECT p.id, p.question_id, p.version, p.test_code, p.qid, p.risk, p.caption, p.chat_id, p.photo_ids, p.vote_id, p.status, p.approvals, p.denials, p.posted_at, p.decided_at, p.picture_version
+SELECT p.id, p.question_id, p.version, p.test_code, p.qid, p.risk, p.caption, p.chat_id, p.photo_ids, p.vote_id, p.status, p.approvals, p.denials, p.posted_at, p.decided_at, p.picture_version, p.outcome, p.outcome_shown
 FROM group_posts p
 JOIN questions q ON q.id = p.question_id
 WHERE p.status = 'open' AND (q.status = 'approved' OR q.version <> p.version)
@@ -264,6 +266,8 @@ func (q *Queries) OvertakenPosts(ctx context.Context) ([]GroupPost, error) {
 			&i.PostedAt,
 			&i.DecidedAt,
 			&i.PictureVersion,
+			&i.Outcome,
+			&i.OutcomeShown,
 		); err != nil {
 			return nil, err
 		}
@@ -287,7 +291,7 @@ func (q *Queries) PendingReason(ctx context.Context, userID int64) (int64, error
 }
 
 const post = `-- name: Post :one
-SELECT id, question_id, version, test_code, qid, risk, caption, chat_id, photo_ids, vote_id, status, approvals, denials, posted_at, decided_at, picture_version FROM group_posts WHERE id = $1
+SELECT id, question_id, version, test_code, qid, risk, caption, chat_id, photo_ids, vote_id, status, approvals, denials, posted_at, decided_at, picture_version, outcome, outcome_shown FROM group_posts WHERE id = $1
 `
 
 func (q *Queries) Post(ctx context.Context, id int64) (GroupPost, error) {
@@ -310,6 +314,8 @@ func (q *Queries) Post(ctx context.Context, id int64) (GroupPost, error) {
 		&i.PostedAt,
 		&i.DecidedAt,
 		&i.PictureVersion,
+		&i.Outcome,
+		&i.OutcomeShown,
 	)
 	return i, err
 }
@@ -320,6 +326,22 @@ UPDATE review_bot SET update_offset = $1
 
 func (q *Queries) SaveOffset(ctx context.Context, updateOffset int64) error {
 	_, err := q.db.Exec(ctx, saveOffset, updateOffset)
+	return err
+}
+
+const setOutcome = `-- name: SetOutcome :exec
+UPDATE group_posts SET outcome = $1, outcome_shown = $2 WHERE id = $3
+`
+
+type SetOutcomeParams struct {
+	Outcome pgtype.Text
+	Shown   bool
+	ID      int64
+}
+
+// A decided post's last line, and whether Telegram showed it.
+func (q *Queries) SetOutcome(ctx context.Context, arg SetOutcomeParams) error {
+	_, err := q.db.Exec(ctx, setOutcome, arg.Outcome, arg.Shown, arg.ID)
 	return err
 }
 
@@ -362,7 +384,7 @@ func (q *Queries) Settings(ctx context.Context) (ReviewBot, error) {
 }
 
 const stalePictures = `-- name: StalePictures :many
-SELECT id, question_id, version, test_code, qid, risk, caption, chat_id, photo_ids, vote_id, status, approvals, denials, posted_at, decided_at, picture_version FROM group_posts WHERE status = 'open' AND picture_version <> $1 ORDER BY id
+SELECT id, question_id, version, test_code, qid, risk, caption, chat_id, photo_ids, vote_id, status, approvals, denials, posted_at, decided_at, picture_version, outcome, outcome_shown FROM group_posts WHERE status = 'open' AND picture_version <> $1 ORDER BY id
 `
 
 // Open posts drawn with another version of the picture page.
@@ -392,6 +414,8 @@ func (q *Queries) StalePictures(ctx context.Context, pictureVersion string) ([]G
 			&i.PostedAt,
 			&i.DecidedAt,
 			&i.PictureVersion,
+			&i.Outcome,
+			&i.OutcomeShown,
 		); err != nil {
 			return nil, err
 		}
@@ -421,6 +445,50 @@ func (q *Queries) Tally(ctx context.Context, id int64) (TallyRow, error) {
 	var i TallyRow
 	err := row.Scan(&i.Approvals, &i.Denials)
 	return i, err
+}
+
+const unshownOutcomes = `-- name: UnshownOutcomes :many
+SELECT id, question_id, version, test_code, qid, risk, caption, chat_id, photo_ids, vote_id, status, approvals, denials, posted_at, decided_at, picture_version, outcome, outcome_shown FROM group_posts WHERE status <> 'open' AND NOT outcome_shown AND outcome IS NOT NULL ORDER BY id LIMIT 10
+`
+
+// Decided posts whose last edit Telegram refused, a few at a time.
+func (q *Queries) UnshownOutcomes(ctx context.Context) ([]GroupPost, error) {
+	rows, err := q.db.Query(ctx, unshownOutcomes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GroupPost
+	for rows.Next() {
+		var i GroupPost
+		if err := rows.Scan(
+			&i.ID,
+			&i.QuestionID,
+			&i.Version,
+			&i.TestCode,
+			&i.Qid,
+			&i.Risk,
+			&i.Caption,
+			&i.ChatID,
+			&i.PhotoIds,
+			&i.VoteID,
+			&i.Status,
+			&i.Approvals,
+			&i.Denials,
+			&i.PostedAt,
+			&i.DecidedAt,
+			&i.PictureVersion,
+			&i.Outcome,
+			&i.OutcomeShown,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const userVote = `-- name: UserVote :one

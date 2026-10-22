@@ -130,12 +130,21 @@ func (b *Bot) Tick(ctx context.Context, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	var closed []reviewbotdb.GroupPost
 	for _, p := range overtaken {
-		if n, err := q.Decide(ctx, reviewbotdb.DecideParams{ID: p.ID, Status: "closed"}); err != nil || n == 0 {
-			continue
+		if n, err := q.Decide(ctx, reviewbotdb.DecideParams{ID: p.ID, Status: "closed"}); err == nil && n > 0 {
+			closed = append(closed, p)
 		}
-		b.edit(ctx, p, "🛈 Closed: the question was changed or decided in the admin panel.")
 	}
+	b.edits(ctx, closed, func(reviewbotdb.GroupPost) string {
+		return "🛈 Closed: the question was changed or decided in the admin panel."
+	})
+	// Outcomes Telegram refused before: again.
+	unshown, err := q.UnshownOutcomes(ctx)
+	if err != nil {
+		return err
+	}
+	b.edits(ctx, unshown, func(p reviewbotdb.GroupPost) string { return p.Outcome.String })
 
 	s, err := q.Settings(ctx)
 	if err != nil {
@@ -176,14 +185,17 @@ func (b *Bot) expire(ctx context.Context, q *reviewbotdb.Queries, before time.Ti
 	if err != nil {
 		return err
 	}
+	var closed []reviewbotdb.GroupPost
 	for _, p := range stale {
-		if n, err := q.Decide(ctx, reviewbotdb.DecideParams{ID: p.ID, Status: "expired"}); err != nil || n == 0 {
-			continue
+		if n, err := q.Decide(ctx, reviewbotdb.DecideParams{ID: p.ID, Status: "expired"}); err == nil && n > 0 {
+			closed = append(closed, p)
+			b.log.Info("review bot: expired", "post", p.ID, "for", p.Approvals, "against", p.Denials)
 		}
-		b.edit(ctx, p, fmt.Sprintf("⏱ Closed: not enough votes in %d hours (%d for, %d against). An editor will decide in the admin panel.",
-			hours, p.Approvals, p.Denials))
-		b.log.Info("review bot: expired", "post", p.ID, "for", p.Approvals, "against", p.Denials)
 	}
+	b.edits(ctx, closed, func(p reviewbotdb.GroupPost) string {
+		return fmt.Sprintf("⏱ Closed: not enough votes in %d hours (%d for, %d against). An editor will decide in the admin panel.",
+			hours, p.Approvals, p.Denials)
+	})
 	return nil
 }
 
@@ -488,9 +500,30 @@ func (b *Bot) private(ctx context.Context, m *telegram.Message) error {
 }
 
 // edit replaces a post's vote message with its outcome, without buttons.
+// edit shows a decided post's outcome under its caption and removes the
+// buttons, waiting out Telegram's rate limit once. If Telegram still refuses,
+// the outcome is kept and Tick tries again.
 func (b *Bot) edit(ctx context.Context, p reviewbotdb.GroupPost, outcome string) {
-	if err := b.tg.EditMessage(ctx, p.ChatID, p.VoteID, p.Caption+"\n\n"+outcome, nil); err != nil && !telegram.NotModified(err) {
-		b.log.Warn("review bot: edit", "post", p.ID, "err", err)
+	_, err := retry(ctx, func() (struct{}, error) {
+		return struct{}{}, b.tg.EditMessage(ctx, p.ChatID, p.VoteID, p.Caption+"\n\n"+outcome, nil)
+	})
+	shown := err == nil || telegram.NotModified(err)
+	if !shown {
+		b.log.Warn("review bot: edit (will try again)", "post", p.ID, "err", err)
+	}
+	if err := reviewbotdb.New(b.pool).SetOutcome(ctx, reviewbotdb.SetOutcomeParams{ID: p.ID, Outcome: pgtype.Text{String: outcome, Valid: true}, Shown: shown}); err != nil {
+		b.log.Warn("review bot: keep outcome", "post", p.ID, "err", err)
+	}
+}
+
+// edits shows outcomes on several posts, pausing between them: edits count
+// toward Telegram's limit for a group like messages do.
+func (b *Bot) edits(ctx context.Context, posts []reviewbotdb.GroupPost, outcome func(reviewbotdb.GroupPost) string) {
+	for i, p := range posts {
+		if i > 0 {
+			sleep(ctx, b.pause)
+		}
+		b.edit(ctx, p, outcome(p))
 	}
 }
 

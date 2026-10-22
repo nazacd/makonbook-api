@@ -305,7 +305,9 @@ section (College Board uses IRT; we can't reproduce it exactly).
   Counts stay hidden until then, so votes don't follow each other. Approved: the fix is applied as a version
   of its own and the question is approved. Denied: it goes to the editors' queue, with the reasons the bot
   asks for (optional). Posted one an hour from 08:00 to 23:00 while fewer than `max_open` (20) are undecided; a question
-  without enough votes in `vote_hours` (48) closes (`expired`) and stays for the editors, freeing its place. An editor's
+  without enough votes in `vote_hours` (48) closes (`expired`) and stays for the editors, freeing its place.
+  Each decided post's outcome line is kept (`group_posts.outcome`); an edit Telegram refuses is tried again at the
+  next check, with a pause between edits (Telegram's limit for a group). An editor's
   decision in the panel comes first and closes the vote; a later edit sends the question back to review.
   The images are drawn on the server by a headless browser (its own container). When an update changes the
   picture page, the bot draws its open posts again on start and replaces their photos in place
