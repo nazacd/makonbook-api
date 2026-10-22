@@ -24,6 +24,7 @@ type fakeTelegram struct {
 	messages []string // chat: text
 	edits    map[int64]string
 	kbs      map[int64]telegram.Keyboard
+	refuse   int              // edits to refuse with "too many requests", the next ones
 	answers  []string         // text or link
 	redrawn  map[int64]string // photo message: picture, caption
 }
@@ -58,6 +59,10 @@ func (f *fakeTelegram) SendMessage(_ context.Context, chatID int64, text string,
 }
 
 func (f *fakeTelegram) EditMessage(_ context.Context, _, messageID int64, text string, kb telegram.Keyboard) error {
+	if f.refuse > 0 {
+		f.refuse--
+		return &telegram.Error{Code: 429, Description: "Too Many Requests", RetryAfter: time.Millisecond}
+	}
 	f.edits[messageID], f.kbs[messageID] = text, kb
 	return nil
 }
@@ -359,11 +364,28 @@ func TestStalePostsClose(t *testing.T) {
 		WHERE id = (SELECT min(id) FROM group_posts) RETURNING id, vote_id`, at(12).Add(-49*time.Hour)).Scan(&first, &firstVote); err != nil {
 		t.Fatal(err)
 	}
+	// Telegram refuses the edit, even after waiting once: the post is closed
+	// all the same, and the next check shows it.
+	tg.refuse = 2
 	if err := b.Tick(ctx, at(12)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(tg.edits[firstVote], "Closed") {
+		t.Fatalf("edited while refused: %q", tg.edits[firstVote])
+	}
+	if err := b.Tick(ctx, at(12).Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(tg.edits[firstVote], "not enough votes in 48 hours (1 for, 0 against)") || tg.kbs[firstVote] != nil {
 		t.Errorf("expired: %q", tg.edits[firstVote])
+	}
+	// Shown once: the next check leaves it alone.
+	delete(tg.edits, firstVote)
+	if err := b.Tick(ctx, at(12).Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, edited := tg.edits[firstVote]; edited {
+		t.Error("edited again after it was shown")
 	}
 	if open() != 2 || len(tg.photos) != 3 {
 		t.Errorf("the next one didn't take its place: %d open, %d posted", open(), len(tg.photos))

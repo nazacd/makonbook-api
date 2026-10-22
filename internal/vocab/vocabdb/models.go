@@ -158,6 +158,8 @@ type GroupPost struct {
 	PostedAt       pgtype.Timestamptz
 	DecidedAt      pgtype.Timestamptz
 	PictureVersion string
+	Outcome        pgtype.Text
+	OutcomeShown   bool
 }
 
 type GroupReasonRequest struct {

@@ -93,3 +93,11 @@ DELETE FROM group_reason_requests WHERE user_id = @user_id;
 
 -- name: AddReason :exec
 INSERT INTO group_deny_reasons (post_id, user_id, name, reason) VALUES (@post_id, @user_id, @name, @reason);
+
+-- A decided post's last line, and whether Telegram showed it.
+-- name: SetOutcome :exec
+UPDATE group_posts SET outcome = @outcome, outcome_shown = @shown WHERE id = @id;
+
+-- Decided posts whose last edit Telegram refused, a few at a time.
+-- name: UnshownOutcomes :many
+SELECT * FROM group_posts WHERE status <> 'open' AND NOT outcome_shown AND outcome IS NOT NULL ORDER BY id LIMIT 10;
