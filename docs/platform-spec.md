@@ -304,7 +304,8 @@ section (College Board uses IRT; we can't reproduce it exactly).
   decision. The decision: **red** 10 approvals or 5 denials; **yellow** 5 approvals or 5 denials (settings).
   Counts stay hidden until then, so votes don't follow each other. Approved: the fix is applied as a version
   of its own and the question is approved. Denied: it goes to the editors' queue, with the reasons the bot
-  asks for (optional). Posted in batches (about 10 a day), the next when one is decided. An editor's
+  asks for (optional). Posted one an hour from 08:00 to 23:00 while fewer than `max_open` (20) are undecided; a question
+  without enough votes in `vote_hours` (48) closes (`expired`) and stays for the editors, freeing its place. An editor's
   decision in the panel comes first and closes the vote; a later edit sends the question back to review.
   The images are drawn on the server by a headless browser (its own container). When an update changes the
   picture page, the bot draws its open posts again on start and replaces their photos in place

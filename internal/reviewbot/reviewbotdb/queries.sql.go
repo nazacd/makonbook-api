@@ -129,6 +129,49 @@ func (q *Queries) DropReasonRequest(ctx context.Context, userID int64) error {
 	return err
 }
 
+const expiredPosts = `-- name: ExpiredPosts :many
+SELECT id, question_id, version, test_code, qid, risk, caption, chat_id, photo_ids, vote_id, status, approvals, denials, posted_at, decided_at, picture_version FROM group_posts WHERE status = 'open' AND posted_at < $1 ORDER BY id
+`
+
+// Open posts that got too few votes to decide before the time given (now
+// less review_bot.vote_hours).
+func (q *Queries) ExpiredPosts(ctx context.Context, before pgtype.Timestamptz) ([]GroupPost, error) {
+	rows, err := q.db.Query(ctx, expiredPosts, before)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GroupPost
+	for rows.Next() {
+		var i GroupPost
+		if err := rows.Scan(
+			&i.ID,
+			&i.QuestionID,
+			&i.Version,
+			&i.TestCode,
+			&i.Qid,
+			&i.Risk,
+			&i.Caption,
+			&i.ChatID,
+			&i.PhotoIds,
+			&i.VoteID,
+			&i.Status,
+			&i.Approvals,
+			&i.Denials,
+			&i.PostedAt,
+			&i.DecidedAt,
+			&i.PictureVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const insertPost = `-- name: InsertPost :one
 INSERT INTO group_posts (question_id, version, test_code, qid, risk, caption, chat_id, photo_ids, vote_id, picture_version)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -172,15 +215,6 @@ UPDATE review_bot SET last_post_at = $1
 
 func (q *Queries) MarkHourlyPost(ctx context.Context, at pgtype.Timestamptz) error {
 	_, err := q.db.Exec(ctx, markHourlyPost, at)
-	return err
-}
-
-const markTopUp = `-- name: MarkTopUp :exec
-UPDATE review_bot SET last_topup_on = $1
-`
-
-func (q *Queries) MarkTopUp(ctx context.Context, day pgtype.Date) error {
-	_, err := q.db.Exec(ctx, markTopUp, day)
 	return err
 }
 
@@ -305,7 +339,7 @@ func (q *Queries) SetPictureVersion(ctx context.Context, arg SetPictureVersionPa
 
 const settings = `-- name: Settings :one
 
-SELECT id, paused, red_approvals, red_denials, yellow_approvals, yellow_denials, max_open, update_offset, last_post_at, last_topup_on FROM review_bot
+SELECT id, paused, red_approvals, red_denials, yellow_approvals, yellow_denials, max_open, update_offset, last_post_at, vote_hours FROM review_bot
 `
 
 // The teachers' Telegram group review (spec 9.4).
@@ -322,7 +356,7 @@ func (q *Queries) Settings(ctx context.Context) (ReviewBot, error) {
 		&i.MaxOpen,
 		&i.UpdateOffset,
 		&i.LastPostAt,
-		&i.LastTopupOn,
+		&i.VoteHours,
 	)
 	return i, err
 }

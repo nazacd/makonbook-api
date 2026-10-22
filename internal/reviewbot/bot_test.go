@@ -185,13 +185,16 @@ func TestGroupReview(t *testing.T) {
 	if err := b.Tick(ctx, at(9, 40)); err != nil || len(tg.photos) != 1 {
 		t.Fatalf("same hour: %v %d", err, len(tg.photos))
 	}
-	// 13:00: one for the hour, then the top-up to 3 open. The one needing a
-	// person and the one without a fix are never posted.
-	if err := b.Tick(ctx, at(13, 2)); err != nil {
-		t.Fatal(err)
+	// One an hour, never a burst: 10:00 and 13:00 add one each (13:00 is
+	// no longer a top-up). The one needing a person and the one without a
+	// fix are never posted.
+	for _, h := range []int{10, 13} {
+		if err := b.Tick(ctx, at(h, 2)); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if n := count(`SELECT count(*) FROM group_posts WHERE status = 'open'`); n != 3 || len(tg.photos[2]) != 1 {
-		t.Fatalf("top-up: %d open, last post %d pictures", n, len(tg.photos[2]))
+	if n := count(`SELECT count(*) FROM group_posts WHERE status = 'open'`); n != 3 || len(tg.photos) != 3 || len(tg.photos[2]) != 1 {
+		t.Fatalf("hourly: %d open, %d posts", n, len(tg.photos))
 	}
 	if n := count(`SELECT count(*) FROM group_posts WHERE qid IN ('math-m1-04', 'math-m1-05')`); n != 0 {
 		t.Error("posted a question a person must handle, or one without a fix")
@@ -309,5 +312,67 @@ func TestGroupReview(t *testing.T) {
 	}
 	if n := count(`SELECT count(*) FROM group_posts WHERE status = 'open'`); n != 0 {
 		t.Errorf("open after all that: %d", n)
+	}
+}
+
+// With the open limit reached the bot waits; a post that gets too few votes
+// within vote_hours closes for the editors, and the next hour's question goes
+// out in its place.
+func TestStalePostsClose(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := t.Context()
+	day := testDay(t, "DAY3", func(qid string, rec map[string]any) {
+		if strings.HasPrefix(qid, "math-m1-0") {
+			rec["risk"] = "yellow"
+			rec["fix"] = map[string]any{"kinds": []string{"corrected"}, "changes": map[string]string{"choices.C": "c fixed"}, "note": "C had a typo."}
+		}
+	})
+	if _, err := (practice.Importer{Pool: pool}).Import(ctx, day, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE review_bot SET max_open = 2`); err != nil {
+		t.Fatal(err)
+	}
+	tg := &fakeTelegram{edits: map[int64]string{}, kbs: map[int64]telegram.Keyboard{}, redrawn: map[int64]string{}}
+	tashkent, _ := time.LoadLocation("Asia/Tashkent")
+	b := New(pool, tg, &drawing{Service: practice.NewService(pool, nil), version: "v1"}, group, tashkent, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	b.username, b.pause = "makonbook_review_bot", 0
+	at := func(h int) time.Time { return time.Date(2026, 10, 21, h, 1, 0, 0, tashkent) }
+	open := func() (n int) {
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM group_posts WHERE status = 'open'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	for _, h := range []int{9, 10, 11} {
+		if err := b.Tick(ctx, at(h)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if open() != 2 || len(tg.photos) != 2 {
+		t.Fatalf("at the limit: %d open, %d posted", open(), len(tg.photos))
+	}
+	// The first post has been up for 49 hours with one vote.
+	var first, firstVote int64
+	if err := pool.QueryRow(ctx, `UPDATE group_posts SET posted_at = $1, approvals = 1
+		WHERE id = (SELECT min(id) FROM group_posts) RETURNING id, vote_id`, at(12).Add(-49*time.Hour)).Scan(&first, &firstVote); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Tick(ctx, at(12)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(tg.edits[firstVote], "not enough votes in 48 hours (1 for, 0 against)") || tg.kbs[firstVote] != nil {
+		t.Errorf("expired: %q", tg.edits[firstVote])
+	}
+	if open() != 2 || len(tg.photos) != 3 {
+		t.Errorf("the next one didn't take its place: %d open, %d posted", open(), len(tg.photos))
+	}
+	err := b.Handle(ctx, telegram.Update{CallbackQuery: &telegram.CallbackQuery{
+		ID: "q", From: telegram.User{ID: 7, FirstName: "Teacher"}, Data: fmt.Sprintf("a:%d", first),
+		Message: &telegram.Message{Chat: telegram.Chat{ID: group}},
+	}})
+	if err != nil || tg.answers[len(tg.answers)-1] != "This vote is closed." {
+		t.Errorf("a vote after it closed: %v %q", err, tg.answers[len(tg.answers)-1])
 	}
 }

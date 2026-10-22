@@ -315,7 +315,7 @@ type ReviewBot struct {
 	MaxOpen         int16
 	UpdateOffset    int64
 	LastPostAt      pgtype.Timestamptz
-	LastTopupOn     pgtype.Date
+	VoteHours       int16
 }
 
 type ScheduleItem struct {

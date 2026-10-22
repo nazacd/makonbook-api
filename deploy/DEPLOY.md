@@ -361,8 +361,11 @@ hidden totals until the decision: red needs 10 approvals or 5 denials, yellow
 5 and 5. Approved: the fix is applied (a version "Teachers' group") and the
 question approved. Denied: it stays for the editors, with the reasons the bot
 asks each teacher who denied in a private chat. It posts one question an hour
-from 08:00 to 23:00 (Tashkent) and at 13:00 tops up to 20 open; nothing at
-night. Questions an editor has already changed, or that need a person (a photo
+from 08:00 to 23:00 (Tashkent) while fewer than 20 are undecided; nothing at
+night. A question that doesn't get enough votes in 48 hours closes ("not
+enough votes", buttons removed) and stays for the editors, so the next one
+takes its place. To change the numbers: `docker exec -i db psql -U postgres -d
+makonbook_api -c "UPDATE review_bot SET max_open = 20, vote_hours = 48"`. Questions an editor has already changed, or that need a person (a photo
 to replace), are left to the editors.
 
 Once:

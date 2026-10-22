@@ -9,9 +9,6 @@ UPDATE review_bot SET update_offset = @update_offset;
 -- name: MarkHourlyPost :exec
 UPDATE review_bot SET last_post_at = @at;
 
--- name: MarkTopUp :exec
-UPDATE review_bot SET last_topup_on = @day;
-
 -- name: OpenCount :one
 SELECT count(*)::int FROM group_posts WHERE status = 'open';
 
@@ -53,6 +50,11 @@ SELECT p.*
 FROM group_posts p
 JOIN questions q ON q.id = p.question_id
 WHERE p.status = 'open' AND (q.status = 'approved' OR q.version <> p.version);
+
+-- Open posts that got too few votes to decide before the time given (now
+-- less review_bot.vote_hours).
+-- name: ExpiredPosts :many
+SELECT * FROM group_posts WHERE status = 'open' AND posted_at < @before ORDER BY id;
 
 -- Open posts drawn with another version of the picture page.
 -- name: StalePictures :many

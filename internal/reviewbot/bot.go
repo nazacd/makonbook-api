@@ -3,8 +3,9 @@
 // the AI's fix, with Approve and Deny; counts one vote per Telegram account;
 // applies the fix and approves when enough teachers approve, or sends the
 // question to the editors when enough deny, asking each who denied why in a
-// private chat. It posts one question an hour from 08:00 to 23:00, and at
-// 13:00 enough to fill the open limit.
+// private chat. It posts one question an hour from 08:00 to 23:00 while fewer
+// than the open limit are undecided; a question that doesn't get enough
+// votes within review_bot.vote_hours (48) closes and goes to the editors.
 package reviewbot
 
 import (
@@ -63,12 +64,10 @@ func New(pool *pgxpool.Pool, tg Telegram, p Practice, chatID int64, loc *time.Lo
 	return &Bot{pool: pool, tg: tg, practice: p, chatID: chatID, loc: loc, log: log, pause: 4 * time.Second}
 }
 
-// Posting hours, Tashkent time: one question an hour from 08:00 to 23:00;
-// at 13:00 (lunch) as many as fill the open limit.
+// Posting hours, Tashkent time: one question an hour from 08:00 to 23:00.
 const (
 	firstHour = 8
 	lastHour  = 23
-	topUpHour = 13
 )
 
 // Run reads Telegram until ctx ends, and keeps the schedule.
@@ -123,8 +122,8 @@ func (b *Bot) poll(ctx context.Context) error {
 	return nil
 }
 
-// Tick keeps the schedule at now: closes posts the panel overtook, then
-// posts what this hour calls for.
+// Tick keeps the schedule at now: closes posts the panel overtook and posts
+// whose time to vote ran out, then posts the hour's question.
 func (b *Bot) Tick(ctx context.Context, now time.Time) error {
 	q := reviewbotdb.New(b.pool)
 	overtaken, err := q.OvertakenPosts(ctx)
@@ -139,35 +138,51 @@ func (b *Bot) Tick(ctx context.Context, now time.Time) error {
 	}
 
 	s, err := q.Settings(ctx)
-	if err != nil || s.Paused || b.chatID == 0 {
+	if err != nil {
 		return err
+	}
+	if err := b.expire(ctx, q, now.Add(-time.Duration(s.VoteHours)*time.Hour), int(s.VoteHours)); err != nil {
+		return err
+	}
+	if s.Paused || b.chatID == 0 {
+		return nil
 	}
 	local := now.In(b.loc)
 	if local.Hour() < firstHour || local.Hour() > lastHour {
 		return nil
 	}
-	n, err := q.OpenCount(ctx)
+	hour := time.Date(local.Year(), local.Month(), local.Day(), local.Hour(), 0, 0, 0, b.loc)
+	if s.LastPostAt.Valid && !s.LastPostAt.Time.Before(hour) {
+		return nil // this hour's question is out
+	}
+	if err := q.MarkHourlyPost(ctx, pgtype.Timestamptz{Time: now, Valid: true}); err != nil {
+		return err
+	}
+	open, err := q.OpenCount(ctx)
 	if err != nil {
 		return err
 	}
-	open, most := int(n), int(s.MaxOpen)
-	hour := time.Date(local.Year(), local.Month(), local.Day(), local.Hour(), 0, 0, 0, b.loc)
-	if !s.LastPostAt.Valid || s.LastPostAt.Time.Before(hour) {
-		if err := q.MarkHourlyPost(ctx, pgtype.Timestamptz{Time: now, Valid: true}); err != nil {
-			return err
-		}
-		if open < most {
-			open += b.postNext(ctx, 1)
-		}
+	if open < int32(s.MaxOpen) {
+		b.postNext(ctx, 1)
 	}
-	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
-	if local.Hour() == topUpHour && (!s.LastTopupOn.Valid || s.LastTopupOn.Time.Before(today)) {
-		if err := q.MarkTopUp(ctx, pgtype.Date{Time: today, Valid: true}); err != nil {
-			return err
+	return nil
+}
+
+// expire closes the open posts put up before the given time without enough
+// votes: the votes so far are kept, the buttons go, and the question stays in
+// the editors' queue in the admin panel.
+func (b *Bot) expire(ctx context.Context, q *reviewbotdb.Queries, before time.Time, hours int) error {
+	stale, err := q.ExpiredPosts(ctx, pgtype.Timestamptz{Time: before, Valid: true})
+	if err != nil {
+		return err
+	}
+	for _, p := range stale {
+		if n, err := q.Decide(ctx, reviewbotdb.DecideParams{ID: p.ID, Status: "expired"}); err != nil || n == 0 {
+			continue
 		}
-		if open < most {
-			b.postNext(ctx, most-open)
-		}
+		b.edit(ctx, p, fmt.Sprintf("⏱ Closed: not enough votes in %d hours (%d for, %d against). An editor will decide in the admin panel.",
+			hours, p.Approvals, p.Denials))
+		b.log.Info("review bot: expired", "post", p.ID, "for", p.Approvals, "against", p.Denials)
 	}
 	return nil
 }
