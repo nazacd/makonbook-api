@@ -350,8 +350,57 @@ Stays bundled, public, offline, unscored-on-server (D1, D9). Data model changes:
 - grid-in `correct: number` → `accepted: string[]` (each parsed as decimal or fraction, compared with tolerance), to allow several correct answers;
 - content guideline: rebalance tiers toward 17/17/16 (Math currently 26/15/9, English 16/20/14).
 
-## 11. Vocabulary (phase 4)
-Words and lists in Postgres; lists assignable to groups. Scheduling with **FSRS** (Anki's current default; Go port `go-fsrs`). Device stores an append-only review log and syncs it; card state is recomputed from the log → offline-safe, conflict-free.
+## 11. Vocabulary (phase 4, built)
+SAT MAKON's word lists (~1,200 words), studied like Anki: spaced repetition with **FSRS** on the phone. **Every
+student sees every list** (no assignment); a student turns on the lists they want. Teachers see their groups'
+progress. The words are prepared outside MakonBook (fixed and adjusted in their own repository) and loaded
+with an import, like the practice tests.
+
+### 11.1 Import format
+`makonbook vocab import <path>` (`internal/vocab`): a folder holding **`words.jsonl`** (one JSON object per line)
+or **`words.csv`** (a header with the same names), and an optional **`images/`** folder. Fields:
+
+| field | | |
+|---|---|---|
+| `list` | required | the list's id: lower-case letters, digits, dashes (`sat-1`) |
+| `list_title` | required | e.g. `SAT Words 1`; the same for every word of a list |
+| `word` | required | ≤ 100 characters; unique in its list (case ignored) |
+| `part_of_speech` | optional | e.g. `verb` |
+| `definition` | required | English, learner-friendly, ≤ 1000 characters |
+| `example` | required | one sentence using the word, ≤ 1000 characters |
+| `image` | optional | a file name in `images/`: PNG, JPEG or WebP, ≤ 2 MB, ≤ 4000 px a side |
+
+Lists appear in the order of the file, words in their list in the order of the file. Each import makes the
+bank what the file says: a word keeps its id (found by list and word, so its reviews follow it), changed text is
+updated, words and lists the file no longer has are removed (hidden; their reviews stay). Nothing is changed if
+any line is wrong; the command lists the problems. Images are copied to MakonBook's bucket under
+`v/img/<sha-256>.<ext>` (`vocab_images`). Each import sets the **deck version** (a hash of what students get).
+
+### 11.2 On the phone
+- **Deck** (`GET /v1/vocab/deck?have=<version>`): every list and word; only `unchanged` when the phone's is
+  current. **Images** per list (`GET /v1/vocab/lists/{slug}/images`, links signed for 6 hours), downloaded when a
+  list is turned on. Everything is stored on the phone; studying works offline.
+- **Scheduling:** FSRS (`ts-fsrs`, default parameters, desired retention 90 %, no fuzz so it is the same on every
+  phone). A study session takes the cards due, then new ones (default 20 a day). Card front: the word; back:
+  definition, example, image. Ratings Again / Hard / Good / Easy, each showing when the card comes back.
+- **The log:** every review is appended to a log on the phone (`id` = UUID, word, rating, time, time taken, and
+  the card's state after it). Card states are always worked out by replaying the log in time order, so reviews
+  from two phones merge without conflicts. The phone uploads new entries (`POST /v1/vocab/reviews`, 200 at a time,
+  idempotent by id) and fetches the ones it doesn't have (`GET /v1/me/vocab/reviews?after=<seq>`), e.g. on a new
+  phone (`vocab_reviews`).
+- **Settings** are per phone: the lists turned on and new words a day (10/20/30/50). A phone where the student
+  never changed them (a new phone) counts the lists they already studied as on, so progress carries on.
+- **Teachers** (`GET /v1/teacher/groups/{id}/vocab`): per student, words started, words learned (next review 21
+  days or more away, Anki's "mature"), reviews in the last 7 days, last review.
+
+### 11.3 Pictures for words (proposal, not built)
+A picture of the example sentence helps a word stick, but it has to be made outside MakonBook, beside the
+words: Claude can't draw pictures; an image model can (e.g. OpenAI's gpt-image-1, Google's Imagen, or
+Stable Diffusion run on our own). Notes for that work: abstract words (*ubiquitous*, *candid*) need a scene
+from the example sentence, not the word, and a misleading picture teaches the wrong meaning, so each picture
+needs a person's look before it ships; one consistent style; no text in the picture (models misspell);
+small files (512 px WebP, ~30–60 KB, so ~1,200 pictures are ~50 MB, downloaded per list). MakonBook already
+takes them: the `image` field above.
 
 ## 12. Parents (phase 5)
 Sync `StudentAgents` mobiles; one parent account ↔ many children; see attendance; "report a problem" to admins.
@@ -473,6 +522,14 @@ practice_test_versions(test_id FK, version, content_hash, package jsonb, bytes, 
 practice_published_images(file PK, content_type, bytes, width, height)
 practice_attempts(id uuid PK (the device's), student_client_id FK, (test_id, test_version) FK, sections text[],
                   started_at, finished_at, answers jsonb, scores jsonb, received_at)
+-- built (phase 4): see 11
+vocab_lists(id uuid PK, slug UNIQUE, title, position, removed_at)
+vocab_words(id uuid PK, list_id FK, position, word, part_of_speech, definition, example, image, removed_at,
+            UNIQUE(list_id, lower(word)))
+vocab_images(file PK, content_type, bytes, width, height)
+vocab_deck(version, built_at)                          -- one row
+vocab_reviews(seq PK, id uuid UNIQUE (the phone's), student_client_id FK, word_id FK, rating, reviewed_at,
+              duration_ms, state, due, stability, difficulty, scheduled_days, received_at)
 ```
 
 ## 16. Hosting & data
@@ -511,6 +568,13 @@ GET  /v1/practice/tests/{code}/package package of a version + signed image links
 POST /v1/practice/attempts             idempotent by client UUID; graded on the server
 GET  /v1/me/practice/attempts          the student's attempts
 GET  /v1/teacher/groups/{id}/practice  a group's students and their attempts
+
+# vocabulary (phase 4)
+GET  /v1/vocab/deck?have=              every list and word (or "unchanged")
+GET  /v1/vocab/lists/{slug}/images     signed image links (6 h)
+POST /v1/vocab/reviews                 the phone's review log, 200 at a time, idempotent by id
+GET  /v1/me/vocab/reviews?after=       the student's reviews, to rebuild a phone
+GET  /v1/teacher/groups/{id}/vocab     a group's progress
 
 # admin (cookie session, D18)
 POST /v1/admin/login                   {login, password} → HolliHop checks; access list; sets mb_admin
@@ -560,7 +624,7 @@ Lesson days, sessions, QR, scanning, overrides, outbox write-back (dry-run until
 (Bluebook-style images, Approve/Deny) (built). 5. Unlocking tests: publishing, catalog, download, attempts
 (built). 6. Mobile: the Practice tab, offline test runner, results and review, teachers' group view (built).
 
-**Phase 4 — vocabulary.** **Phase 5 — parents.** Later: Telegram login/reset, push notifications.
+**Phase 4 — vocabulary** (built: import, deck, FSRS on the phone, review log sync, teachers' view). **Phase 5 — parents.** Later: Telegram login/reset, push notifications.
 
 ## 20. Open items
 None at the moment — all earlier open items are recorded as D12–D17. Deferred on purpose: stricter device policy (D14), substitute-teacher handling without a HolliHop change (D12), Telegram, push notifications.

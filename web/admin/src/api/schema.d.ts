@@ -415,6 +415,112 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/vocab/deck": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every word list, to study offline (students and teachers)
+         * @description SAT MAKON's word lists; every student sees every list. Send the
+         *     version you have as `have`: if it is still current the answer is
+         *     only `{version, unchanged: true}`. The version changes when the lists
+         *     are imported again. Images (optional, per word) come from
+         *     `/v1/vocab/lists/{slug}/images`.
+         */
+        get: operations["vocabDeck"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/vocab/lists/{slug}/images": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Links to a list's word images
+         * @description Each link works for 6 hours (`expires_at`); download the images right away.
+         */
+        get: operations["vocabImages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/vocab/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload reviews from the phone's log (students)
+         * @description The phone schedules with FSRS and keeps an append-only log of
+         *     reviews; it uploads them here (at most 200 at a time) with each
+         *     card's state after the review. A review already stored (same id) is
+         *     skipped, so a retry is safe.
+         */
+        post: operations["saveVocabReviews"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/vocab/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The student's reviews, to rebuild progress on a phone
+         * @description In the order the server received them, 1000 at a time: pass the
+         *     `next` of one answer as `after` for the next page; `next` is null on
+         *     the last page. Keep the last `seq` seen to fetch only newer ones later.
+         */
+        get: operations["myVocabReviews"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/teacher/groups/{id}/vocab": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A group's students and their vocabulary progress (its teachers) */
+        get: operations["groupVocab"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/login": {
         parameters: {
             query?: never;
@@ -1044,6 +1150,62 @@ export interface components {
             open: boolean;
             /** @description The latest published version; 0 while never published */
             published: number;
+        };
+        VocabList: {
+            /** @example sat-1 */
+            slug: string;
+            title: string;
+            words: {
+                /**
+                 * Format: uuid
+                 * @description Stays the same across imports
+                 */
+                id: string;
+                word: string;
+                part_of_speech: string | null;
+                definition: string;
+                example: string;
+                image: {
+                    file: string;
+                    bytes: number;
+                    width: number;
+                    height: number;
+                } | null;
+            }[];
+        };
+        /** @description One review and the card's FSRS state after it (ts-fsrs's Card fields). */
+        VocabReview: {
+            /**
+             * Format: int64
+             * @description The server's order (in answers only)
+             */
+            seq?: number;
+            /**
+             * Format: uuid
+             * @description The phone's
+             */
+            id: string;
+            /** Format: uuid */
+            word_id: string;
+            /**
+             * @description 1 again, 2 hard, 3 good, 4 easy
+             * @enum {integer}
+             */
+            rating: 1 | 2 | 3 | 4;
+            /** Format: date-time */
+            reviewed_at: string;
+            /** @description Time to answer */
+            duration_ms: number;
+            /**
+             * @description After: 0 new, 1 learning, 2 review, 3 relearning
+             * @enum {integer}
+             */
+            state: 0 | 1 | 2 | 3;
+            /** Format: date-time */
+            due: string;
+            stability: number;
+            difficulty: number;
+            scheduled_days: number;
         };
         PracticeCatalogTest: {
             /** @example DAY12 */
@@ -2274,6 +2436,185 @@ export interface operations {
                             first_name: string;
                             last_name: string;
                             attempts: components["schemas"]["PracticeAttempt"][];
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a teacher, or not this group's */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    vocabDeck: {
+        parameters: {
+            query?: {
+                /** @description The deck version on the phone */
+                have?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The deck, or that the phone's is current */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Empty while no list was ever imported */
+                        version: string;
+                        unchanged: boolean;
+                        /** @description Absent when unchanged */
+                        lists?: components["schemas"]["VocabList"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    vocabImages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Image file → link */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        images: {
+                            [key: string]: string;
+                        };
+                        /** Format: date-time */
+                        expires_at: string;
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    saveVocabReviews: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    reviews: components["schemas"]["VocabReview"][];
+                };
+            };
+        };
+        responses: {
+            /** @description Stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        received: number;
+                        /** @description New ones (the rest were stored already) */
+                        added: number;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            /** @description `invalid_reviews`: a review isn't valid (nothing of the batch is stored) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    myVocabReviews: {
+        parameters: {
+            query?: {
+                after?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of reviews */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        reviews: components["schemas"]["VocabReview"][];
+                        /** Format: int64 */
+                        next: number | null;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    groupVocab: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The students enrolled now, by name */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Words in all lists */
+                        words: number;
+                        students: {
+                            client_id: number;
+                            first_name: string;
+                            last_name: string;
+                            /** @description Words reviewed at least once */
+                            started: number;
+                            /** @description Words whose next review is 21 days or more away (Anki's "mature") */
+                            learned: number;
+                            /** @description Reviews in the last 7 days */
+                            reviews_week: number;
+                            /** Format: date-time */
+                            last_review: string | null;
                         }[];
                     };
                 };

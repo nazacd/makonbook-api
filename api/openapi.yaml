@@ -591,6 +591,158 @@ paths:
           description: "`forbidden`: not a teacher, or not this group's"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/vocab/deck:
+    get:
+      summary: Every word list, to study offline (students and teachers)
+      description: |
+        SAT MAKON's word lists; every student sees every list. Send the
+        version you have as `have`: if it is still current the answer is
+        only `{version, unchanged: true}`. The version changes when the lists
+        are imported again. Images (optional, per word) come from
+        `/v1/vocab/lists/{slug}/images`.
+      operationId: vocabDeck
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: have, in: query, description: The deck version on the phone, schema: { type: string } }
+      responses:
+        "200":
+          description: The deck, or that the phone's is current
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version, unchanged]
+                properties:
+                  version: { type: string, description: Empty while no list was ever imported }
+                  unchanged: { type: boolean }
+                  lists: { type: array, items: { $ref: "#/components/schemas/VocabList" }, description: Absent when unchanged }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/vocab/lists/{slug}/images:
+    get:
+      summary: Links to a list's word images
+      description: Each link works for 6 hours (`expires_at`); download the images right away.
+      operationId: vocabImages
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: Image file → link
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [images, expires_at]
+                properties:
+                  images: { type: object, additionalProperties: { type: string, format: uri } }
+                  expires_at: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /v1/vocab/reviews:
+    post:
+      summary: Upload reviews from the phone's log (students)
+      description: |
+        The phone schedules with FSRS and keeps an append-only log of
+        reviews; it uploads them here (at most 200 at a time) with each
+        card's state after the review. A review already stored (same id) is
+        skipped, so a retry is safe.
+      operationId: saveVocabReviews
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reviews]
+              properties:
+                reviews: { type: array, maxItems: 200, items: { $ref: "#/components/schemas/VocabReview" } }
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [received, added]
+                properties:
+                  received: { type: integer }
+                  added: { type: integer, description: New ones (the rest were stored already) }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`invalid_reviews`: a review isn't valid (nothing of the batch is stored)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/me/vocab/reviews:
+    get:
+      summary: The student's reviews, to rebuild progress on a phone
+      description: |
+        In the order the server received them, 1000 at a time: pass the
+        `next` of one answer as `after` for the next page; `next` is null on
+        the last page. Keep the last `seq` seen to fetch only newer ones later.
+      operationId: myVocabReviews
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: after, in: query, schema: { type: integer, format: int64, minimum: 0 } }
+      responses:
+        "200":
+          description: A page of reviews
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reviews, next]
+                properties:
+                  reviews: { type: array, items: { $ref: "#/components/schemas/VocabReview" } }
+                  next: { type: [integer, "null"], format: int64 }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/teacher/groups/{id}/vocab:
+    get:
+      summary: A group's students and their vocabulary progress (its teachers)
+      operationId: groupVocab
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: The students enrolled now, by name
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [words, students]
+                properties:
+                  words: { type: integer, description: Words in all lists }
+                  students:
+                    type: array
+                    items:
+                      type: object
+                      required: [client_id, first_name, last_name, started, learned, reviews_week, last_review]
+                      properties:
+                        client_id: { type: integer }
+                        first_name: { type: string }
+                        last_name: { type: string }
+                        started: { type: integer, description: Words reviewed at least once }
+                        learned: { type: integer, description: "Words whose next review is 21 days or more away (Anki's \"mature\")" }
+                        reviews_week: { type: integer, description: Reviews in the last 7 days }
+                        last_review: { type: [string, "null"], format: date-time }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a teacher, or not this group's"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /v1/admin/login:
     post:
       summary: Admin sign-in with HolliHop credentials
@@ -1387,6 +1539,49 @@ components:
         shared: { type: integer, description: Questions other tests use too }
         open: { type: boolean, description: "Every question approved: students can take it" }
         published: { type: integer, description: "The latest published version; 0 while never published" }
+
+    VocabList:
+      type: object
+      required: [slug, title, words]
+      properties:
+        slug: { type: string, example: sat-1 }
+        title: { type: string }
+        words:
+          type: array
+          items:
+            type: object
+            required: [id, word, part_of_speech, definition, example, image]
+            properties:
+              id: { type: string, format: uuid, description: Stays the same across imports }
+              word: { type: string }
+              part_of_speech: { type: [string, "null"] }
+              definition: { type: string }
+              example: { type: string }
+              image:
+                type: [object, "null"]
+                required: [file, bytes, width, height]
+                properties:
+                  file: { type: string }
+                  bytes: { type: integer }
+                  width: { type: integer }
+                  height: { type: integer }
+
+    VocabReview:
+      type: object
+      description: One review and the card's FSRS state after it (ts-fsrs's Card fields).
+      required: [id, word_id, rating, reviewed_at, duration_ms, state, due, stability, difficulty, scheduled_days]
+      properties:
+        seq: { type: integer, format: int64, description: The server's order (in answers only) }
+        id: { type: string, format: uuid, description: The phone's }
+        word_id: { type: string, format: uuid }
+        rating: { type: integer, enum: [1, 2, 3, 4], description: "1 again, 2 hard, 3 good, 4 easy" }
+        reviewed_at: { type: string, format: date-time }
+        duration_ms: { type: integer, minimum: 0, description: Time to answer }
+        state: { type: integer, enum: [0, 1, 2, 3], description: "After: 0 new, 1 learning, 2 review, 3 relearning" }
+        due: { type: string, format: date-time }
+        stability: { type: number }
+        difficulty: { type: number }
+        scheduled_days: { type: integer, minimum: 0 }
 
     PracticeCatalogTest:
       type: object

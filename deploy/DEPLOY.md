@@ -399,6 +399,7 @@ picture; the log says `redrew open posts`). Decided ones keep their pictures.
 | Migration state | `docker compose run --rm api migrate status` |
 | Practice tests and their review progress | `docker compose run --rm api practice list` |
 | Publish approved tests now (the worker does it every 5 minutes) | `docker compose run --rm api practice publish` |
+| Load the word lists (folder with `words.jsonl` or `words.csv`, and `images/`) | `docker compose run --rm -v /opt/vocab:/vocab:ro api vocab import /vocab` |
 | Review bot: what it did | `docker compose logs --tail 100 bot` |
 | Draw a question picture | `docker compose run --rm -v /tmp:/out api practice picture DAY3 english-m2-04 fix /out/q.png` |
 | Test the app as a real teacher and student | `/opt/makonbook-api/test-accounts.sh` (below) |

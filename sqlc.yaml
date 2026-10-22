@@ -74,3 +74,11 @@ sql:
         package: reviewbotdb
         out: internal/reviewbot/reviewbotdb
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/vocab/queries.sql
+    gen:
+      go:
+        package: vocabdb
+        out: internal/vocab/vocabdb
+        sql_package: pgx/v5
