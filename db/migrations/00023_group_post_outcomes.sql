@@ -7,10 +7,11 @@ ALTER TABLE group_posts ADD COLUMN outcome text;
 ALTER TABLE group_posts ADD COLUMN outcome_shown boolean NOT NULL DEFAULT true;
 
 -- Posts that closed for lack of votes before this: some of their edits were
--- refused (20 closed at once). Show the outcome on each again; a message that
--- already says so is left as is.
+-- refused (20 closed at once, with vote_hours at 24). Show the outcome on
+-- each again, in the same words, so a message that already shows it is left
+-- as is (Telegram answers "not modified").
 UPDATE group_posts
-SET outcome = format('⏱ Closed: not enough votes (%s for, %s against). An editor will decide in the admin panel.', approvals, denials),
+SET outcome = format('⏱ Closed: not enough votes in 24 hours (%s for, %s against). An editor will decide in the admin panel.', approvals, denials),
     outcome_shown = false
 WHERE status = 'expired';
 
