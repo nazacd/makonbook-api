@@ -394,7 +394,7 @@ picture; the log says `redrew open posts`). Decided ones keep their pictures.
 
 Parents have no accounts. Every student has a permanent **5-digit parent code**
 (the worker gives codes to new students every hour; a student sees theirs in the
-app's Profile). In the app, **Ota-onalar uchun · Для родителей** on the first
+app's Profile). In the app, **Ota-onalar uchun** on the first
 screen takes the code and shows that child read only, in Uzbek or Russian:
 classes, schedule, attendance. A parent can add several children.
 
