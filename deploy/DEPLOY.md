@@ -390,6 +390,30 @@ When an update changes how question pictures look, the bot replaces the photos
 of the questions still open in the group when it restarts (a few seconds per
 picture; the log says `redrew open posts`). Decided ones keep their pictures.
 
+## Parents
+
+Parents have no accounts. Every student has a permanent **5-digit parent code**
+(the worker gives codes to new students every hour; a student sees theirs in the
+app's Profile). In the app, **Ota-onalar uchun · Для родителей** on the first
+screen takes the code and shows that child read only, in Uzbek or Russian:
+classes, schedule, attendance. A parent can add several children.
+
+**Reports.** "Report a problem" in the app goes to the admin panel
+(**Parents**, for the admins of the student's branches: answer, then *Mark
+handled*; the parent sees the answer in the app) and to the Telegram chat of
+`TELEGRAM_BOT_TOKEN` / `TELEGRAM_ALERT_CHAT_ID` (the sync alerts chat), with a
+link to the panel. Without those two settings reports are only in the panel.
+
+**A parent asks the office for the code.** Admin panel → Parents → *Find a
+parent code* (by the student's name). Give it only to the student's own parent:
+it shows where the child is and when.
+
+**Guessing.** Five digits can be guessed, so tries are limited: 10 per network
+and 5 per phone in 15 minutes, and 50 wrong codes in an hour from anywhere sends
+one alert to the Telegram chat with the networks they came from. If that alert
+comes, look at `docker compose logs api | grep parent/login`. A code can't be
+changed yet; ask for that if a code leaks.
+
 ## Everyday operations
 
 | Task | Command (in `/opt/makonbook-api`) |
@@ -413,8 +437,10 @@ picture; the log says `redrew open posts`). Decided ones keep their pictures.
 `chmod 700` it) picks a teacher who teaches a group now and a student of that
 group, both never signed in, and prints their phone numbers and default
 passwords. Test in the app, then type `done` (or press Ctrl+C): it deletes the
-password, username and sessions the test gave them and the student's practice
-attempts from the test, so both are as they were. Attendance marks made while
+password, username and sessions the test gave them, the student's practice
+attempts, and parent sign-ins and reports made with the student's code during
+the test, so both are as they were. (The student's parent code itself stays: it
+never changes.) Attendance marks made while
 testing are real and stay; the script says if there were any. To borrow
 particular people: `TEST_TEACHER_ID=… TEST_STUDENT_ID=… ./test-accounts.sh`.
 

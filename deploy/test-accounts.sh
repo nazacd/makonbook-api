@@ -73,11 +73,14 @@ BEGIN;
 DELETE FROM credentials WHERE (person_kind, person_id) IN (('teacher', $tid), ('student', $sid));
 DELETE FROM auth_sessions WHERE (person_kind, person_id) IN (('teacher', $tid), ('student', $sid));
 DELETE FROM practice_attempts WHERE student_client_id = $sid AND received_at >= '$started';
+DELETE FROM parent_sessions WHERE student_client_id = $sid AND created_at >= '$started';
+DELETE FROM parent_reports WHERE student_client_id = $sid AND created_at >= '$started';
 COMMIT;
 SQL
   marks=$(sql -c "SELECT count(*) FROM attendance_marks WHERE student_client_id = $sid AND scanned_at >= '$started'")
   sessions=$(sql -c "SELECT count(*) FROM attendance_sessions WHERE teacher_id = $tid AND opened_at >= '$started'")
-  echo "Done: both back to the default password, signed out everywhere, test results deleted."
+  echo "Done: both back to the default password, signed out everywhere, test results deleted"
+  echo "(practice attempts, parent sign-ins with the student's code, parent reports)."
   if [[ $marks != 0 || $sessions != 0 ]]; then
     echo "Attendance made during the test is kept (it is real): $sessions session(s) opened by the teacher,"
     echo "$marks check-in(s) by the student. Correct them in the admin panel if they shouldn't count."
