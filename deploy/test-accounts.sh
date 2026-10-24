@@ -5,8 +5,9 @@
 #   /opt/makonbook-api/test-accounts.sh
 #
 # It picks a teacher who teaches a group now, and a student enrolled in that
-# group, both active with a login phone and never signed in (no password,
-# username or session of their own), so they sign in with the default password
+# group, both active with a login phone and free (no password or username of
+# their own, not signed in anywhere: never used the app, or put back with
+# `reset-password`), so they sign in with the default password
 # (the last 4 digits of the phone) and the teacher's screens show the student.
 # With no such pair, it takes any free teacher and any free student; with
 # nobody free, it says how many people there are and how many signed in.
@@ -22,7 +23,7 @@
 #
 # Settings: PSQL (how to reach the database; default the shared `db`
 # container), TEST_TEACHER_ID / TEST_STUDENT_ID (use these people instead of choosing;
-# they must still never have signed in).
+# they must still be free, as above).
 set -euo pipefail
 
 PSQL=${PSQL:-docker exec -i db psql -U postgres -d makonbook_api}
@@ -33,8 +34,11 @@ for v in "${TEST_TEACHER_ID:-}" "${TEST_STUDENT_ID:-}"; do
   if [[ -n $v ]] && ! is_int "$v"; then echo "TEST_TEACHER_ID and TEST_STUDENT_ID must be numbers" >&2; exit 2; fi
 done
 
-# Who could be borrowed: active, with a login phone, never signed in, in a
-# group that still has lessons (the teacher teaches it, the student is enrolled).
+# Who could be borrowed: active, with a login phone, in a group that still has
+# lessons (the teacher teaches it, the student is enrolled), and free: no
+# password or username of their own and not signed in anywhere. Someone put
+# back with `reset-password` is free again (it keeps an empty credentials row
+# and the ended sessions; this script deletes both when it is done).
 candidates="
 WITH today AS (SELECT (now() AT TIME ZONE 'Asia/Tashkent')::date AS d),
 cur AS (
@@ -45,16 +49,20 @@ cur AS (
 ),
 tall AS (
   SELECT DISTINCT t.id, t.first_name || ' ' || t.last_name AS name, t.login_phone AS phone, cur.id AS group_id, cur.name AS group_name,
-         EXISTS (SELECT 1 FROM credentials c WHERE c.person_kind = 'teacher' AND c.person_id = t.id)
-      OR EXISTS (SELECT 1 FROM auth_sessions a WHERE a.person_kind = 'teacher' AND a.person_id = t.id) AS used
+         EXISTS (SELECT 1 FROM credentials c WHERE c.person_kind = 'teacher' AND c.person_id = t.id
+                 AND (c.password_hash IS NOT NULL OR c.username IS NOT NULL))
+      OR EXISTS (SELECT 1 FROM auth_sessions a WHERE a.person_kind = 'teacher' AND a.person_id = t.id
+                 AND a.revoked_at IS NULL AND a.expires_at > now()) AS used
   FROM cur JOIN teachers t ON t.id = ANY (cur.teacher_ids)
   WHERE t.deactivated_at IS NULL AND t.login_phone IS NOT NULL
     AND (${TEST_TEACHER_ID:-0} = 0 OR t.id = ${TEST_TEACHER_ID:-0})
 ),
 sall AS (
   SELECT DISTINCT s.client_id AS id, s.first_name || ' ' || s.last_name AS name, s.login_phone AS phone, cur.id AS group_id, cur.name AS group_name,
-         EXISTS (SELECT 1 FROM credentials c WHERE c.person_kind = 'student' AND c.person_id = s.client_id)
-      OR EXISTS (SELECT 1 FROM auth_sessions a WHERE a.person_kind = 'student' AND a.person_id = s.client_id) AS used
+         EXISTS (SELECT 1 FROM credentials c WHERE c.person_kind = 'student' AND c.person_id = s.client_id
+                 AND (c.password_hash IS NOT NULL OR c.username IS NOT NULL))
+      OR EXISTS (SELECT 1 FROM auth_sessions a WHERE a.person_kind = 'student' AND a.person_id = s.client_id
+                 AND a.revoked_at IS NULL AND a.expires_at > now()) AS used
   FROM today, cur JOIN enrollments e ON e.group_id = cur.id JOIN students s ON s.client_id = e.student_client_id
   WHERE (e.begin_date IS NULL OR e.begin_date <= today.d) AND (e.end_date IS NULL OR e.end_date >= today.d)
     AND s.deactivated_at IS NULL AND s.login_phone IS NOT NULL
@@ -83,12 +91,12 @@ LIMIT 1;
 SQL
 )
 if [[ -z $pick ]]; then
-  echo "No one to borrow: a teacher and a student are needed who have never signed in." >&2
+  echo "No one to borrow: a teacher and a student are needed with no password of their own, signed in nowhere." >&2
   sql <<SQL >&2
 $candidates
-SELECT 'Teachers of current groups: ' || (SELECT count(DISTINCT id) FROM tall) || ', never signed in: ' || (SELECT count(DISTINCT id) FROM tc)
+SELECT 'Teachers of current groups: ' || (SELECT count(DISTINCT id) FROM tall) || ', free: ' || (SELECT count(DISTINCT id) FROM tc)
 UNION ALL
-SELECT 'Students of current groups: ' || (SELECT count(DISTINCT id) FROM sall) || ', never signed in: ' || (SELECT count(DISTINCT id) FROM sc);
+SELECT 'Students of current groups: ' || (SELECT count(DISTINCT id) FROM sall) || ', free: ' || (SELECT count(DISTINCT id) FROM sc);
 SQL
   if [[ -n ${TEST_TEACHER_ID:-}${TEST_STUDENT_ID:-} ]]; then
     echo "(Only TEST_TEACHER_ID=${TEST_TEACHER_ID:-any} TEST_STUDENT_ID=${TEST_STUDENT_ID:-any} were looked at.)" >&2
