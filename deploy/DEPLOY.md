@@ -435,7 +435,7 @@ changed yet; ask for that if a code leaks.
 **Testing with real accounts.** `deploy/test-accounts.sh` (copy it once:
 `scp deploy/test-accounts.sh root@makonbook.uz:/opt/makonbook-api/`, then
 `chmod 700` it) picks a teacher who teaches a group now and a student of that
-group, both never signed in, and prints their phone numbers and default
+group, both free (never used the app, or put back with `reset-password`), and prints their phone numbers and default
 passwords. Test in the app, then type `done` (or press Ctrl+C): it deletes the
 password, username and sessions the test gave them, the student's practice
 attempts, and parent sign-ins and reports made with the student's code during
