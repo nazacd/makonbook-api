@@ -743,6 +743,245 @@ paths:
           description: "`forbidden`: not a teacher, or not this group's"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/me/parent-code:
+    get:
+      summary: The student's parent code
+      description: |
+        Five digits, the same for good: the student gives it to their parents,
+        who enter it in the app (`POST /v1/parent/login`) to follow the child.
+      operationId: myParentCode
+      tags: [parents]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The code
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code]
+                properties:
+                  code: { type: string, pattern: "^[0-9]{5}$" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/parent/login:
+    post:
+      summary: A parent signs in with a child's code
+      description: |
+        No parent accounts: the code is the child's (`/v1/me/parent-code`). The
+        token opens only `/v1/parent/*`, read-only, for that child; a parent of
+        several children signs in once per child. Tries are limited (10 per
+        network and 5 per phone in 15 minutes: `429 rate_limited`), and many
+        wrong codes in an hour alert the admins.
+      operationId: parentLogin
+      tags: [parents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, device_id]
+              properties:
+                code: { type: string, example: "48213" }
+                device_id: { type: string, maxLength: 100 }
+      responses:
+        "200":
+          description: Signed in (for 180 days after the last use)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, child]
+                properties:
+                  token: { type: string }
+                  child: { $ref: "#/components/schemas/ParentChild" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401":
+          description: "`invalid_parent_code`: no current student has this code"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429": { $ref: "#/components/responses/Error" }
+
+  /v1/parent/logout:
+    post:
+      summary: Sign this phone out of a child
+      operationId: parentLogout
+      tags: [parents]
+      security: [{ parent: [] }]
+      responses:
+        "204": { description: Signed out }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/parent/child:
+    get:
+      summary: The child and their classes (schedule, teachers)
+      description: A `401` means the session is gone or the child no longer studies here; ask for the code again.
+      operationId: parentChild
+      tags: [parents]
+      security: [{ parent: [] }]
+      responses:
+        "200":
+          description: The child
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [child, groups]
+                properties:
+                  child: { $ref: "#/components/schemas/ParentChild" }
+                  groups:
+                    type: array
+                    description: As in `/v1/me`
+                    items: { type: object, additionalProperties: true }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/parent/attendance:
+    get:
+      summary: The child's attendance
+      description: The same table the student sees (`GET /v1/me/attendance`).
+      operationId: parentAttendance
+      tags: [parents]
+      security: [{ parent: [] }]
+      responses:
+        "200":
+          description: The table
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [from, to, groups]
+                properties:
+                  from: { type: string, format: date }
+                  to: { type: string, format: date }
+                  groups: { type: array, items: { type: object, additionalProperties: true } }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/parent/reports:
+    get:
+      summary: This phone's reports about the child, newest first
+      operationId: parentReports
+      tags: [parents]
+      security: [{ parent: [] }]
+      responses:
+        "200":
+          description: Reports
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reports]
+                properties:
+                  reports: { type: array, items: { $ref: "#/components/schemas/ParentReport" } }
+        "401": { $ref: "#/components/responses/Error" }
+    post:
+      summary: Report a problem to the admins
+      description: Goes to the admins of the child's branches (admin panel, Parent reports) and to their Telegram chat.
+      operationId: sendParentReport
+      tags: [parents]
+      security: [{ parent: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message, lang]
+              properties:
+                message: { type: string, maxLength: 2000 }
+                lang: { type: string, enum: [uz, ru], description: The language the parent uses the app in }
+                group_id: { type: [integer, "null"], description: "Optional: the child's class it is about" }
+      responses:
+        "201":
+          description: Sent
+          content: { application/json: { schema: { $ref: "#/components/schemas/ParentReport" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`invalid_report`: empty or too long, unknown lang, or a class the child isn't in"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/admin/parent-reports:
+    get:
+      summary: Parents' reports about students of the admin's branches
+      operationId: adminParentReports
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, handled], default: open } }
+        - { name: office_id, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: Newest first, at most 200
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reports]
+                properties:
+                  reports: { type: array, items: { $ref: "#/components/schemas/AdminParentReport" } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/parent-reports/{id}/handled:
+    post:
+      summary: Mark a parent's report handled, with an optional answer the parent sees
+      operationId: adminHandleParentReport
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+        - $ref: "#/components/parameters/AdminCSRF"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reply: { type: string, maxLength: 1000 }
+      responses:
+        "204": { description: Handled }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404":
+          description: "`not_found`: no such open report in the admin's branches"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/parent-codes:
+    get:
+      summary: Find a student's parent code (for a parent who asks the office)
+      operationId: adminParentCodes
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - { name: q, in: query, required: true, description: "Part of the name, at least 2 characters", schema: { type: string } }
+        - { name: office_id, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: Current students of the admin's branches, at most 30
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [students]
+                properties:
+                  students:
+                    type: array
+                    items:
+                      type: object
+                      required: [client_id, first_name, last_name, groups, code]
+                      properties:
+                        client_id: { type: integer }
+                        first_name: { type: string }
+                        last_name: { type: string }
+                        groups: { type: string, description: "Their current classes, comma-separated" }
+                        code: { type: string }
+        "401": { $ref: "#/components/responses/Error" }
+
   /v1/admin/login:
     post:
       summary: Admin sign-in with HolliHop credentials
@@ -1370,6 +1609,10 @@ components:
     bearer:
       type: http
       scheme: bearer
+    parent:
+      type: http
+      scheme: bearer
+      description: A parent's token from `POST /v1/parent/login`; it opens only `/v1/parent/*`.
     adminCookie:
       type: apiKey
       in: cookie
@@ -1539,6 +1782,43 @@ components:
         shared: { type: integer, description: Questions other tests use too }
         open: { type: boolean, description: "Every question approved: students can take it" }
         published: { type: integer, description: "The latest published version; 0 while never published" }
+
+    ParentChild:
+      type: object
+      required: [client_id, first_name, last_name]
+      properties:
+        client_id: { type: integer }
+        first_name: { type: string }
+        last_name: { type: string }
+
+    ParentReport:
+      type: object
+      required: [id, group_id, group_name, message, created_at, handled_at, reply]
+      properties:
+        id: { type: integer, format: int64 }
+        group_id: { type: [integer, "null"] }
+        group_name: { type: string, description: Empty when not about a class }
+        message: { type: string }
+        created_at: { type: string, format: date-time }
+        handled_at: { type: [string, "null"], format: date-time }
+        reply: { type: [string, "null"], description: The admin's answer }
+
+    AdminParentReport:
+      type: object
+      required: [id, client_id, first_name, last_name, group_id, group_name, message, lang, created_at, handled_at, handled_by, reply]
+      properties:
+        id: { type: integer, format: int64 }
+        client_id: { type: integer }
+        first_name: { type: string }
+        last_name: { type: string }
+        group_id: { type: [integer, "null"] }
+        group_name: { type: string }
+        message: { type: string }
+        lang: { type: string, enum: [uz, ru] }
+        created_at: { type: string, format: date-time }
+        handled_at: { type: [string, "null"], format: date-time }
+        handled_by: { type: [string, "null"] }
+        reply: { type: [string, "null"] }
 
     VocabList:
       type: object

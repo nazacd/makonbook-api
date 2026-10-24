@@ -102,7 +102,7 @@ Verified against the live account (read-only) on 2026-10-09/10 and the
 - `GetEdUnitStudents?statuses=Normal` returns **full history** (11 820 rows) — filter by `BeginDate ≤ today ≤ EndDate (or null)` client-side.
 - **808 current-looking enrollments belong to students who already left** (admins don't close them). So enrollment alone must never grant access or roster membership.
 - Each enrollment has its own `Weekdays` mask — a student may attend only some of the group's days.
-- `StudentAgents` (parents) present for ~69 % of active students; `WhoIs` is free text. Not synced until phase 5.
+- `StudentAgents` (parents) present for ~69 % of active students; `WhoIs` is free text. Not synced: parents use the child's code instead (section 12).
 
 ### 4.5 Attendance in HolliHop
 - Per student per lesson day: `Pass` (absent), `StudentPayableMinutes`, `TeacherPayableMinutes`, `Description`, `Accepted`.
@@ -405,8 +405,47 @@ needs a person's look before it ships; one consistent style; no text in the pict
 small files (512 px WebP, ~30–60 KB, so ~1,200 pictures are ~50 MB, downloaded per list). MakonBook already
 takes them: the `image` field above.
 
-## 12. Parents (phase 5)
-Sync `StudentAgents` mobiles; one parent account ↔ many children; see attendance; "report a problem" to admins.
+## 12. Parents (phase 5, built)
+**No parent accounts.** HolliHop's numbers don't say whose phone a number is (the same number is often on
+the student and the parent), so a parent follows a child with the child's **parent code**: 5 digits, one per
+student, permanent. Read only: the child's classes with schedule and teachers, and attendance. Parents can
+report a problem to the office. Parents' screens are in **Uzbek (Latin) or Russian**, as the parent chooses;
+the rest of the app stays English.
+
+### 12.1 Codes
+- `parent_codes`: one per student (`^[0-9]{5}$`, unique), from `crypto/rand`. The worker gives codes to
+  students without one every hour; `GET /v1/me/parent-code` (students) gives one on first use. A student sees
+  theirs in the app's Profile; admins look codes up in the panel (`GET /v1/admin/parent-codes?q=`, by name,
+  students of their branches).
+- A code works only while the student is active. A student who leaves: their parents' sessions stop working
+  (`401`), and the app forgets that child.
+
+### 12.2 Signing in
+- `POST /v1/parent/login {code, device_id}` → a random 32-byte token (stored as its SHA-256 in
+  `parent_sessions`) and the child. One token per child; the app keeps them in secure storage, several children
+  per phone (at most 5). Sessions last 180 days after the last use; `POST /v1/parent/logout` ends one.
+- Tokens open only `/v1/parent/*`; students' and teachers' tokens don't open it, and parents' tokens open
+  nothing else.
+- **Guessing** (100,000 codes, a few thousand used): 10 tries per network and 5 per phone in 15 minutes
+  (`429 rate_limited`), and 50 wrong codes in an hour sends one Telegram alert naming the networks with 5 or
+  more. Accepted risk: someone on many networks could still find *a* code over time; what it shows is a child's
+  classes and attendance, not contact details. If a code leaks, changing it is a later addition.
+
+### 12.3 What parents see
+- `GET /v1/parent/child`: the child and their groups, as in `/v1/me` (schedule, rooms, teachers).
+- `GET /v1/parent/attendance`: the table the student sees (`/v1/me/attendance`).
+- The app: the next class, a card per group with its schedule and attendance (one tap: every lesson), the
+  child switcher, the language, add or remove a child. A student can still sign in on a parent's phone (a
+  shared phone); signed out, the phone goes back to the parent's screens.
+
+### 12.4 Reports
+- `POST /v1/parent/reports {message ≤ 2000, lang: uz|ru, group_id?}` (a class of the child, or general) →
+  `parent_reports`, and a Telegram message to the admins' chat (student, class, branch, language, the text, a
+  link to the panel). `GET /v1/parent/reports`: this phone's reports with status and answer (another phone of
+  the same child doesn't see them).
+- Admin panel → **Parents** (`GET /v1/admin/parent-reports?status=open|handled&office_id=`): reports about
+  students of the admin's branches, newest first; *Mark handled* with an optional answer the parent sees
+  (`POST /v1/admin/parent-reports/{id}/handled {reply ≤ 1000}`).
 
 ## 13. Admin web (React)
 
@@ -542,7 +581,7 @@ vocab_reviews(seq PK, id uuid UNIQUE (the phone's), student_client_id FK, word_i
 - **Database:** the shared `db` container (Postgres 16, own Compose project `/opt/sat-makon/postgres`). MakonBook has its own database `makonbook_api` and a **non-superuser** role `makonbook_api`; no access to the other apps' databases. Dev and CI use Postgres 16 to match.
 - **Security:** the server audit (2026-10) found Postgres published to the internet with a weak superuser password under active brute force. Fixed: Postgres moved to its own Compose project bound to 127.0.0.1, superuser password rotated, no signs of intrusion. Still recommended: Hetzner Cloud Firewall (inbound 22/80/443).
 - **Backups:** nightly `pg_dump` of every database in `db` (there were none before), 14-day retention on the server; copy off-site (Hetzner Storage Box) and **test a restore** once a month.
-- Data minimisation: only fields listed above; no birthdays, no parent data before phase 5.
+- Data minimisation: only fields listed above; no birthdays, no parent data (parents are anonymous: a code and a device id).
 - **Legal note:** Uzbekistan's personal-data law requires citizens' personal data to be stored in Uzbekistan. Hosting in Germany was chosen knowingly (HolliHop itself is hosted abroad too). Revisit if the business needs to be compliant.
 
 ## 17. API outline (v1)
@@ -627,7 +666,7 @@ Lesson days, sessions, QR, scanning, overrides, outbox write-back (dry-run until
 (Bluebook-style images, Approve/Deny) (built). 5. Unlocking tests: publishing, catalog, download, attempts
 (built). 6. Mobile: the Practice tab, offline test runner, results and review, teachers' group view (built).
 
-**Phase 4 — vocabulary** (built: import, deck, FSRS on the phone, review log sync, teachers' view). **Phase 5 — parents.** Later: Telegram login/reset, push notifications.
+**Phase 4 — vocabulary** (built: import, deck, FSRS on the phone, review log sync, teachers' view). **Phase 5 — parents** (built: codes, read-only child view in Uzbek/Russian, reports to the panel and Telegram). Later: Telegram login/reset, push notifications.
 
 ## 20. Open items
 None at the moment — all earlier open items are recorded as D12–D17. Deferred on purpose: stricter device policy (D14), substitute-teacher handling without a HolliHop change (D12), Telegram, push notifications.

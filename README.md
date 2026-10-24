@@ -61,7 +61,7 @@ All configuration comes from environment variables (see `.env.example`).
 | `HOLLIHOP_AUTHKEY` | — (worker/sync) | Secret. Never logged. |
 | `SYNC_INTERVAL` | `15m` | Between incremental syncs |
 | `SYNC_FULL_AT` | `03:00` | Local time of the nightly full sync |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALERT_CHAT_ID` | — | Optional, set both: sync alerts go to this chat instead of only the log |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALERT_CHAT_ID` | — | Optional, set both: sync alerts, parents' reports and the parent-code guessing alarm go to this chat instead of only the log |
 | `TEST_DATABASE_URL` | — | Tests only; database tests are skipped without it |
 
 ## Layout
