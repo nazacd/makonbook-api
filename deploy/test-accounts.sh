@@ -8,6 +8,8 @@
 # group, both active with a login phone and never signed in (no password,
 # username or session of their own), so they sign in with the default password
 # (the last 4 digits of the phone) and the teacher's screens show the student.
+# With no such pair, it takes any free teacher and any free student; with
+# nobody free, it says how many people there are and how many signed in.
 # It prints their numbers and waits; type `done` when you have finished
 # testing (Ctrl+C works too). Then it deletes what the test created on the two
 # accounts: their password, username and sessions (back to the default
@@ -31,36 +33,69 @@ for v in "${TEST_TEACHER_ID:-}" "${TEST_STUDENT_ID:-}"; do
   if [[ -n $v ]] && ! is_int "$v"; then echo "TEST_TEACHER_ID and TEST_STUDENT_ID must be numbers" >&2; exit 2; fi
 done
 
+# Who could be borrowed: active, with a login phone, never signed in, in a
+# group that still has lessons (the teacher teaches it, the student is enrolled).
+candidates="
+WITH today AS (SELECT (now() AT TIME ZONE 'Asia/Tashkent')::date AS d),
+cur AS (
+  SELECT g.id, g.name, si.teacher_ids
+  FROM today, groups g JOIN schedule_items si ON si.group_id = g.id
+  WHERE g.removed_at IS NULL AND g.learning_type = 'GROUP'
+    AND (si.end_date IS NULL OR si.end_date >= today.d)
+),
+tall AS (
+  SELECT DISTINCT t.id, t.first_name || ' ' || t.last_name AS name, t.login_phone AS phone, cur.id AS group_id, cur.name AS group_name,
+         EXISTS (SELECT 1 FROM credentials c WHERE c.person_kind = 'teacher' AND c.person_id = t.id)
+      OR EXISTS (SELECT 1 FROM auth_sessions a WHERE a.person_kind = 'teacher' AND a.person_id = t.id) AS used
+  FROM cur JOIN teachers t ON t.id = ANY (cur.teacher_ids)
+  WHERE t.deactivated_at IS NULL AND t.login_phone IS NOT NULL
+    AND (${TEST_TEACHER_ID:-0} = 0 OR t.id = ${TEST_TEACHER_ID:-0})
+),
+sall AS (
+  SELECT DISTINCT s.client_id AS id, s.first_name || ' ' || s.last_name AS name, s.login_phone AS phone, cur.id AS group_id, cur.name AS group_name,
+         EXISTS (SELECT 1 FROM credentials c WHERE c.person_kind = 'student' AND c.person_id = s.client_id)
+      OR EXISTS (SELECT 1 FROM auth_sessions a WHERE a.person_kind = 'student' AND a.person_id = s.client_id) AS used
+  FROM today, cur JOIN enrollments e ON e.group_id = cur.id JOIN students s ON s.client_id = e.student_client_id
+  WHERE (e.begin_date IS NULL OR e.begin_date <= today.d) AND (e.end_date IS NULL OR e.end_date >= today.d)
+    AND s.deactivated_at IS NULL AND s.login_phone IS NOT NULL
+    AND (${TEST_STUDENT_ID:-0} = 0 OR s.client_id = ${TEST_STUDENT_ID:-0})
+),
+tc AS (SELECT * FROM tall WHERE NOT used),
+sc AS (SELECT * FROM sall WHERE NOT used)"
+
+# Best: a teacher and a student of the same group, so the teacher's screens
+# show the student. Otherwise any free teacher and any free student.
 pick=$(sql <<SQL
-WITH today AS (SELECT (now() AT TIME ZONE 'Asia/Tashkent')::date AS d)
-SELECT t.id, t.first_name || ' ' || t.last_name, t.login_phone,
-       s.client_id, s.first_name || ' ' || s.last_name, s.login_phone, g.name
-FROM today, groups g
-JOIN schedule_items si ON si.group_id = g.id
-JOIN teachers t ON t.id = ANY (si.teacher_ids)
-JOIN enrollments e ON e.group_id = g.id
-JOIN students s ON s.client_id = e.student_client_id
-WHERE g.removed_at IS NULL AND g.learning_type = 'GROUP'
-  AND (si.end_date IS NULL OR si.end_date >= today.d)
-  AND (e.begin_date IS NULL OR e.begin_date <= today.d)
-  AND (e.end_date IS NULL OR e.end_date >= today.d)
-  AND t.deactivated_at IS NULL AND t.login_phone IS NOT NULL
-  AND s.deactivated_at IS NULL AND s.login_phone IS NOT NULL
-  AND NOT EXISTS (SELECT 1 FROM credentials c WHERE c.person_kind = 'teacher' AND c.person_id = t.id)
-  AND NOT EXISTS (SELECT 1 FROM auth_sessions a WHERE a.person_kind = 'teacher' AND a.person_id = t.id)
-  AND NOT EXISTS (SELECT 1 FROM credentials c WHERE c.person_kind = 'student' AND c.person_id = s.client_id)
-  AND NOT EXISTS (SELECT 1 FROM auth_sessions a WHERE a.person_kind = 'student' AND a.person_id = s.client_id)
-  AND (${TEST_TEACHER_ID:-0} = 0 OR t.id = ${TEST_TEACHER_ID:-0})
-  AND (${TEST_STUDENT_ID:-0} = 0 OR s.client_id = ${TEST_STUDENT_ID:-0})
-ORDER BY random()
+$candidates,
+pair AS (
+  SELECT tc.id AS tid, tc.name AS tname, tc.phone AS tphone, sc.id AS sid, sc.name AS sname, sc.phone AS sphone,
+         tc.group_name AS tgroup, sc.group_name AS sgroup
+  FROM tc JOIN sc USING (group_id) ORDER BY random() LIMIT 1
+),
+lone AS (
+  SELECT t.id, t.name, t.phone, s.id, s.name, s.phone, t.group_name, s.group_name
+  FROM (SELECT * FROM tc ORDER BY random() LIMIT 1) t, (SELECT * FROM sc ORDER BY random() LIMIT 1) s
+)
+SELECT * FROM pair
+UNION ALL
+SELECT * FROM lone WHERE NOT EXISTS (SELECT 1 FROM pair)
 LIMIT 1;
 SQL
 )
 if [[ -z $pick ]]; then
-  echo "No teacher and student found who teach/learn in a group now and have never signed in." >&2
+  echo "No one to borrow: a teacher and a student are needed who have never signed in." >&2
+  sql <<SQL >&2
+$candidates
+SELECT 'Teachers of current groups: ' || (SELECT count(DISTINCT id) FROM tall) || ', never signed in: ' || (SELECT count(DISTINCT id) FROM tc)
+UNION ALL
+SELECT 'Students of current groups: ' || (SELECT count(DISTINCT id) FROM sall) || ', never signed in: ' || (SELECT count(DISTINCT id) FROM sc);
+SQL
+  if [[ -n ${TEST_TEACHER_ID:-}${TEST_STUDENT_ID:-} ]]; then
+    echo "(Only TEST_TEACHER_ID=${TEST_TEACHER_ID:-any} TEST_STUDENT_ID=${TEST_STUDENT_ID:-any} were looked at.)" >&2
+  fi
   exit 1
 fi
-IFS='|' read -r tid tname tphone sid sname sphone group <<<"$pick"
+IFS='|' read -r tid tname tphone sid sname sphone tgroup sgroup <<<"$pick"
 is_int "$tid" && is_int "$sid" || { echo "unexpected answer from the database" >&2; exit 1; }
 started=$(sql -c "SELECT now()")
 
@@ -91,15 +126,15 @@ trap 'exit 130' INT TERM HUP # Ctrl+C or a dropped SSH connection: still put the
 
 cat <<EOF
 
-Group:   $group
-
-Teacher: $tname (id $tid)
+Teacher: $tname (id $tid), group $tgroup
   phone    $tphone
   password ${tphone: -4}   (default; the app asks for a new one: any you like)
 
-Student: $sname (id $sid)
+Student: $sname (id $sid), group $sgroup
   phone    $sphone
   password ${sphone: -4}
+$([[ $tgroup == "$sgroup" ]] || echo "
+Not in the same group (no free pair was found): the teacher's screens won't show this student.")
 
 These are real people: don't change anything they'd notice (attendance is real).
 Type "done" when you have finished testing.
