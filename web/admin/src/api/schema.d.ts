@@ -521,6 +521,180 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/parent-code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The student's parent code
+         * @description Five digits, the same for good: the student gives it to their parents,
+         *     who enter it in the app (`POST /v1/parent/login`) to follow the child.
+         */
+        get: operations["myParentCode"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/parent/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A parent signs in with a child's code
+         * @description No parent accounts: the code is the child's (`/v1/me/parent-code`). The
+         *     token opens only `/v1/parent/*`, read-only, for that child; a parent of
+         *     several children signs in once per child. Tries are limited (10 per
+         *     network and 5 per phone in 15 minutes: `429 rate_limited`), and many
+         *     wrong codes in an hour alert the admins.
+         */
+        post: operations["parentLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/parent/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sign this phone out of a child */
+        post: operations["parentLogout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/parent/child": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The child and their classes (schedule, teachers)
+         * @description A `401` means the session is gone or the child no longer studies here; ask for the code again.
+         */
+        get: operations["parentChild"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/parent/attendance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The child's attendance
+         * @description The same table the student sees (`GET /v1/me/attendance`).
+         */
+        get: operations["parentAttendance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/parent/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** This phone's reports about the child, newest first */
+        get: operations["parentReports"];
+        put?: never;
+        /**
+         * Report a problem to the admins
+         * @description Goes to the admins of the child's branches (admin panel, Parent reports) and to their Telegram chat.
+         */
+        post: operations["sendParentReport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/parent-reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Parents' reports about students of the admin's branches */
+        get: operations["adminParentReports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/parent-reports/{id}/handled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark a parent's report handled, with an optional answer the parent sees */
+        post: operations["adminHandleParentReport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/parent-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Find a student's parent code (for a parent who asks the office) */
+        get: operations["adminParentCodes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/login": {
         parameters: {
             query?: never;
@@ -1150,6 +1324,43 @@ export interface components {
             open: boolean;
             /** @description The latest published version; 0 while never published */
             published: number;
+        };
+        ParentChild: {
+            client_id: number;
+            first_name: string;
+            last_name: string;
+        };
+        ParentReport: {
+            /** Format: int64 */
+            id: number;
+            group_id: number | null;
+            /** @description Empty when not about a class */
+            group_name: string;
+            message: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            handled_at: string | null;
+            /** @description The admin's answer */
+            reply: string | null;
+        };
+        AdminParentReport: {
+            /** Format: int64 */
+            id: number;
+            client_id: number;
+            first_name: string;
+            last_name: string;
+            group_id: number | null;
+            group_name: string;
+            message: string;
+            /** @enum {string} */
+            lang: "uz" | "ru";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            handled_at: string | null;
+            handled_by: string | null;
+            reply: string | null;
         };
         VocabList: {
             /** @example sat-1 */
@@ -2629,6 +2840,324 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    myParentCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The code */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: string;
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a student */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    parentLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @example 48213 */
+                    code: string;
+                    device_id: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Signed in (for 180 days after the last use) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        token: string;
+                        child: components["schemas"]["ParentChild"];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            /** @description `invalid_parent_code`: no current student has this code */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            429: components["responses"]["Error"];
+        };
+    };
+    parentLogout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    parentChild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The child */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        child: components["schemas"]["ParentChild"];
+                        /** @description As in `/v1/me` */
+                        groups: {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    parentAttendance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The table */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date */
+                        from: string;
+                        /** Format: date */
+                        to: string;
+                        groups: {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    parentReports: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Reports */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        reports: components["schemas"]["ParentReport"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    sendParentReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    message: string;
+                    /**
+                     * @description The language the parent uses the app in
+                     * @enum {string}
+                     */
+                    lang: "uz" | "ru";
+                    /** @description Optional: the child's class it is about */
+                    group_id?: number | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Sent */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParentReport"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description `invalid_report`: empty or too long, unknown lang, or a class the child isn't in */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    adminParentReports: {
+        parameters: {
+            query?: {
+                status?: "open" | "handled";
+                office_id?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest first, at most 200 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        reports: components["schemas"]["AdminParentReport"][];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+        };
+    };
+    adminHandleParentReport: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    reply?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Handled */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            /** @description `not_found`: no such open report in the admin's branches */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["Error"];
+        };
+    };
+    adminParentCodes: {
+        parameters: {
+            query: {
+                /** @description Part of the name, at least 2 characters */
+                q: string;
+                office_id?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current students of the admin's branches, at most 30 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        students: {
+                            client_id: number;
+                            first_name: string;
+                            last_name: string;
+                            /** @description Their current classes, comma-separated */
+                            groups: string;
+                            code: string;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
         };
     };
     adminLogin: {

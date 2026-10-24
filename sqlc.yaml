@@ -82,3 +82,11 @@ sql:
         package: vocabdb
         out: internal/vocab/vocabdb
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/parents/queries.sql
+    gen:
+      go:
+        package: parentsdb
+        out: internal/parents/parentsdb
+        sql_package: pgx/v5

@@ -14,7 +14,9 @@ import (
 	"github.com/nazacd/makonbook-api/internal/attendance"
 	"github.com/nazacd/makonbook-api/internal/auth"
 	"github.com/nazacd/makonbook-api/internal/lessons"
+	"github.com/nazacd/makonbook-api/internal/parents"
 	"github.com/nazacd/makonbook-api/internal/people"
+	"github.com/nazacd/makonbook-api/internal/platform/alert"
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
 	"github.com/nazacd/makonbook-api/internal/platform/r2"
 	"github.com/nazacd/makonbook-api/internal/platform/render"
@@ -50,6 +52,8 @@ type Deps struct {
 	Renderer *render.Browser
 	// AdminHost serves the admin panel (empty: no panel).
 	AdminHost string
+	// Notifier tells the admins about parents' reports (Telegram, or the log).
+	Notifier alert.Notifier
 }
 
 // Handler builds the complete HTTP handler: every feature's routes behind the
@@ -68,11 +72,21 @@ func Handler(d Deps) http.Handler {
 	lessons.NewHandler(lessonsSvc, d.Location, authHandler.Require).Register(mux)
 	attendanceSvc := attendance.NewService(d.Pool, lessonsSvc)
 	attendance.NewHandler(attendanceSvc, d.Location, authHandler.Require).Register(mux)
+	notifier := d.Notifier
+	if notifier == nil {
+		notifier = alert.Log{Logger: d.Log}
+	}
+	adminURL := ""
+	if d.AdminHost != "" {
+		adminURL = "https://" + d.AdminHost
+	}
+	parentsSvc := parents.NewService(d.Pool, directory, attendanceSvc, notifier, adminURL)
+	parents.NewHandler(parentsSvc, d.Location, authHandler.Require, d.TrustProxy, d.Log).Register(mux)
 	practiceSvc := practiceService(d)
 	practice.NewHandler(practiceSvc, d.Location, authHandler.Require).Register(mux)
 	vocab.NewHandler(vocab.NewService(d.Pool, signer(d.Uploads)), d.Location, authHandler.Require).Register(mux)
 	panel := admin.Panel{
-		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory, Practice: practiceSvc,
+		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory, Practice: practiceSvc, Parents: parentsSvc,
 		Location: d.Location, WriteEnabled: d.HolliHopWriteEnabled,
 	}
 	admin.NewHandler(admin.NewService(d.Pool, d.HolliHop), panel, d.TrustProxy, d.SecureCookies).Register(mux)

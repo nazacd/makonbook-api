@@ -34,6 +34,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/auth"
 	"github.com/nazacd/makonbook-api/internal/hollihop"
 	"github.com/nazacd/makonbook-api/internal/lessons"
+	"github.com/nazacd/makonbook-api/internal/parents"
 	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/alert"
 	"github.com/nazacd/makonbook-api/internal/platform/config"
@@ -209,6 +210,11 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	} else {
 		log.Warn("HOLLIHOP_BASE_URL/HOLLIHOP_AUTHKEY not set: admin sign-in is unavailable")
 	}
+	if cfg.TelegramBotToken != "" {
+		deps.Notifier = alert.NewTelegram(cfg.TelegramBotToken, cfg.TelegramAlertChatID)
+	} else {
+		log.Warn("TELEGRAM_BOT_TOKEN not set: parents' reports are only in the admin panel and the log")
+	}
 	handler := app.Handler(deps)
 	return httpx.Serve(ctx, ln, handler, log, cfg.ShutdownTimeout)
 }
@@ -251,6 +257,22 @@ func worker(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		Log:           log,
 	}
 	go writer.Loop(ctx, 30*time.Second)
+	// Every student has a parent code (spec 12): new students get theirs.
+	go func() {
+		svc := parents.NewService(pool, people.NewDirectory(pool), nil, alert.Log{Logger: log}, "")
+		for {
+			if n, err := svc.EnsureCodes(ctx); err != nil && ctx.Err() == nil {
+				log.Error("parents: codes", "err", err)
+			} else if n > 0 {
+				log.Info("parents: codes given", "students", n)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Hour):
+			}
+		}
+	}()
 	// Tests whose questions are all approved are published (spec 9.5).
 	if cfg.R2UploadsBucket != "" {
 		go publishingService(cfg, pool).PublishLoop(ctx, 5*time.Minute, log)

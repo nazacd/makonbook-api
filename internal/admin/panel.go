@@ -9,6 +9,7 @@ import (
 
 	"github.com/nazacd/makonbook-api/internal/attendance"
 	"github.com/nazacd/makonbook-api/internal/lessons"
+	"github.com/nazacd/makonbook-api/internal/parents"
 	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
 	"github.com/nazacd/makonbook-api/internal/platform/scope"
@@ -22,6 +23,7 @@ type Panel struct {
 	Attendance *attendance.Service
 	People     *people.Directory
 	Practice   *practice.Service
+	Parents    *parents.Service
 	Location   *time.Location // school time zone, for "today"
 	// WriteEnabled: attendance is really written to HolliHop (not dry run).
 	WriteEnabled bool
@@ -51,6 +53,7 @@ func (h *Handler) registerPanel(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/admin/staff", h.RequireSuper(h.staff))
 
 	h.registerPractice(mux)
+	h.registerParents(mux)
 }
 
 // scopeOf is the signed-in admin's branches, narrowed to ?office_id= if the

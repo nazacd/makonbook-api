@@ -205,6 +205,36 @@ type Office struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type ParentCode struct {
+	StudentClientID int32
+	Code            string
+	CreatedAt       pgtype.Timestamptz
+}
+
+type ParentReport struct {
+	ID              int64
+	StudentClientID int32
+	DeviceID        string
+	GroupID         pgtype.Int4
+	Message         string
+	Lang            string
+	CreatedAt       pgtype.Timestamptz
+	HandledAt       pgtype.Timestamptz
+	HandledBy       pgtype.Text
+	Reply           pgtype.Text
+}
+
+type ParentSession struct {
+	ID              int64
+	TokenHash       []byte
+	StudentClientID int32
+	DeviceID        string
+	CreatedAt       pgtype.Timestamptz
+	LastSeenAt      pgtype.Timestamptz
+	ExpiresAt       pgtype.Timestamptz
+	RevokedAt       pgtype.Timestamptz
+}
+
 type PracticeAttempt struct {
 	ID              pgtype.UUID
 	StudentClientID int32
