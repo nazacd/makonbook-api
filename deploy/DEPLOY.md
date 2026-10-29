@@ -395,8 +395,9 @@ picture; the log says `redrew open posts`). Decided ones keep their pictures.
 Google Play (and the App Store) ask for an account the reviewer can sign in
 with. MakonBook has a **demo student** for that: a fictional "Demo Student" in
 two fictional classes (SAT Math and SAT English, branch "SAT MAKON (demo)"),
-with their schedule, eight weeks of attendance, practice results that rise
-over the weeks (Day 1 1240, Day 2 1290 then 1340, Day 8 1380, Day 9 1410) and a
+with their schedule, eight weeks of attendance, practice results over the
+last six weeks that go up and down but rise (Day 1 1240, Day 2 1290 and 1340,
+Days 3–7 1310–1390, Day 8 1380, Day 9 1410 and 1520) and a
 parent code. It isn't in HolliHop, and stays apart from the school's data: the
 sync never touches it, no teacher or admin sees its lessons, nothing about it
 is written to HolliHop, and a parent's report about it doesn't go to Telegram.
