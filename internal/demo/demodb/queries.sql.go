@@ -20,9 +20,18 @@ func (q *Queries) DeleteAttempts(ctx context.Context) error {
 	return err
 }
 
+const deleteAttendance = `-- name: DeleteAttendance :exec
+DELETE FROM attendance_sessions WHERE group_id < 0
+`
+
+func (q *Queries) DeleteAttendance(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteAttendance)
+	return err
+}
+
 const deleteCredentials = `-- name: DeleteCredentials :exec
 
-DELETE FROM credentials WHERE person_kind = 'student' AND person_id < 0
+DELETE FROM credentials WHERE person_id < 0
 `
 
 // Removing the account: everything under the negative ids. Parent codes,
@@ -34,11 +43,11 @@ func (q *Queries) DeleteCredentials(ctx context.Context) error {
 }
 
 const deleteEnrollments = `-- name: DeleteEnrollments :exec
-DELETE FROM enrollments WHERE student_client_id = $1
+DELETE FROM enrollments WHERE student_client_id < 0
 `
 
-func (q *Queries) DeleteEnrollments(ctx context.Context, studentClientID int32) error {
-	_, err := q.db.Exec(ctx, deleteEnrollments, studentClientID)
+func (q *Queries) DeleteEnrollments(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteEnrollments)
 	return err
 }
 
@@ -51,12 +60,34 @@ func (q *Queries) DeleteGroups(ctx context.Context) error {
 	return err
 }
 
+const deleteLessonDays = `-- name: DeleteLessonDays :exec
+DELETE FROM lesson_days WHERE group_id < 0
+`
+
+// Lesson days, so the demo teacher has lessons on their Today screen (one
+// schedule item per group, with the group's id).
+func (q *Queries) DeleteLessonDays(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteLessonDays)
+	return err
+}
+
 const deleteOffices = `-- name: DeleteOffices :exec
 DELETE FROM offices WHERE id < 0
 `
 
 func (q *Queries) DeleteOffices(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, deleteOffices)
+	return err
+}
+
+const deleteOldSessions = `-- name: DeleteOldSessions :exec
+DELETE FROM attendance_sessions WHERE group_id < 0 AND date < $1::date
+`
+
+// Attendance taken in the demo groups before today (today's stays: a
+// reviewer may be in the middle of it).
+func (q *Queries) DeleteOldSessions(ctx context.Context, today pgtype.Date) error {
+	_, err := q.db.Exec(ctx, deleteOldSessions, today)
 	return err
 }
 
@@ -89,7 +120,7 @@ func (q *Queries) DeleteSeededAttempts(ctx context.Context, ids []pgtype.UUID) e
 }
 
 const deleteSessions = `-- name: DeleteSessions :exec
-DELETE FROM auth_sessions WHERE person_kind = 'student' AND person_id < 0
+DELETE FROM auth_sessions WHERE person_id < 0
 `
 
 func (q *Queries) DeleteSessions(ctx context.Context) error {
@@ -137,6 +168,23 @@ type InsertEnrollmentParams struct {
 
 func (q *Queries) InsertEnrollment(ctx context.Context, arg InsertEnrollmentParams) error {
 	_, err := q.db.Exec(ctx, insertEnrollment, arg.GroupID, arg.StudentClientID, arg.BeginDate)
+	return err
+}
+
+const insertLessonDays = `-- name: InsertLessonDays :exec
+INSERT INTO lesson_days (group_id, date, minutes, schedule_item_ids)
+SELECT x.g, x.d, x.m, ARRAY[x.g]
+FROM (SELECT unnest($1::int[]) AS g, unnest($2::date[]) AS d, unnest($3::int[]) AS m) AS x
+`
+
+type InsertLessonDaysParams struct {
+	GroupIds []int32
+	Dates    []pgtype.Date
+	Minutes  []int32
+}
+
+func (q *Queries) InsertLessonDays(ctx context.Context, arg InsertLessonDaysParams) error {
+	_, err := q.db.Exec(ctx, insertLessonDays, arg.GroupIds, arg.Dates, arg.Minutes)
 	return err
 }
 
@@ -194,20 +242,26 @@ func (q *Queries) InsertScheduleItem(ctx context.Context, arg InsertScheduleItem
 
 const setCredential = `-- name: SetCredential :exec
 INSERT INTO credentials (person_kind, person_id, username, password_hash, password_changed_at)
-VALUES ('student', $1, $2, $3, now())
+VALUES ($1, $2, $3, $4, now())
 ON CONFLICT (person_kind, person_id) DO UPDATE
 SET username = EXCLUDED.username, password_hash = EXCLUDED.password_hash,
     password_changed_at = now(), failed_attempts = 0, locked_until = NULL
 `
 
 type SetCredentialParams struct {
+	PersonKind   string
 	PersonID     int32
 	Username     pgtype.Text
 	PasswordHash pgtype.Text
 }
 
 func (q *Queries) SetCredential(ctx context.Context, arg SetCredentialParams) error {
-	_, err := q.db.Exec(ctx, setCredential, arg.PersonID, arg.Username, arg.PasswordHash)
+	_, err := q.db.Exec(ctx, setCredential,
+		arg.PersonKind,
+		arg.PersonID,
+		arg.Username,
+		arg.PasswordHash,
+	)
 	return err
 }
 

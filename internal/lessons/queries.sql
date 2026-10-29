@@ -1,7 +1,9 @@
--- Lesson days (spec 8.1). Written only by the sync.
+-- Lesson days (spec 8.1). Written only by the sync, and by internal/demo for
+-- the store reviewers' demo groups (negative ids), which the sync and the
+-- admins' lists leave out.
 
 -- name: DeleteDaysBetween :exec
-DELETE FROM lesson_days WHERE date BETWEEN @date_from::date AND @date_to::date;
+DELETE FROM lesson_days WHERE date BETWEEN @date_from::date AND @date_to::date AND group_id > 0;
 
 -- A day of a group HolliHop listed but the sync didn't store (shouldn't
 -- happen; both come from GetEdUnits) is skipped rather than failing the run.
@@ -89,7 +91,7 @@ JOIN groups g ON g.id = d.group_id AND g.removed_at IS NULL
 LEFT JOIN offices o ON o.id = g.office_id
 JOIN schedule_items s ON s.group_id = d.group_id AND s.id = ANY (d.schedule_item_ids)
 LEFT JOIN attendance_sessions a ON a.group_id = d.group_id AND a.date = d.date
-WHERE d.date = @date::date
+WHERE d.date = @date::date AND g.id > 0
   AND (@all_offices::bool OR g.office_id = ANY (@office_ids::int[]))
 GROUP BY g.id, o.name, d.date, d.minutes, d.schedule_item_ids, a.id
 HAVING EXISTS (SELECT 1 FROM schedule_items si JOIN teachers t ON t.id = ANY (si.teacher_ids)
@@ -104,7 +106,7 @@ ORDER BY coalesce(o.name, ''), min(s.begin_time), g.name;
 WITH next AS (
     SELECT DISTINCT ON (d.group_id) d.group_id, d.date, d.schedule_item_ids
     FROM lesson_days d
-    WHERE d.date >= @today::date
+    WHERE d.date >= @today::date AND d.group_id > 0
     ORDER BY d.group_id, d.date
 )
 SELECT g.id AS group_id, g.name AS group_name, g.learning_type,

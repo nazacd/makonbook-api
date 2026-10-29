@@ -13,9 +13,11 @@ import (
 	"github.com/nazacd/makonbook-api/internal/attendance"
 	"github.com/nazacd/makonbook-api/internal/auth"
 	"github.com/nazacd/makonbook-api/internal/demo"
+	"github.com/nazacd/makonbook-api/internal/lessons"
 	"github.com/nazacd/makonbook-api/internal/parents"
 	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/alert"
+	"github.com/nazacd/makonbook-api/internal/platform/scope"
 	"github.com/nazacd/makonbook-api/internal/platform/testdb"
 	"github.com/nazacd/makonbook-api/internal/practice"
 )
@@ -70,7 +72,7 @@ func TestSetupAndRemove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Username != demo.Username || len(res.ParentCode) != 5 || len(res.Practice) != 11 {
+	if res.Username != demo.Username || len(res.ParentCode) != 5 || len(res.Practice) != 12 {
 		t.Errorf("result: %+v", res)
 	}
 
@@ -204,23 +206,28 @@ func TestSyncKeepsIt(t *testing.T) {
 	if err := attendance.ApplyRecords(ctx, tx, today.AddDate(0, 0, -attendance.RecordsBackFull), today, nil); err != nil {
 		t.Fatal(err)
 	}
+	if err := lessons.ApplyDays(ctx, tx, today.AddDate(0, 0, -30), today.AddDate(0, 0, 30), nil); err != nil {
+		t.Fatal(err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 
-	var active, groups, items, enrolled, records, issues int
+	var active, groups, items, enrolled, records, issues, days int
 	if err := pool.QueryRow(ctx, `SELECT
 		(SELECT count(*) FROM students WHERE client_id < 0 AND deactivated_at IS NULL AND hh_status_id = 2),
 		(SELECT count(*) FROM groups WHERE id < 0 AND removed_at IS NULL),
 		(SELECT count(*) FROM schedule_items WHERE group_id < 0),
 		(SELECT count(*) FROM enrollments WHERE student_client_id < 0),
 		(SELECT count(*) FROM attendance_records WHERE student_client_id < 0),
-		(SELECT count(*) FROM data_quality_issues WHERE person_id < 0)`).Scan(&active, &groups, &items, &enrolled, &records, &issues); err != nil {
+		(SELECT count(*) FROM data_quality_issues WHERE person_id < 0),
+		(SELECT count(*) FROM lesson_days WHERE group_id < 0)`).Scan(&active, &groups, &items, &enrolled, &records, &issues, &days); err != nil {
 		t.Fatal(err)
 	}
-	if active != 1 || groups != 2 || items != 2 || enrolled != 2 || records != 48 || issues != 0 {
-		t.Errorf("after the sync: active %d, groups %d, schedule %d, enrolled %d, records %d, issues %d",
-			active, groups, items, enrolled, records, issues)
+	// The demo student and 10 classmates; Math, English, the open class.
+	if active != 11 || groups != 3 || items != 3 || enrolled != 22 || records != 48 || issues != 0 || days == 0 {
+		t.Errorf("after the sync: active %d, groups %d, schedule %d, enrolled %d, records %d, issues %d, lesson days %d",
+			active, groups, items, enrolled, records, issues, days)
 	}
 	var teachers int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM teachers WHERE id < 0 AND deactivated_at IS NULL`).Scan(&teachers); err != nil || teachers != 2 {
@@ -236,5 +243,102 @@ func TestUsernameTaken(t *testing.T) {
 	}
 	if _, err := service(pool).Setup(ctx, password, time.Now()); !errors.Is(err, demo.ErrUsernameTaken) {
 		t.Errorf("setup with the username taken: %v", err)
+	}
+}
+
+// The demo teacher: their classes, attendance at any hour (never sent to
+// HolliHop), their students' practice; admins don't see any of it.
+func TestTeacher(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := t.Context()
+	publish(t, pool, "DAY1")
+	publish(t, pool, "DAY2")
+	now := time.Now()
+	y, m, d := now.In(tashkent).Date()
+	today := time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+	res, err := service(pool).Setup(ctx, password, now)
+	if err != nil || res.TeacherUsername != demo.TeacherUsername {
+		t.Fatalf("setup: %+v %v", res, err)
+	}
+
+	authSvc := auth.NewService(pool, people.NewDirectory(pool), auth.NewHasher())
+	login, err := authSvc.Login(ctx, demo.TeacherUsername, password, "phone-2")
+	if err != nil || login.Principal.MustChangePassword || login.Principal.Kind != people.KindTeacher {
+		t.Fatalf("teacher login: %+v %v", login.Principal, err)
+	}
+	profile, err := authSvc.Profile(ctx, login.Principal, today)
+	if err != nil || len(profile.Groups) != 2 {
+		t.Fatalf("teacher's groups: %+v %v", profile.Groups, err)
+	}
+
+	lessonsSvc := lessons.NewService(pool, tashkent)
+	todays, err := lessonsSvc.TeacherLessons(ctx, demo.TeacherID, today)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var open *lessons.Lesson
+	for i, l := range todays {
+		if l.GroupID == -3 {
+			open = &todays[i]
+		}
+	}
+	if open == nil || open.Students != 8 || !open.Attendance {
+		t.Fatalf("today's lessons: %+v", todays)
+	}
+
+	att := attendance.NewService(pool, lessonsSvc)
+	sess, err := att.Open(ctx, demo.TeacherID, -3, today)
+	if err != nil || len(sess.Marks) != 8 {
+		t.Fatalf("open attendance: %+v %v", sess, err)
+	}
+	if _, err := att.SetMark(ctx, demo.TeacherID, sess.ID, -2, attendance.StatePresent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := att.Finish(ctx, demo.TeacherID, sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	var queued int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM hollihop_outbox`).Scan(&queued); err != nil || queued != 0 {
+		t.Errorf("queued for HolliHop: %d %v", queued, err)
+	}
+
+	group, err := practice.NewService(pool, nil).GroupAttempts(ctx, demo.TeacherID, -1, today)
+	if err != nil || len(group) != 7 {
+		t.Fatalf("Math group's practice: %+v %v", group, err)
+	}
+	for _, st := range group {
+		if len(st.Attempts) == 0 {
+			t.Errorf("%s %s has no results", st.FirstName, st.LastName)
+		}
+	}
+
+	everywhere := scope.Offices{All: true}
+	admin, err := lessonsSvc.OfficeLessons(ctx, everywhere, today)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range admin {
+		if l.GroupID < 0 {
+			t.Errorf("admins see a demo lesson: %+v", l)
+		}
+	}
+	teachers, corrections, err := att.CorrectionsReport(ctx, everywhere, today.AddDate(0, 0, -1), today, 0)
+	if err != nil || len(teachers) != 0 || len(corrections) != 0 {
+		t.Errorf("admins see the demo's corrections: %+v %+v %v", teachers, corrections, err)
+	}
+
+	// The next day: yesterday's attendance is gone, the lesson can be taken again.
+	if _, err := service(pool).Setup(ctx, password, now.AddDate(0, 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	var sessions int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM attendance_sessions WHERE group_id < 0`).Scan(&sessions); err != nil || sessions != 0 {
+		t.Errorf("sessions left the next day: %d %v", sessions, err)
+	}
+	if err := service(pool).Remove(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authSvc.Login(ctx, demo.TeacherUsername, password, "phone-2"); !errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Errorf("teacher login after remove: %v", err)
 	}
 }

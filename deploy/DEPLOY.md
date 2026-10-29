@@ -390,35 +390,46 @@ When an update changes how question pictures look, the bot replaces the photos
 of the questions still open in the group when it restarts (a few seconds per
 picture; the log says `redrew open posts`). Decided ones keep their pictures.
 
-## Demo account for app store review
+## Demo accounts for app store review
 
-Google Play (and the App Store) ask for an account the reviewer can sign in
-with. MakonBook has a **demo student** for that: a fictional "Demo Student" in
-two fictional classes (SAT Math and SAT English, branch "SAT MAKON (demo)"),
-with their schedule, eight weeks of attendance, practice results over the
-last six weeks that go up and down but rise (Day 1 1240, Day 2 1290 and 1340,
-Days 3–7 1310–1390, Day 8 1380, Day 9 1410 and 1520) and a
-parent code. It isn't in HolliHop, and stays apart from the school's data: the
-sync never touches it, no teacher or admin sees its lessons, nothing about it
-is written to HolliHop, and a parent's report about it doesn't go to Telegram.
+Google Play (and the App Store) ask for accounts the reviewer can sign in
+with. MakonBook has two, both with the password `DEMO_PASSWORD`:
+
+- **`demo.student`**, a fictional "Demo Student" in two fictional classes (SAT
+  Math and SAT English, branch "SAT MAKON (demo)"), with their schedule, eight
+  weeks of attendance, practice results over the last six weeks that go up and
+  down but rise (Day 1 1240, Day 2 1290 and 1340, Days 3–7 1310–1390, Day 8
+  1380, Day 9 1410 and 1520) and a parent code.
+- **`demo.teacher`**, the fictional teacher "Nodira Aliyeva": the SAT Math
+  class and "SAT Practice (demo, open all day)", a class every day from 00:00
+  to 23:59 so the reviewer can open attendance (QR, marks) whenever they look.
+  The classes have ten fictional classmates with practice results.
+
+None of it is in HolliHop, and it stays apart from the school's data: the sync
+never touches it, admins' lessons, reports and code search leave it out,
+attendance taken in it is never written to HolliHop, and a parent's report
+about the demo child doesn't go to Telegram.
 
 Once:
 
 1. Choose a password (8+ characters) and put it in `.env`:
    `DEMO_PASSWORD=<the password>`, then `docker compose up -d`.
-2. `docker compose run --rm api demo`: it makes the account and prints the
+2. `docker compose run --rm api demo`: it makes the accounts and prints the
    parent code and the practice results.
 3. In Play Console → **App content → App access**: "All or some functionality
-   is restricted", then add the login: username `demo.student`, the password,
-   and a note such as: *Sign in with these on the "Sign in" screen. Parent
-   mode: on the first screen tap "Ota-onalar uchun" and enter the parent code
-   shown in the student's Profile.*
+   is restricted", then add the logins (`demo.student` and `demo.teacher`, the
+   password) and a note such as: *Sign in on the "Sign in" screen. The student
+   account shows classes, attendance and practice results; the teacher account
+   can take attendance in "SAT Practice (demo, open all day)" at any time.
+   Parent mode: on the first screen tap "Ota-onalar uchun" and enter the parent
+   code shown in the student's Profile.*
 
-The worker brings it up to date every day (the attendance moves along with the
-calendar; a password or username a reviewer changed goes back). A result
-needs its test published; until it is, the command says so and skips it. To delete the
-account: remove `DEMO_PASSWORD` from `.env`, `docker compose up -d`, then
-`docker compose run --rm api demo remove`.
+The worker brings them up to date every day: the attendance and the practice
+dates move along with the calendar, the teacher's attendance from earlier days
+is cleared, and a password or username a reviewer changed goes back. A result
+needs its test published; until it is, the command says so and skips it. To
+delete the accounts: remove `DEMO_PASSWORD` from `.env`, `docker compose up -d`,
+then `docker compose run --rm api demo remove`.
 
 ## Parents
 
