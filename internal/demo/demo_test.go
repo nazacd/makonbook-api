@@ -70,7 +70,7 @@ func TestSetupAndRemove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Username != demo.Username || len(res.ParentCode) != 5 || len(res.Practice) != 5 {
+	if res.Username != demo.Username || len(res.ParentCode) != 5 || len(res.Practice) != 11 {
 		t.Errorf("result: %+v", res)
 	}
 
@@ -105,18 +105,19 @@ func TestSetupAndRemove(t *testing.T) {
 	if len(mustAttempts(t, pool)) != 0 {
 		t.Errorf("results without the tests: %q", res.Practice)
 	}
-	for _, code := range []string{"DAY1", "DAY2", "DAY8", "DAY9"} {
+	for _, code := range []string{"DAY1", "DAY2", "DAY3", "DAY4", "DAY5", "DAY6", "DAY7", "DAY8", "DAY9"} {
 		publish(t, pool, code)
 	}
 	res2, err := svc.Setup(ctx, password, now.Add(time.Hour))
 	if err != nil || res2.ParentCode != res.ParentCode {
 		t.Fatalf("setup again: %+v %v", res2, err)
 	}
-	// Oldest first, the scores rising to these totals.
+	// Oldest first: up and down, but rising.
 	want := []struct {
 		test  string
 		total int
-	}{{"DAY1", 1240}, {"DAY2", 1290}, {"DAY2", 1340}, {"DAY8", 1380}, {"DAY9", 1410}}
+	}{{"DAY1", 1240}, {"DAY2", 1290}, {"DAY2", 1340}, {"DAY3", 1310}, {"DAY4", 1360}, {"DAY5", 1330},
+		{"DAY6", 1390}, {"DAY7", 1370}, {"DAY8", 1380}, {"DAY9", 1410}, {"DAY9", 1520}}
 	attempts := mustAttempts(t, pool) // latest first
 	if len(attempts) != len(want) {
 		t.Fatalf("attempts: %+v", attempts)
@@ -130,8 +131,13 @@ func TestSetupAndRemove(t *testing.T) {
 			t.Errorf("result %d isn't after the one before", i)
 		}
 	}
-	if _, err := svc.Setup(ctx, password, now.AddDate(0, 0, 1)); err != nil || len(mustAttempts(t, pool)) != len(want) {
-		t.Errorf("a third setup: %v, %d attempts", err, len(mustAttempts(t, pool)))
+	// A day later the results are a day later too, still one of each.
+	if _, err := svc.Setup(ctx, password, now.AddDate(0, 0, 1)); err != nil {
+		t.Fatal(err)
+	}
+	later := mustAttempts(t, pool)
+	if len(later) != len(want) || !later[len(later)-1].FinishedAt.Equal(attempts[len(attempts)-1].FinishedAt.AddDate(0, 0, 1)) {
+		t.Errorf("the next day: %d attempts, Day 1 finished %v (was %v)", len(later), later[len(later)-1].FinishedAt, attempts[len(attempts)-1].FinishedAt)
 	}
 
 	// A reviewer changes the password; the next setup puts it back.
