@@ -37,7 +37,7 @@ SET first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name, hh_status_
     office_ids = EXCLUDED.office_ids, deactivated_at = NULL, login_phone = NULL, updated_at = now();
 
 -- name: DeleteEnrollments :exec
-DELETE FROM enrollments WHERE student_client_id = @student_client_id;
+DELETE FROM enrollments WHERE student_client_id < 0;
 
 -- name: InsertEnrollment :exec
 INSERT INTO enrollments (group_id, student_client_id, begin_date, end_date, weekdays)
@@ -53,9 +53,24 @@ SELECT unnest(@group_ids::int[]), @student_client_id::int, unnest(@dates::date[]
 -- name: UsernameOwner :one
 SELECT person_kind, person_id FROM credentials WHERE username = @username;
 
+-- Lesson days, so the demo teacher has lessons on their Today screen (one
+-- schedule item per group, with the group's id).
+-- name: DeleteLessonDays :exec
+DELETE FROM lesson_days WHERE group_id < 0;
+
+-- name: InsertLessonDays :exec
+INSERT INTO lesson_days (group_id, date, minutes, schedule_item_ids)
+SELECT x.g, x.d, x.m, ARRAY[x.g]
+FROM (SELECT unnest(@group_ids::int[]) AS g, unnest(@dates::date[]) AS d, unnest(@minutes::int[]) AS m) AS x;
+
+-- Attendance taken in the demo groups before today (today's stays: a
+-- reviewer may be in the middle of it).
+-- name: DeleteOldSessions :exec
+DELETE FROM attendance_sessions WHERE group_id < 0 AND date < @today::date;
+
 -- name: SetCredential :exec
 INSERT INTO credentials (person_kind, person_id, username, password_hash, password_changed_at)
-VALUES ('student', @person_id, @username, @password_hash, now())
+VALUES (@person_kind, @person_id, @username, @password_hash, now())
 ON CONFLICT (person_kind, person_id) DO UPDATE
 SET username = EXCLUDED.username, password_hash = EXCLUDED.password_hash,
     password_changed_at = now(), failed_attempts = 0, locked_until = NULL;
@@ -69,10 +84,13 @@ DELETE FROM practice_attempts WHERE student_client_id < 0 AND id = ANY (@ids::uu
 -- student (ON DELETE CASCADE); schedule items with the groups.
 
 -- name: DeleteCredentials :exec
-DELETE FROM credentials WHERE person_kind = 'student' AND person_id < 0;
+DELETE FROM credentials WHERE person_id < 0;
 
 -- name: DeleteSessions :exec
-DELETE FROM auth_sessions WHERE person_kind = 'student' AND person_id < 0;
+DELETE FROM auth_sessions WHERE person_id < 0;
+
+-- name: DeleteAttendance :exec
+DELETE FROM attendance_sessions WHERE group_id < 0;
 
 -- name: DeleteAttempts :exec
 DELETE FROM practice_attempts WHERE student_client_id < 0;

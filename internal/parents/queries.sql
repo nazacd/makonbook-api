@@ -104,7 +104,7 @@ SELECT s.client_id, s.first_name, s.last_name, c.code,
                  WHERE e.student_client_id = s.client_id AND g.removed_at IS NULL
                    AND (e.end_date IS NULL OR e.end_date >= @today::date)), '')::text AS groups
 FROM students s JOIN parent_codes c ON c.student_client_id = s.client_id
-WHERE s.deactivated_at IS NULL
+WHERE s.deactivated_at IS NULL AND s.client_id > 0 -- not the demo's (internal/demo)
   AND (s.first_name || ' ' || s.last_name || ' ' || s.last_name || ' ' || s.first_name) ILIKE '%' || @q::text || '%'
   AND (@all_offices::bool
        OR s.office_ids && @office_ids::int[]

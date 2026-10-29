@@ -77,9 +77,9 @@ type Config struct {
 	TelegramReviewToken  string
 	TelegramReviewChatID int64
 
-	// DemoPassword is the password of the demo student account store
-	// reviewers sign in with (internal/demo; username demo.student). Secret.
-	// Optional: without it there is no demo account.
+	// DemoPassword is the password of the demo accounts store reviewers sign
+	// in with (internal/demo; demo.student and demo.teacher). Secret.
+	// Optional: without it there are no demo accounts.
 	DemoPassword string
 }
 

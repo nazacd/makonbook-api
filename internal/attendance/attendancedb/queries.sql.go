@@ -101,7 +101,7 @@ JOIN attendance_sessions s ON s.id = a.session_id
 JOIN groups g ON g.id = s.group_id
 LEFT JOIN teachers t ON a.actor_kind = 'teacher' AND t.id = a.actor_id
 LEFT JOIN students st ON st.client_id = a.student_client_id
-WHERE a.actor_kind IN ('teacher', 'admin')
+WHERE a.actor_kind IN ('teacher', 'admin') AND s.group_id > 0
   AND s.date BETWEEN $1::date AND $2::date
   AND ($3::bool OR g.office_id = ANY ($4::int[]))
   AND ($5::int = 0 OR (a.actor_kind = 'teacher' AND a.actor_id = $5::int))
@@ -184,7 +184,7 @@ FROM attendance_audit a
 JOIN attendance_sessions s ON s.id = a.session_id
 JOIN groups g ON g.id = s.group_id
 JOIN teachers t ON t.id = a.actor_id
-WHERE a.actor_kind = 'teacher'
+WHERE a.actor_kind = 'teacher' AND s.group_id > 0 -- not the demo's (internal/demo)
   AND s.date BETWEEN $1::date AND $2::date
   AND ($3::bool OR g.office_id = ANY ($4::int[]))
 GROUP BY t.id

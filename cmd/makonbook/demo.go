@@ -20,9 +20,9 @@ import (
 )
 
 const demoUsage = `
-  demo [remove]             the demo student account for app store reviewers (username
-                            demo.student, password DEMO_PASSWORD): make it or bring it up to
-                            date now (the worker also does it daily), or delete it
+  demo [remove]             the demo accounts for app store reviewers (demo.student and
+                            demo.teacher, password DEMO_PASSWORD): make them or bring them up
+                            to date now (the worker also does it daily), or delete them
 `
 
 func validDemoArgs(args []string) bool {
@@ -45,7 +45,7 @@ func runDemo(ctx context.Context, cfg config.Config, args []string, log *slog.Lo
 		if err := svc.Remove(ctx); err != nil {
 			return err
 		}
-		fmt.Fprintln(stdout, "The demo account is deleted. (While DEMO_PASSWORD is set, the worker makes it again: remove that from .env first.)")
+		fmt.Fprintln(stdout, "The demo accounts are deleted. (While DEMO_PASSWORD is set, the worker makes them again: remove that from .env first.)")
 		return nil
 	}
 	if cfg.DemoPassword == "" {
@@ -55,8 +55,8 @@ func runDemo(ctx context.Context, cfg config.Config, args []string, log *slog.Lo
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "Demo account ready.\n  username     %s\n  password     DEMO_PASSWORD from .env\n  parent code  %s\n  practice\n",
-		res.Username, res.ParentCode)
+	fmt.Fprintf(stdout, "Demo accounts ready (password: DEMO_PASSWORD from .env).\n  student      %s\n  teacher      %s\n  parent code  %s\n  practice\n",
+		res.Username, res.TeacherUsername, res.ParentCode)
 	for _, line := range res.Practice {
 		fmt.Fprintf(stdout, "    %s\n", line)
 	}

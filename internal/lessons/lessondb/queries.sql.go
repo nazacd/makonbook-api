@@ -13,7 +13,7 @@ import (
 
 const deleteDaysBetween = `-- name: DeleteDaysBetween :exec
 
-DELETE FROM lesson_days WHERE date BETWEEN $1::date AND $2::date
+DELETE FROM lesson_days WHERE date BETWEEN $1::date AND $2::date AND group_id > 0
 `
 
 type DeleteDaysBetweenParams struct {
@@ -21,7 +21,9 @@ type DeleteDaysBetweenParams struct {
 	DateTo   pgtype.Date
 }
 
-// Lesson days (spec 8.1). Written only by the sync.
+// Lesson days (spec 8.1). Written only by the sync, and by internal/demo for
+// the store reviewers' demo groups (negative ids), which the sync and the
+// admins' lists leave out.
 func (q *Queries) DeleteDaysBetween(ctx context.Context, arg DeleteDaysBetweenParams) error {
 	_, err := q.db.Exec(ctx, deleteDaysBetween, arg.DateFrom, arg.DateTo)
 	return err
@@ -31,7 +33,7 @@ const groupIssues = `-- name: GroupIssues :many
 WITH next AS (
     SELECT DISTINCT ON (d.group_id) d.group_id, d.date, d.schedule_item_ids
     FROM lesson_days d
-    WHERE d.date >= $1::date
+    WHERE d.date >= $1::date AND d.group_id > 0
     ORDER BY d.group_id, d.date
 )
 SELECT g.id AS group_id, g.name AS group_name, g.learning_type,
@@ -154,7 +156,7 @@ JOIN groups g ON g.id = d.group_id AND g.removed_at IS NULL
 LEFT JOIN offices o ON o.id = g.office_id
 JOIN schedule_items s ON s.group_id = d.group_id AND s.id = ANY (d.schedule_item_ids)
 LEFT JOIN attendance_sessions a ON a.group_id = d.group_id AND a.date = d.date
-WHERE d.date = $2::date
+WHERE d.date = $2::date AND g.id > 0
   AND ($3::bool OR g.office_id = ANY ($4::int[]))
 GROUP BY g.id, o.name, d.date, d.minutes, d.schedule_item_ids, a.id
 HAVING EXISTS (SELECT 1 FROM schedule_items si JOIN teachers t ON t.id = ANY (si.teacher_ids)
