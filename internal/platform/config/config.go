@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -75,6 +76,11 @@ type Config struct {
 	// the bot only logs the groups it is in, so it can be found.
 	TelegramReviewToken  string
 	TelegramReviewChatID int64
+
+	// DemoPassword is the password of the demo student account store
+	// reviewers sign in with (internal/demo; username demo.student). Secret.
+	// Optional: without it there is no demo account.
+	DemoPassword string
 }
 
 // Load reads configuration through getenv (os.Getenv in production, a map
@@ -192,6 +198,11 @@ func Load(getenv func(string) string) (Config, error) {
 	cfg.TelegramAlertChatID = getenv("TELEGRAM_ALERT_CHAT_ID")
 	if (cfg.TelegramBotToken == "") != (cfg.TelegramAlertChatID == "") {
 		errs = append(errs, errors.New("TELEGRAM_BOT_TOKEN and TELEGRAM_ALERT_CHAT_ID must be set together"))
+	}
+
+	cfg.DemoPassword = getenv("DEMO_PASSWORD")
+	if n := utf8.RuneCountInString(cfg.DemoPassword); n > 0 && (n < 8 || n > 128) {
+		errs = append(errs, errors.New("DEMO_PASSWORD must be 8 to 128 characters"))
 	}
 
 	return cfg, errors.Join(errs...)

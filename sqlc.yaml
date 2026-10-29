@@ -90,3 +90,11 @@ sql:
         package: parentsdb
         out: internal/parents/parentsdb
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/demo/queries.sql
+    gen:
+      go:
+        package: demodb
+        out: internal/demo/demodb
+        sql_package: pgx/v5

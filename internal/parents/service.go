@@ -265,7 +265,9 @@ func (s *Service) SendReport(ctx context.Context, sess Session, groupID *int32, 
 		return Report{}, err
 	}
 	rc, err := q.ReportContext(ctx, parentsdb.ReportContextParams{ClientID: sess.Student, GroupID: group})
-	if err == nil {
+	// The store reviewers' demo child (negative ids, internal/demo) is no news
+	// for the admins' chat; its reports are in the panel all the same.
+	if err == nil && sess.Student > 0 {
 		s.alert(ctx, row.ID, rc, lang, message)
 	}
 	r := Report{ID: row.ID, GroupID: groupID, GroupName: rc.GroupName, Message: message, CreatedAt: row.CreatedAt.Time}

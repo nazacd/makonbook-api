@@ -165,6 +165,8 @@ type UpsertOfficesParams struct {
 
 // Writes below are used only by the HolliHop sync (people.Apply). Upserts
 // skip rows whose values didn't change, so updated_at means "last changed".
+// Negative ids are the store reviewers' demo account (internal/demo), which
+// isn't in HolliHop: the sync never removes, deactivates or rewrites them.
 func (q *Queries) UpsertOffices(ctx context.Context, arg []UpsertOfficesParams) *UpsertOfficesBatchResults {
 	batch := &pgx.Batch{}
 	for _, a := range arg {

@@ -388,7 +388,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The student's attempts, latest first */
+        /**
+         * The student's attempts, latest first, with their answers
+         * @description With the answers the attempt was sent with, so a phone that doesn't have
+         *     an attempt (a new phone) can store it and show its review.
+         */
         get: operations["myPracticeAttempts"];
         put?: never;
         post?: never;
@@ -1501,6 +1505,17 @@ export interface components {
             /** @enum {string|null} */
             difficulty: "easy" | "medium" | "hard" | null;
         };
+        PracticeAnswer: {
+            /** @enum {string} */
+            subject: "english" | "math";
+            /** @enum {integer} */
+            module: 1 | 2;
+            position: number;
+            /** @description A letter, or a grid-in answer as typed */
+            answer: string | null;
+            /** @description Time spent on the question */
+            seconds: number;
+        };
         PracticeAttempt: {
             /** Format: uuid */
             id: string;
@@ -2545,17 +2560,7 @@ export interface operations {
                     /** Format: date-time */
                     finished_at: string;
                     /** @description One per question seen, in the sections taken; blank answers are null */
-                    answers: {
-                        /** @enum {string} */
-                        subject: "english" | "math";
-                        /** @enum {integer} */
-                        module: 1 | 2;
-                        position: number;
-                        /** @description A letter, or a grid-in answer as typed */
-                        answer: string | null;
-                        /** @description Time spent on the question */
-                        seconds: number;
-                    }[];
+                    answers: components["schemas"]["PracticeAnswer"][];
                 };
             };
         };
@@ -2616,7 +2621,9 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        attempts: components["schemas"]["PracticeAttempt"][];
+                        attempts: (components["schemas"]["PracticeAttempt"] & {
+                            answers: components["schemas"]["PracticeAnswer"][];
+                        })[];
                     };
                 };
             };

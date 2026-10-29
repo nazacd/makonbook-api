@@ -176,7 +176,7 @@ func (q *Queries) LockSupers(ctx context.Context) ([]LockSupersRow, error) {
 }
 
 const offices = `-- name: Offices :many
-SELECT id, name FROM offices ORDER BY name
+SELECT id, name FROM offices WHERE id > 0 ORDER BY name
 `
 
 type OfficesRow struct {

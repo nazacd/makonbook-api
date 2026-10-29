@@ -57,4 +57,4 @@ SELECT fired, (first_name || ' ' || last_name)::text AS name FROM teachers WHERE
 SELECT member_type, member_id FROM admin_access WHERE super FOR UPDATE;
 
 -- name: Offices :many
-SELECT id, name FROM offices ORDER BY name;
+SELECT id, name FROM offices WHERE id > 0 ORDER BY name; -- not the demo's (internal/demo)

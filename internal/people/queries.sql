@@ -1,5 +1,7 @@
 -- Writes below are used only by the HolliHop sync (people.Apply). Upserts
 -- skip rows whose values didn't change, so updated_at means "last changed".
+-- Negative ids are the store reviewers' demo account (internal/demo), which
+-- isn't in HolliHop: the sync never removes, deactivates or rewrites them.
 
 -- name: UpsertOffices :batchexec
 INSERT INTO offices (id, name, utc_offset)
@@ -26,10 +28,10 @@ WHERE (groups.name, groups.discipline, groups.level, groups.learning_type, group
 -- name: MarkGroupsRemoved :execrows
 UPDATE groups
 SET removed_at = now(), updated_at = now()
-WHERE removed_at IS NULL AND NOT (id = ANY (@present_ids::int[]));
+WHERE removed_at IS NULL AND id > 0 AND NOT (id = ANY (@present_ids::int[]));
 
 -- name: DeleteScheduleItems :exec
-DELETE FROM schedule_items;
+DELETE FROM schedule_items WHERE group_id > 0;
 
 -- name: InsertScheduleItems :copyfrom
 INSERT INTO schedule_items (id, group_id, begin_date, end_date, begin_time, end_time, weekdays, classroom, teacher_ids)
@@ -56,7 +58,7 @@ WHERE (teachers.first_name, teachers.last_name, teachers.phone_raw, teachers.fir
 -- name: DeactivateTeachersExcept :many
 UPDATE teachers
 SET deactivated_at = now(), login_phone = NULL, updated_at = now()
-WHERE deactivated_at IS NULL AND NOT (id = ANY (@active_ids::int[]))
+WHERE deactivated_at IS NULL AND id > 0 AND NOT (id = ANY (@active_ids::int[]))
 RETURNING id;
 
 -- name: ReactivateTeachers :many
@@ -91,12 +93,12 @@ WHERE (students.hh_student_id, students.first_name, students.last_name, students
 -- name: MarkStudentsMissing :execrows
 UPDATE students
 SET hh_status_id = NULL, updated_at = now()
-WHERE hh_status_id IS NOT NULL AND NOT (client_id = ANY (@present_ids::int[]));
+WHERE hh_status_id IS NOT NULL AND client_id > 0 AND NOT (client_id = ANY (@present_ids::int[]));
 
 -- name: DeactivateStudents :many
 UPDATE students
 SET deactivated_at = now(), login_phone = NULL, updated_at = now()
-WHERE deactivated_at IS NULL AND hh_status_id IS DISTINCT FROM @studying_status::int
+WHERE deactivated_at IS NULL AND client_id > 0 AND hh_status_id IS DISTINCT FROM @studying_status::int
 RETURNING client_id;
 
 -- name: ReactivateStudents :many
@@ -106,7 +108,7 @@ WHERE deactivated_at IS NOT NULL AND hh_status_id = @studying_status::int
 RETURNING client_id;
 
 -- name: DeleteEnrollments :exec
-DELETE FROM enrollments;
+DELETE FROM enrollments WHERE student_client_id > 0;
 
 -- name: InsertEnrollments :copyfrom
 INSERT INTO enrollments (group_id, student_client_id, begin_date, end_date, weekdays)
@@ -114,10 +116,10 @@ VALUES (@group_id, @student_client_id, @begin_date, @end_date, @weekdays);
 
 -- name: ListActivePhones :many
 SELECT 'student'::text AS person_kind, client_id AS person_id, phone_raw, first_name, last_name
-FROM students WHERE deactivated_at IS NULL
+FROM students WHERE deactivated_at IS NULL AND client_id > 0
 UNION ALL
 SELECT 'teacher'::text, id, phone_raw, first_name, last_name
-FROM teachers WHERE deactivated_at IS NULL;
+FROM teachers WHERE deactivated_at IS NULL AND id > 0;
 
 -- Login phones are updated in two passes — clear every value that is not
 -- wanted, then set the wanted ones — so the UNIQUE index never sees a number
@@ -126,7 +128,7 @@ FROM teachers WHERE deactivated_at IS NULL;
 -- name: ClearStudentLoginPhones :exec
 UPDATE students s
 SET login_phone = NULL
-WHERE s.login_phone IS NOT NULL
+WHERE s.login_phone IS NOT NULL AND s.client_id > 0
   AND NOT EXISTS (
       SELECT 1 FROM (SELECT unnest(@ids::int[]) AS id, unnest(@phones::text[]) AS phone) AS w
       WHERE w.id = s.client_id AND w.phone = s.login_phone);
@@ -140,7 +142,7 @@ WHERE s.client_id = w.id AND s.login_phone IS DISTINCT FROM w.phone;
 -- name: ClearTeacherLoginPhones :exec
 UPDATE teachers t
 SET login_phone = NULL
-WHERE t.login_phone IS NOT NULL
+WHERE t.login_phone IS NOT NULL AND t.id > 0
   AND NOT EXISTS (
       SELECT 1 FROM (SELECT unnest(@ids::int[]) AS id, unnest(@phones::text[]) AS phone) AS w
       WHERE w.id = t.id AND w.phone = t.login_phone);

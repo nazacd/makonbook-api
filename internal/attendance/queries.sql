@@ -87,7 +87,7 @@ INSERT INTO hollihop_outbox (session_id, group_id, student_client_id, date, pass
 SELECT m.session_id, s.group_id, m.student_client_id, s.date, m.state = 'absent', @at::timestamptz, @at::timestamptz
 FROM attendance_marks m
 JOIN attendance_sessions s ON s.id = m.session_id
-WHERE m.session_id = @session_id AND m.state <> 'pending';
+WHERE m.session_id = @session_id AND m.state <> 'pending' AND s.group_id > 0; -- never the demo's (negative ids)
 
 -- A correction after the session finished replaces anything not yet sent,
 -- and a failed write it makes obsolete (so it no longer asks for a person).
@@ -98,7 +98,7 @@ WHERE session_id = @session_id AND student_client_id = @student_client_id AND st
 -- name: EnqueueMark :exec
 INSERT INTO hollihop_outbox (session_id, group_id, student_client_id, date, pass, created_at, next_attempt_at)
 SELECT s.id, s.group_id, @student_client_id, s.date, @pass, @at::timestamptz, @at::timestamptz
-FROM attendance_sessions s WHERE s.id = @session_id;
+FROM attendance_sessions s WHERE s.id = @session_id AND s.group_id > 0;
 
 -- Read under a share lock so a correction and a concurrent finish serialise:
 -- either the correction lands before the finish enqueues the session, or it
@@ -128,8 +128,9 @@ WHERE id = @id AND status = 'pending';
 
 -- HolliHop's attendance, read-only (spec 8.7) --------------------------------
 
+-- The demo account's records (negative ids, internal/demo) aren't HolliHop's.
 -- name: DeleteRecordsBetween :exec
-DELETE FROM attendance_records WHERE date BETWEEN @date_from::date AND @date_to::date;
+DELETE FROM attendance_records WHERE date BETWEEN @date_from::date AND @date_to::date AND student_client_id > 0;
 
 -- Rows for students MakonBook doesn't store (never active) are skipped.
 -- name: InsertRecord :batchexec

@@ -390,6 +390,34 @@ When an update changes how question pictures look, the bot replaces the photos
 of the questions still open in the group when it restarts (a few seconds per
 picture; the log says `redrew open posts`). Decided ones keep their pictures.
 
+## Demo account for app store review
+
+Google Play (and the App Store) ask for an account the reviewer can sign in
+with. MakonBook has a **demo student** for that: a fictional "Demo Student" in
+two fictional classes (SAT Math and SAT English, branch "SAT MAKON (demo)"),
+with their schedule, eight weeks of attendance, a Day 1 practice result and a
+parent code. It isn't in HolliHop, and stays apart from the school's data: the
+sync never touches it, no teacher or admin sees its lessons, nothing about it
+is written to HolliHop, and a parent's report about it doesn't go to Telegram.
+
+Once:
+
+1. Choose a password (8+ characters) and put it in `.env`:
+   `DEMO_PASSWORD=<the password>`, then `docker compose up -d`.
+2. `docker compose run --rm api demo`: it makes the account and prints the
+   parent code and the Day 1 result.
+3. In Play Console → **App content → App access**: "All or some functionality
+   is restricted", then add the login: username `demo.student`, the password,
+   and a note such as: *Sign in with these on the "Sign in" screen. Parent
+   mode: on the first screen tap "Ota-onalar uchun" and enter the parent code
+   shown in the student's Profile.*
+
+The worker brings it up to date every day (the attendance moves along with the
+calendar; a password or username a reviewer changed goes back). The Day 1
+result needs Day 1 published; until it is, the command says so. To delete the
+account: remove `DEMO_PASSWORD` from `.env`, `docker compose up -d`, then
+`docker compose run --rm api demo remove`.
+
 ## Parents
 
 Parents have no accounts. Every student has a permanent **5-digit parent code**
