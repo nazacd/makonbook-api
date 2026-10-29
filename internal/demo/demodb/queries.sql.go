@@ -78,6 +78,16 @@ func (q *Queries) DeleteScheduleItems(ctx context.Context) error {
 	return err
 }
 
+const deleteSeededAttempts = `-- name: DeleteSeededAttempts :exec
+DELETE FROM practice_attempts WHERE student_client_id < 0 AND id = ANY ($1::uuid[])
+`
+
+// The results Setup makes (fixed ids), made again each time.
+func (q *Queries) DeleteSeededAttempts(ctx context.Context, ids []pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteSeededAttempts, ids)
+	return err
+}
+
 const deleteSessions = `-- name: DeleteSessions :exec
 DELETE FROM auth_sessions WHERE person_kind = 'student' AND person_id < 0
 `

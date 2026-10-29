@@ -166,7 +166,7 @@ full|incremental` runs one by hand.
 - **Reset:** `makonbook reset-password student|teacher <id>` (admin-panel button later) forgets the own password, unlocks and ends all sessions. Email-code reset (hashed code, 15 min expiry, 5 attempts) can follow; Telegram later.
 - **Errors:** unknown account and wrong password both answer 401 `invalid_credentials`; a locked account answers 429 `account_locked` with `Retry-After`.
 - **Admins:** HolliHop staff on our access list, signing in with their HolliHop login (D18). Practice-content editors: a list of trusted teachers (D21).
-- **Demo account (app store review):** `demo.student` with the `DEMO_PASSWORD` setting (`internal/demo`, `makonbook demo [remove]`, refreshed daily by the worker): a fictional student, two fictional classes, eight weeks of attendance, a Day 1 result. It lives in the mirror tables under **negative ids**, which the sync never touches; its groups have no lesson days, so no teacher or admin can take attendance there and nothing reaches HolliHop; its branch isn't listed in the admin panel and parents' reports about it skip Telegram.
+- **Demo account (app store review):** `demo.student` with the `DEMO_PASSWORD` setting (`internal/demo`, `makonbook demo [remove]`, refreshed daily by the worker): a fictional student, two fictional classes, eight weeks of attendance, practice results rising from 1240 (Day 1) to 1410 (Day 9). It lives in the mirror tables under **negative ids**, which the sync never touches; its groups have no lesson days, so no teacher or admin can take attendance there and nothing reaches HolliHop; its branch isn't listed in the admin panel and parents' reports about it skip Telegram.
 
 ## 8. Attendance (phase 2)
 

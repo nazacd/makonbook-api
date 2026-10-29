@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -54,8 +55,11 @@ func runDemo(ctx context.Context, cfg config.Config, args []string, log *slog.Lo
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "Demo account ready.\n  username     %s\n  password     DEMO_PASSWORD from .env\n  parent code  %s\n  practice     %s\n",
-		res.Username, res.ParentCode, res.Practice)
+	fmt.Fprintf(stdout, "Demo account ready.\n  username     %s\n  password     DEMO_PASSWORD from .env\n  parent code  %s\n  practice\n",
+		res.Username, res.ParentCode)
+	for _, line := range res.Practice {
+		fmt.Fprintf(stdout, "    %s\n", line)
+	}
 	return nil
 }
 
@@ -71,7 +75,7 @@ func demoLoop(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, log *s
 				}
 			} else {
 				last = day
-				log.Info("demo account up to date", "username", res.Username, "practice", res.Practice)
+				log.Info("demo account up to date", "username", res.Username, "practice", strings.Join(res.Practice, "; "))
 			}
 		}
 		select {

@@ -60,6 +60,10 @@ ON CONFLICT (person_kind, person_id) DO UPDATE
 SET username = EXCLUDED.username, password_hash = EXCLUDED.password_hash,
     password_changed_at = now(), failed_attempts = 0, locked_until = NULL;
 
+-- The results Setup makes (fixed ids), made again each time.
+-- name: DeleteSeededAttempts :exec
+DELETE FROM practice_attempts WHERE student_client_id < 0 AND id = ANY (@ids::uuid[]);
+
 -- Removing the account: everything under the negative ids. Parent codes,
 -- sessions and reports, attendance records and enrollments go with the
 -- student (ON DELETE CASCADE); schedule items with the groups.

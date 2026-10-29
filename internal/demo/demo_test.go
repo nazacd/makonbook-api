@@ -29,9 +29,9 @@ func service(pool *pgxpool.Pool) *demo.Service {
 	return demo.NewService(pool, practice.NewService(pool, nil), codes, tashkent)
 }
 
-// publishDay1 stores a small published DAY1: 8 English and 6 Math questions,
-// two of them grid-ins.
-func publishDay1(t *testing.T, pool *pgxpool.Pool) {
+// publish stores a published test the size of the real ones: 54 English and
+// 44 Math questions, the last few of Math grid-ins.
+func publish(t *testing.T, pool *pgxpool.Pool, code string) {
 	t.Helper()
 	key := func(s string) *string { return &s }
 	section := func(subject string, n int) practice.Section {
@@ -39,7 +39,7 @@ func publishDay1(t *testing.T, pool *pgxpool.Pool) {
 		for i := 1; i <= n; i++ {
 			q := practice.PackageQuestion{ID: fmt.Sprintf("%s-%d", subject, i), Version: 1, Position: int16(i), Type: "mcq",
 				Stem: "Q", Choices: map[string]string{"A": "1", "B": "2", "C": "3", "D": "4"}, Key: key("C")}
-			if subject == "math" && i > 4 {
+			if subject == "math" && i > 38 {
 				q.Type, q.Choices, q.Key, q.Accepted = "grid_in", nil, nil, []string{"1/2"}
 			}
 			qs = append(qs, q)
@@ -47,11 +47,11 @@ func publishDay1(t *testing.T, pool *pgxpool.Pool) {
 		return practice.Section{Subject: subject, Modules: []practice.Module{{Module: 1, Minutes: 32, Questions: qs}},
 			Scale: practice.Scale(subject, n)}
 	}
-	pkg, _ := json.Marshal(practice.Package{Format: 1, Code: "DAY1", Title: "Day 1", Version: 1,
-		Sections: []practice.Section{section("english", 8), section("math", 6)}})
+	pkg, _ := json.Marshal(practice.Package{Format: 1, Code: code, Title: code, Version: 1,
+		Sections: []practice.Section{section("english", 54), section("math", 44)}})
 	if _, err := pool.Exec(t.Context(), `
-		WITH t AS (INSERT INTO practice_tests (code, title) VALUES ('DAY1', 'Day 1') RETURNING id)
-		INSERT INTO practice_test_versions (test_id, version, content_hash, package, bytes) SELECT id, 1, 'h', $1, 100 FROM t`, pkg); err != nil {
+		WITH t AS (INSERT INTO practice_tests (code, title) VALUES ($2, $2) RETURNING id)
+		INSERT INTO practice_test_versions (test_id, version, content_hash, package, bytes) SELECT id, 1, 'h', $1, 100 FROM t`, pkg, code); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -70,7 +70,7 @@ func TestSetupAndRemove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Username != demo.Username || len(res.ParentCode) != 5 || res.Practice == "" {
+	if res.Username != demo.Username || len(res.ParentCode) != 5 || len(res.Practice) != 5 {
 		t.Errorf("result: %+v", res)
 	}
 
@@ -101,24 +101,36 @@ func TestSetupAndRemove(t *testing.T) {
 		}
 	}
 
-	// DAY1 not published: no result, and setting up again once it is adds it.
-	if res.Practice == "" || len(mustAttempts(t, pool)) != 0 {
-		t.Errorf("practice without DAY1: %q", res.Practice)
+	// Tests not published: no results; setting up again once they are adds them.
+	if len(mustAttempts(t, pool)) != 0 {
+		t.Errorf("results without the tests: %q", res.Practice)
 	}
-	publishDay1(t, pool)
+	for _, code := range []string{"DAY1", "DAY2", "DAY8", "DAY9"} {
+		publish(t, pool, code)
+	}
 	res2, err := svc.Setup(ctx, password, now.Add(time.Hour))
 	if err != nil || res2.ParentCode != res.ParentCode {
 		t.Fatalf("setup again: %+v %v", res2, err)
 	}
-	attempts := mustAttempts(t, pool)
-	if len(attempts) != 1 || attempts[0].Total == nil || len(attempts[0].Answers) != 14 {
+	// Oldest first, the scores rising to these totals.
+	want := []struct {
+		test  string
+		total int
+	}{{"DAY1", 1240}, {"DAY2", 1290}, {"DAY2", 1340}, {"DAY8", 1380}, {"DAY9", 1410}}
+	attempts := mustAttempts(t, pool) // latest first
+	if len(attempts) != len(want) {
 		t.Fatalf("attempts: %+v", attempts)
 	}
-	e, m := attempts[0].Scores["english"], attempts[0].Scores["math"]
-	if e.Raw == 0 || e.Raw == e.Questions || m.Raw == 0 || m.Raw == m.Questions {
-		t.Errorf("scores should be good, not perfect: %+v %+v", e, m)
+	for i, w := range want {
+		a := attempts[len(attempts)-1-i]
+		if a.Test != w.test || a.Total == nil || *a.Total != w.total || len(a.Answers) != 98 {
+			t.Errorf("result %d: %s %v, want %s %d", i, a.Test, a.Total, w.test, w.total)
+		}
+		if i > 0 && !a.FinishedAt.After(attempts[len(attempts)-i].FinishedAt) {
+			t.Errorf("result %d isn't after the one before", i)
+		}
 	}
-	if _, err := svc.Setup(ctx, password, now.AddDate(0, 0, 1)); err != nil || len(mustAttempts(t, pool)) != 1 {
+	if _, err := svc.Setup(ctx, password, now.AddDate(0, 0, 1)); err != nil || len(mustAttempts(t, pool)) != len(want) {
 		t.Errorf("a third setup: %v, %d attempts", err, len(mustAttempts(t, pool)))
 	}
 
