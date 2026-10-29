@@ -739,6 +739,58 @@ func (q *Queries) LockQuestion(ctx context.Context, id pgtype.UUID) (Question, e
 	return i, err
 }
 
+const ownAttempts = `-- name: OwnAttempts :many
+SELECT a.id, a.student_client_id, t.code, t.title, a.test_version, a.sections, a.started_at, a.finished_at, a.scores, a.answers
+FROM practice_attempts a JOIN practice_tests t ON t.id = a.test_id
+WHERE a.student_client_id = $1::int
+ORDER BY a.finished_at DESC
+`
+
+type OwnAttemptsRow struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Code            string
+	Title           string
+	TestVersion     int32
+	Sections        []string
+	StartedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	Scores          []byte
+	Answers         []byte
+}
+
+// A student's own attempts with their answers (their history on a new phone).
+func (q *Queries) OwnAttempts(ctx context.Context, clientID int32) ([]OwnAttemptsRow, error) {
+	rows, err := q.db.Query(ctx, ownAttempts, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []OwnAttemptsRow
+	for rows.Next() {
+		var i OwnAttemptsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.StudentClientID,
+			&i.Code,
+			&i.Title,
+			&i.TestVersion,
+			&i.Sections,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Scores,
+			&i.Answers,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pendingAIFixes = `-- name: PendingAIFixes :many
 SELECT q.id, r.fix::jsonb AS fix
 FROM questions q

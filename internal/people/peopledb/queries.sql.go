@@ -15,7 +15,7 @@ const clearStudentLoginPhones = `-- name: ClearStudentLoginPhones :exec
 
 UPDATE students s
 SET login_phone = NULL
-WHERE s.login_phone IS NOT NULL
+WHERE s.login_phone IS NOT NULL AND s.client_id > 0
   AND NOT EXISTS (
       SELECT 1 FROM (SELECT unnest($1::int[]) AS id, unnest($2::text[]) AS phone) AS w
       WHERE w.id = s.client_id AND w.phone = s.login_phone)
@@ -37,7 +37,7 @@ func (q *Queries) ClearStudentLoginPhones(ctx context.Context, arg ClearStudentL
 const clearTeacherLoginPhones = `-- name: ClearTeacherLoginPhones :exec
 UPDATE teachers t
 SET login_phone = NULL
-WHERE t.login_phone IS NOT NULL
+WHERE t.login_phone IS NOT NULL AND t.id > 0
   AND NOT EXISTS (
       SELECT 1 FROM (SELECT unnest($1::int[]) AS id, unnest($2::text[]) AS phone) AS w
       WHERE w.id = t.id AND w.phone = t.login_phone)
@@ -78,7 +78,7 @@ func (q *Queries) CountActiveTeachers(ctx context.Context) (int64, error) {
 const deactivateStudents = `-- name: DeactivateStudents :many
 UPDATE students
 SET deactivated_at = now(), login_phone = NULL, updated_at = now()
-WHERE deactivated_at IS NULL AND hh_status_id IS DISTINCT FROM $1::int
+WHERE deactivated_at IS NULL AND client_id > 0 AND hh_status_id IS DISTINCT FROM $1::int
 RETURNING client_id
 `
 
@@ -105,7 +105,7 @@ func (q *Queries) DeactivateStudents(ctx context.Context, studyingStatus int32) 
 const deactivateTeachersExcept = `-- name: DeactivateTeachersExcept :many
 UPDATE teachers
 SET deactivated_at = now(), login_phone = NULL, updated_at = now()
-WHERE deactivated_at IS NULL AND NOT (id = ANY ($1::int[]))
+WHERE deactivated_at IS NULL AND id > 0 AND NOT (id = ANY ($1::int[]))
 RETURNING id
 `
 
@@ -130,7 +130,7 @@ func (q *Queries) DeactivateTeachersExcept(ctx context.Context, activeIds []int3
 }
 
 const deleteEnrollments = `-- name: DeleteEnrollments :exec
-DELETE FROM enrollments
+DELETE FROM enrollments WHERE student_client_id > 0
 `
 
 func (q *Queries) DeleteEnrollments(ctx context.Context) error {
@@ -139,7 +139,7 @@ func (q *Queries) DeleteEnrollments(ctx context.Context) error {
 }
 
 const deleteScheduleItems = `-- name: DeleteScheduleItems :exec
-DELETE FROM schedule_items
+DELETE FROM schedule_items WHERE group_id > 0
 `
 
 func (q *Queries) DeleteScheduleItems(ctx context.Context) error {
@@ -326,10 +326,10 @@ type InsertScheduleItemsParams struct {
 
 const listActivePhones = `-- name: ListActivePhones :many
 SELECT 'student'::text AS person_kind, client_id AS person_id, phone_raw, first_name, last_name
-FROM students WHERE deactivated_at IS NULL
+FROM students WHERE deactivated_at IS NULL AND client_id > 0
 UNION ALL
 SELECT 'teacher'::text, id, phone_raw, first_name, last_name
-FROM teachers WHERE deactivated_at IS NULL
+FROM teachers WHERE deactivated_at IS NULL AND id > 0
 `
 
 type ListActivePhonesRow struct {
@@ -417,7 +417,7 @@ func (q *Queries) ListTeacherIDs(ctx context.Context) ([]int32, error) {
 const markGroupsRemoved = `-- name: MarkGroupsRemoved :execrows
 UPDATE groups
 SET removed_at = now(), updated_at = now()
-WHERE removed_at IS NULL AND NOT (id = ANY ($1::int[]))
+WHERE removed_at IS NULL AND id > 0 AND NOT (id = ANY ($1::int[]))
 `
 
 func (q *Queries) MarkGroupsRemoved(ctx context.Context, presentIds []int32) (int64, error) {
@@ -431,7 +431,7 @@ func (q *Queries) MarkGroupsRemoved(ctx context.Context, presentIds []int32) (in
 const markStudentsMissing = `-- name: MarkStudentsMissing :execrows
 UPDATE students
 SET hh_status_id = NULL, updated_at = now()
-WHERE hh_status_id IS NOT NULL AND NOT (client_id = ANY ($1::int[]))
+WHERE hh_status_id IS NOT NULL AND client_id > 0 AND NOT (client_id = ANY ($1::int[]))
 `
 
 // Full pulls only: a student HolliHop no longer returns at all is treated as

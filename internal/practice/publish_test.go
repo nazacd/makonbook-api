@@ -204,7 +204,7 @@ func TestPublishAndAttempts(t *testing.T) {
 	}
 
 	mine, err := svc.StudentAttempts(ctx, 11)
-	if err != nil || len(mine) != 1 || mine[0].Test != "DAY1" || mine[0].Title == "" {
+	if err != nil || len(mine) != 1 || mine[0].Test != "DAY1" || mine[0].Title == "" || len(mine[0].Answers) != len(in.Answers) {
 		t.Errorf("student's attempts: %+v %v", mine, err)
 	}
 	today := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)

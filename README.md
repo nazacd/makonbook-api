@@ -62,6 +62,7 @@ All configuration comes from environment variables (see `.env.example`).
 | `SYNC_INTERVAL` | `15m` | Between incremental syncs |
 | `SYNC_FULL_AT` | `03:00` | Local time of the nightly full sync |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALERT_CHAT_ID` | — | Optional, set both: sync alerts, parents' reports and the parent-code guessing alarm go to this chat instead of only the log |
+| `DEMO_PASSWORD` | — | Optional. Secret. The demo student account for app store reviewers (username `demo.student`; see deploy/DEPLOY.md); without it there is none |
 | `TEST_DATABASE_URL` | — | Tests only; database tests are skipped without it |
 
 ## Layout

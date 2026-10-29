@@ -9,6 +9,7 @@
 //	makonbook practice import|list|publish|picture   practice tests (see practiceUsage)
 //	makonbook vocab import <path>        the word lists (see vocabUsage)
 //	makonbook review-bot                 the teachers' Telegram group review
+//	makonbook demo [remove]              the store reviewers' demo account (see demoUsage)
 package main
 
 import (
@@ -62,7 +63,7 @@ commands:
   reset-password student|teacher <id>
                             back to the default password (last 4 digits of the phone),
                             unlock the account and log out everywhere
-` + adminUsage + practiceUsage + vocabUsage
+` + adminUsage + practiceUsage + vocabUsage + demoUsage
 
 var errUsage = errors.New("invalid usage")
 
@@ -119,6 +120,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return runAdmin(ctx, cfg, args, stdout)
 	case "vocab":
 		return runVocab(ctx, cfg, args, stdout)
+	case "demo":
+		return runDemo(ctx, cfg, args, log, stdout)
 	case "practice":
 		return runPractice(ctx, cfg, args, stdout)
 	case "review-bot":
@@ -148,6 +151,8 @@ func validArgs(args []string) bool {
 		return validPracticeArgs(args)
 	case len(args) >= 2 && args[0] == "vocab":
 		return validVocabArgs(args)
+	case len(args) >= 1 && args[0] == "demo":
+		return validDemoArgs(args)
 	case (len(args) == 2 || len(args) == 3) && args[0] == "sync":
 		modeOK := args[1] == string(hhsync.ModeFull) || args[1] == string(hhsync.ModeIncremental)
 		return modeOK && (len(args) == 2 || args[2] == "--allow-mass-change")
@@ -273,6 +278,10 @@ func worker(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 			}
 		}
 	}()
+	// The demo account for app store reviewers, kept current daily.
+	if cfg.DemoPassword != "" {
+		go demoLoop(ctx, cfg, pool, log)
+	}
 	// Tests whose questions are all approved are published (spec 9.5).
 	if cfg.R2UploadsBucket != "" {
 		go publishingService(cfg, pool).PublishLoop(ctx, 5*time.Minute, log)

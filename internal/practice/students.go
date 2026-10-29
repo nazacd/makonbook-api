@@ -110,6 +110,23 @@ func (s *Service) Download(ctx context.Context, code string, version int32) (Dow
 	return d, nil
 }
 
+// LatestPackage is a published test's latest version (ErrNotFound if it was
+// never published).
+func (s *Service) LatestPackage(ctx context.Context, code string) (Package, error) {
+	row, err := practicedb.New(s.pool).TestVersion(ctx, practicedb.TestVersionParams{Code: code, Version: 0})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Package{}, ErrNotFound
+	}
+	if err != nil {
+		return Package{}, err
+	}
+	var pkg Package
+	if err := json.Unmarshal(row.Package, &pkg); err != nil {
+		return Package{}, fmt.Errorf("package %s v%d: %w", code, row.Version, err)
+	}
+	return pkg, nil
+}
+
 // AttemptInput is an attempt as the device sends it.
 type AttemptInput struct {
 	ID         string    `json:"id"` // the device's UUID
@@ -304,16 +321,35 @@ func attemptOf(r practicedb.StudentAttemptsRow) (Attempt, error) {
 	return a, nil
 }
 
-// StudentAttempts lists a student's attempts, latest first.
-func (s *Service) StudentAttempts(ctx context.Context, student int32) ([]Attempt, error) {
-	byStudent, err := s.attemptsOf(ctx, []int32{student})
+// OwnAttempt is an attempt with the student's answers, for the student
+// themselves: a phone that doesn't have it (a new one) can show its review.
+type OwnAttempt struct {
+	Attempt
+	Answers []Answer `json:"answers"`
+}
+
+// StudentAttempts lists a student's attempts, latest first, with answers.
+func (s *Service) StudentAttempts(ctx context.Context, student int32) ([]OwnAttempt, error) {
+	rows, err := practicedb.New(s.pool).OwnAttempts(ctx, student)
 	if err != nil {
 		return nil, err
 	}
-	if byStudent[student] == nil {
-		return []Attempt{}, nil
+	out := make([]OwnAttempt, 0, len(rows))
+	for _, r := range rows {
+		a, err := attemptOf(practicedb.StudentAttemptsRow{
+			ID: r.ID, StudentClientID: r.StudentClientID, Code: r.Code, Title: r.Title, TestVersion: r.TestVersion,
+			Sections: r.Sections, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, Scores: r.Scores,
+		})
+		if err != nil {
+			return nil, err
+		}
+		own := OwnAttempt{Attempt: a, Answers: []Answer{}}
+		if err := json.Unmarshal(r.Answers, &own.Answers); err != nil {
+			return nil, fmt.Errorf("attempt %s answers: %w", a.ID, err)
+		}
+		out = append(out, own)
 	}
-	return byStudent[student], nil
+	return out, nil
 }
 
 func (s *Service) attemptsOf(ctx context.Context, students []int32) (map[int32][]Attempt, error) {

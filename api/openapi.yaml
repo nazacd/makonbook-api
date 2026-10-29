@@ -515,15 +515,7 @@ paths:
                 answers:
                   type: array
                   description: One per question seen, in the sections taken; blank answers are null
-                  items:
-                    type: object
-                    required: [subject, module, position, answer, seconds]
-                    properties:
-                      subject: { type: string, enum: [english, math] }
-                      module: { type: integer, enum: [1, 2] }
-                      position: { type: integer }
-                      answer: { type: [string, "null"], description: "A letter, or a grid-in answer as typed" }
-                      seconds: { type: integer, minimum: 0, maximum: 21600, description: Time spent on the question }
+                  items: { $ref: "#/components/schemas/PracticeAnswer" }
       responses:
         "200":
           description: The stored attempt
@@ -542,7 +534,10 @@ paths:
 
   /v1/me/practice/attempts:
     get:
-      summary: The student's attempts, latest first
+      summary: The student's attempts, latest first, with their answers
+      description: |
+        With the answers the attempt was sent with, so a phone that doesn't have
+        an attempt (a new phone) can store it and show its review.
       operationId: myPracticeAttempts
       tags: [practice]
       security: [{ bearer: [] }]
@@ -555,7 +550,15 @@ paths:
                 type: object
                 required: [attempts]
                 properties:
-                  attempts: { type: array, items: { $ref: "#/components/schemas/PracticeAttempt" } }
+                  attempts:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: "#/components/schemas/PracticeAttempt"
+                        - type: object
+                          required: [answers]
+                          properties:
+                            answers: { type: array, items: { $ref: "#/components/schemas/PracticeAnswer" } }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
 
@@ -1958,6 +1961,16 @@ components:
         domain: { type: string }
         skill: { type: string }
         difficulty: { type: [string, "null"], enum: [easy, medium, hard, null] }
+
+    PracticeAnswer:
+      type: object
+      required: [subject, module, position, answer, seconds]
+      properties:
+        subject: { type: string, enum: [english, math] }
+        module: { type: integer, enum: [1, 2] }
+        position: { type: integer }
+        answer: { type: [string, "null"], description: "A letter, or a grid-in answer as typed" }
+        seconds: { type: integer, minimum: 0, maximum: 21600, description: Time spent on the question }
 
     PracticeAttempt:
       type: object

@@ -288,7 +288,7 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (A
 
 const deleteRecordsBetween = `-- name: DeleteRecordsBetween :exec
 
-DELETE FROM attendance_records WHERE date BETWEEN $1::date AND $2::date
+DELETE FROM attendance_records WHERE date BETWEEN $1::date AND $2::date AND student_client_id > 0
 `
 
 type DeleteRecordsBetweenParams struct {
@@ -297,6 +297,7 @@ type DeleteRecordsBetweenParams struct {
 }
 
 // HolliHop's attendance, read-only (spec 8.7) --------------------------------
+// The demo account's records (negative ids, internal/demo) aren't HolliHop's.
 func (q *Queries) DeleteRecordsBetween(ctx context.Context, arg DeleteRecordsBetweenParams) error {
 	_, err := q.db.Exec(ctx, deleteRecordsBetween, arg.DateFrom, arg.DateTo)
 	return err
@@ -330,7 +331,7 @@ func (q *Queries) DueSessions(ctx context.Context, cutoff pgtype.Timestamptz) ([
 const enqueueMark = `-- name: EnqueueMark :exec
 INSERT INTO hollihop_outbox (session_id, group_id, student_client_id, date, pass, created_at, next_attempt_at)
 SELECT s.id, s.group_id, $1, s.date, $2, $3::timestamptz, $3::timestamptz
-FROM attendance_sessions s WHERE s.id = $4
+FROM attendance_sessions s WHERE s.id = $4 AND s.group_id > 0
 `
 
 type EnqueueMarkParams struct {
@@ -356,7 +357,7 @@ INSERT INTO hollihop_outbox (session_id, group_id, student_client_id, date, pass
 SELECT m.session_id, s.group_id, m.student_client_id, s.date, m.state = 'absent', $1::timestamptz, $1::timestamptz
 FROM attendance_marks m
 JOIN attendance_sessions s ON s.id = m.session_id
-WHERE m.session_id = $2 AND m.state <> 'pending'
+WHERE m.session_id = $2 AND m.state <> 'pending' AND s.group_id > 0
 `
 
 type EnqueueSessionParams struct {
@@ -947,6 +948,7 @@ func (q *Queries) StudentAttendance(ctx context.Context, arg StudentAttendancePa
 }
 
 const supersedePending = `-- name: SupersedePending :exec
+
 UPDATE hollihop_outbox SET status = 'superseded', done_at = $1
 WHERE session_id = $2 AND student_client_id = $3 AND status IN ('pending', 'failed')
 `
@@ -957,6 +959,7 @@ type SupersedePendingParams struct {
 	StudentClientID int32
 }
 
+// never the demo's (negative ids)
 // A correction after the session finished replaces anything not yet sent,
 // and a failed write it makes obsolete (so it no longer asks for a person).
 func (q *Queries) SupersedePending(ctx context.Context, arg SupersedePendingParams) error {

@@ -44,12 +44,13 @@ func TestLoadReportsAllErrors(t *testing.T) {
 		"SYNC_FULL_AT":       "3am",
 		"TELEGRAM_BOT_TOKEN": "t",
 		"TRUST_PROXY":        "maybe",
+		"DEMO_PASSWORD":      "short",
 	}))
 	if err == nil {
 		t.Fatal("expected an error")
 	}
 	for _, want := range []string{"APP_ENV", "DATABASE_URL", "LOG_LEVEL", "LOG_FORMAT", "SHUTDOWN_TIMEOUT",
-		"TIMEZONE", "SYNC_INTERVAL", "SYNC_FULL_AT", "TELEGRAM_ALERT_CHAT_ID", "TRUST_PROXY"} {
+		"TIMEZONE", "SYNC_INTERVAL", "SYNC_FULL_AT", "TELEGRAM_ALERT_CHAT_ID", "TRUST_PROXY", "DEMO_PASSWORD"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %s: %v", want, err)
 		}
