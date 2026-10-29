@@ -1,7 +1,7 @@
 // Package demo keeps the demo student account app store reviewers sign in
 // with (Google Play and the App Store ask for one): a fictional student with
-// two classes, their schedule, eight weeks of attendance and a Day 1 practice
-// result.
+// two classes, their schedule, eight weeks of attendance and practice results
+// that get better over the weeks.
 //
 // It lives in the HolliHop mirror tables under negative ids, so every screen
 // shows it like a real student, and stays apart from the school's data:
@@ -41,12 +41,6 @@ const (
 	StudentID = -1
 	Username  = "demo.student"
 
-	// PracticeTest is the test the student has a result of.
-	PracticeTest = "DAY1"
-	// attemptID is the result's fixed id: setting up again keeps the one
-	// result instead of adding another.
-	attemptID = "de000000-0000-4000-8000-000000000001"
-
 	officeID = -1
 	weeks    = 8 // of attendance
 )
@@ -62,6 +56,21 @@ var classes = []struct {
 }{
 	{-1, -1, "SAT Math (demo)", "SAT Math", "Nodira", "Aliyeva", 1 | 4 | 16, 14 * time.Hour, 15*time.Hour + 30*time.Minute, "204"},
 	{-2, -2, "SAT English (demo)", "SAT English", "Sardor", "Karimov", 2 | 8 | 32, 16 * time.Hour, 17*time.Hour + 30*time.Minute, "305"},
+}
+
+// The student's practice results, oldest first: the test, its estimated
+// total, and how many days before today it was taken. Each has a fixed id, so
+// setting up again replaces it instead of adding another.
+var results = []struct {
+	id, test string
+	total    int
+	daysAgo  int
+}{
+	{"de000000-0000-4000-8000-000000000001", "DAY1", 1240, 24},
+	{"de000000-0000-4000-8000-000000000002", "DAY2", 1290, 17},
+	{"de000000-0000-4000-8000-000000000003", "DAY2", 1340, 10},
+	{"de000000-0000-4000-8000-000000000004", "DAY8", 1380, 6},
+	{"de000000-0000-4000-8000-000000000005", "DAY9", 1410, 2},
 }
 
 // ErrUsernameTaken: a real person chose the demo's username.
@@ -88,9 +97,9 @@ func NewService(pool *pgxpool.Pool, practice *practice.Service, codes Codes, loc
 type Result struct {
 	Username   string
 	ParentCode string
-	// Practice is the Day 1 result ("1150 (English 560, Math 590)"), or why
-	// there is none.
-	Practice string
+	// Practice is each practice result ("DAY2 v1: 1290, english 630, math
+	// 660"), or why it is missing.
+	Practice []string
 }
 
 // Setup creates the demo account or brings it up to date (now: the time it
@@ -187,67 +196,117 @@ func (s *Service) Setup(ctx context.Context, password string, now time.Time) (Re
 		return Result{}, err
 	}
 
-	res := Result{Username: Username, Practice: s.practiceResult(ctx, today)}
+	res := Result{Username: Username, Practice: s.practiceResults(ctx, today)}
 	if res.ParentCode, err = s.codes.Code(ctx, StudentID); err != nil {
 		return res, fmt.Errorf("parent code: %w", err)
 	}
 	return res, nil
 }
 
-// practiceResult gives the student a result of PracticeTest, taken the day
-// before: about three answers in four right, some blank. It goes through the
-// same grading as a phone's upload, and stays the same once made.
-func (s *Service) practiceResult(ctx context.Context, today time.Time) string {
-	pkg, err := s.practice.LatestPackage(ctx, PracticeTest)
-	if errors.Is(err, practice.ErrNotFound) {
-		return PracticeTest + " isn't published yet: no practice result (setting up again after it is adds one)"
+// practiceResults gives the student their results (see results), made
+// again each time so the dates move with the calendar. Each goes through the
+// same grading as a phone's upload, with answers chosen to reach its total. A
+// test that isn't published is skipped (setting up again later adds it).
+func (s *Service) practiceResults(ctx context.Context, today time.Time) []string {
+	ids := make([]pgtype.UUID, len(results))
+	for i, r := range results {
+		_ = ids[i].Scan(r.id)
 	}
-	if err != nil {
-		return "no practice result: " + err.Error()
+	if err := demodb.New(s.pool).DeleteSeededAttempts(ctx, ids); err != nil {
+		return []string{"no practice results: " + err.Error()}
 	}
-	started := today.AddDate(0, 0, -1).Add(15*time.Hour - 5*time.Hour) // 15:00 in Tashkent (UTC+5)
-	in := practice.AttemptInput{ID: attemptID, Test: pkg.Code, Version: pkg.Version,
-		StartedAt: started, FinishedAt: started.Add(2*time.Hour + 14*time.Minute)}
-	i := 0
-	for _, sec := range pkg.Sections {
-		in.Sections = append(in.Sections, sec.Subject)
-		for _, mod := range sec.Modules {
-			for _, q := range mod.Questions {
-				in.Answers = append(in.Answers, practice.Answer{Subject: sec.Subject, Module: mod.Module, Position: q.Position,
-					Answer: answer(q, i), Seconds: int32(45 + (i*37)%80)})
-				i++
-			}
+	var out []string
+	for _, r := range results {
+		pkg, err := s.practice.LatestPackage(ctx, r.test)
+		if errors.Is(err, practice.ErrNotFound) {
+			out = append(out, r.test+": not published yet, no result")
+			continue
 		}
-	}
-	a, err := s.practice.SaveAttempt(ctx, StudentID, in)
-	if err != nil {
-		return "no practice result: " + err.Error()
-	}
-	out := fmt.Sprintf("%s v%d", a.Test, a.Version)
-	if a.Total != nil {
-		out += fmt.Sprintf(": %d", *a.Total)
-	}
-	for _, sub := range a.Sections {
-		out += fmt.Sprintf(", %s %d", sub, a.Scores[sub].Score)
+		if err != nil {
+			out = append(out, r.test+": "+err.Error())
+			continue
+		}
+		started := today.AddDate(0, 0, -r.daysAgo).Add(15*time.Hour - 5*time.Hour) // 15:00 in Tashkent (UTC+5)
+		in := practice.AttemptInput{ID: r.id, Test: pkg.Code, Version: pkg.Version,
+			StartedAt: started, FinishedAt: started.Add(2*time.Hour + 14*time.Minute), Answers: answers(pkg, r.total)}
+		for _, sec := range pkg.Sections {
+			in.Sections = append(in.Sections, sec.Subject)
+		}
+		a, err := s.practice.SaveAttempt(ctx, StudentID, in)
+		if err != nil {
+			out = append(out, r.test+": "+err.Error())
+			continue
+		}
+		line := fmt.Sprintf("%s v%d", a.Test, a.Version)
+		if a.Total != nil {
+			line += fmt.Sprintf(": %d", *a.Total)
+		}
+		for _, sub := range a.Sections {
+			line += fmt.Sprintf(", %s %d", sub, a.Scores[sub].Score)
+		}
+		out = append(out, line)
 	}
 	return out
 }
 
-// answer is the demo's answer to the i-th question: blank now and then, a
-// wrong one about one time in four, otherwise the right one.
-func answer(q practice.PackageQuestion, i int) *string {
-	if i%23 == 7 {
-		return nil
+// answers are a student's answers to every question of pkg that score total
+// (or as near as the score scales allow), Math a little ahead of English.
+// The right ones are spread through each section; of the rest, most are a
+// wrong choice and some are left blank.
+func answers(pkg practice.Package, total int) []practice.Answer {
+	right := map[string]int{}
+	if len(pkg.Sections) == 2 {
+		e, m := pkg.Sections[0], pkg.Sections[1]
+		best := -1
+		for re := range e.Scale {
+			for rm := range m.Scale {
+				miss := abs(e.Scale[re]+m.Scale[rm]-total)*1000 + abs(m.Scale[rm]-e.Scale[re]-20)
+				if best < 0 || miss < best {
+					best, right[e.Subject], right[m.Subject] = miss, re, rm
+				}
+			}
+		}
 	}
-	right := ""
+	var out []practice.Answer
+	i := 0
+	for _, sec := range pkg.Sections {
+		n := 0
+		for _, mod := range sec.Modules {
+			n += len(mod.Questions)
+		}
+		k, j, wrong := right[sec.Subject], 0, 0
+		for _, mod := range sec.Modules {
+			for _, q := range mod.Questions {
+				var a *string
+				if (j+1)*k/n > j*k/n { // k of the n questions, evenly spread
+					a = rightAnswer(q)
+				} else {
+					if wrong%4 != 3 {
+						a = wrongAnswer(q)
+					}
+					wrong++
+				}
+				out = append(out, practice.Answer{Subject: sec.Subject, Module: mod.Module, Position: q.Position,
+					Answer: a, Seconds: int32(45 + (i*37)%80)})
+				i++
+				j++
+			}
+		}
+	}
+	return out
+}
+
+func rightAnswer(q practice.PackageQuestion) *string {
 	if q.Type == "mcq" && q.Key != nil {
-		right = *q.Key
-	} else if len(q.Accepted) > 0 {
-		right = q.Accepted[0]
+		return q.Key
 	}
-	if i%4 != 1 || right == "" {
-		return &right
+	if len(q.Accepted) > 0 {
+		return &q.Accepted[0]
 	}
+	return nil
+}
+
+func wrongAnswer(q practice.PackageQuestion) *string {
 	if q.Type == "mcq" {
 		letters := make([]string, 0, len(q.Choices))
 		for l := range q.Choices {
@@ -259,13 +318,20 @@ func answer(q practice.PackageQuestion, i int) *string {
 				return &l
 			}
 		}
-		return &right
+		return nil
 	}
 	wrong := "0"
 	if q.Correct(wrong) {
 		wrong = "1"
 	}
 	return &wrong
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 // Remove deletes the demo account and everything made with it.
