@@ -479,6 +479,25 @@ func (q *Queries) GetTestByCode(ctx context.Context, code string) (PracticeTest,
 	return i, err
 }
 
+const goals = `-- name: Goals :one
+
+SELECT student_client_id, target_math, target_rw, exam_date, updated_at FROM student_goals WHERE student_client_id = $1
+`
+
+// Goals (spec 9.6) -------------------------------------------------------------
+func (q *Queries) Goals(ctx context.Context, studentClientID int32) (StudentGoal, error) {
+	row := q.db.QueryRow(ctx, goals, studentClientID)
+	var i StudentGoal
+	err := row.Scan(
+		&i.StudentClientID,
+		&i.TargetMath,
+		&i.TargetRw,
+		&i.ExamDate,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const groupStudents = `-- name: GroupStudents :many
 SELECT DISTINCT st.client_id, st.first_name, st.last_name
 FROM enrollments e JOIN students st ON st.client_id = e.student_client_id
@@ -1307,6 +1326,40 @@ func (q *Queries) ReportOwner(ctx context.Context, id pgtype.UUID) (int32, error
 	var student_client_id int32
 	err := row.Scan(&student_client_id)
 	return student_client_id, err
+}
+
+const setGoals = `-- name: SetGoals :one
+INSERT INTO student_goals (student_client_id, target_math, target_rw, exam_date)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (student_client_id) DO UPDATE
+SET target_math = EXCLUDED.target_math, target_rw = EXCLUDED.target_rw, exam_date = EXCLUDED.exam_date,
+    updated_at = now()
+RETURNING student_client_id, target_math, target_rw, exam_date, updated_at
+`
+
+type SetGoalsParams struct {
+	StudentClientID int32
+	TargetMath      pgtype.Int2
+	TargetRw        pgtype.Int2
+	ExamDate        pgtype.Date
+}
+
+func (q *Queries) SetGoals(ctx context.Context, arg SetGoalsParams) (StudentGoal, error) {
+	row := q.db.QueryRow(ctx, setGoals,
+		arg.StudentClientID,
+		arg.TargetMath,
+		arg.TargetRw,
+		arg.ExamDate,
+	)
+	var i StudentGoal
+	err := row.Scan(
+		&i.StudentClientID,
+		&i.TargetMath,
+		&i.TargetRw,
+		&i.ExamDate,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const setReportStatus = `-- name: SetReportStatus :execrows

@@ -470,6 +470,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/goals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The student's SAT goals (all null until set) */
+        get: operations["myGoals"];
+        /**
+         * Set the student's SAT goals
+         * @description Replaces all three: each may be null (a missing field counts as
+         *     null). Targets are 200–800 in steps of 10. The exam date can't be
+         *     before today (Tashkent), except the date already stored, so a
+         *     student whose exam has passed can still change a target.
+         */
+        put: operations["setGoals"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/parked": {
         parameters: {
             query?: never;
@@ -1716,7 +1740,7 @@ export interface components {
             /** @default  */
             note: string;
             /**
-             * @description The fix in one line
+             * @description The fix in one line, once the student understands it
              * @default
              */
             fix: string;
@@ -1740,6 +1764,21 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        Goals: {
+            /** @description Math target, 200–800 */
+            target_math: number | null;
+            /** @description Reading and Writing target, 200–800 */
+            target_rw: number | null;
+            /** @description The two targets' sum, when both are set */
+            target_total: number | null;
+            /** Format: date */
+            exam_date: string | null;
+            /**
+             * Format: date-time
+             * @description Null when never set
+             */
+            updated_at: string | null;
         };
         AdminPracticeReport: components["schemas"]["PracticeQuestionRef"] & {
             /** Format: uuid */
@@ -2114,7 +2153,7 @@ export interface components {
                  * @description Stable machine-readable code.
                  * @enum {string}
                  */
-                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken";
+                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals";
                 /** @description Human-readable explanation; may change. */
                 message: string;
                 /** @description For a rejected form (`invalid_question`): what is wrong, per field (e.g. `stem`, `choices.B`). */
@@ -3008,6 +3047,85 @@ export interface operations {
             401: components["responses"]["Error"];
             /** @description `forbidden`: not a teacher, or not this group's */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    myGoals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The goals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Goals"];
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a student */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    setGoals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    target_math?: number | null;
+                    target_rw?: number | null;
+                    /** Format: date */
+                    exam_date?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description The stored goals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Goals"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a student */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_goals`: a target out of range or not a multiple of 10, or an exam date that isn't a date or is in the past */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

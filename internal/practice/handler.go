@@ -20,6 +20,7 @@ const (
 	CodeInvalidParked  = "invalid_parked"
 	CodeInvalidReport  = "invalid_report"
 	CodeReportTaken    = "report_id_taken"
+	CodeInvalidGoals   = "invalid_goals"
 )
 
 // Handler is the apps' practice API: the catalog, packages, attempts.
@@ -46,6 +47,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/me/parked/{id}", h.require(h.student(h.deleteParked)))
 	mux.HandleFunc("GET /v1/teacher/groups/{id}/parked", h.require(h.groupParked))
 	mux.HandleFunc("POST /v1/practice/reports", h.require(h.student(h.sendReport)))
+	mux.HandleFunc("GET /v1/me/goals", h.require(h.student(h.myGoals)))
+	mux.HandleFunc("PUT /v1/me/goals", h.require(h.student(h.setGoals)))
 }
 
 func (h *Handler) catalog(w http.ResponseWriter, r *http.Request) {
@@ -216,6 +219,33 @@ func (h *Handler) sendReport(w http.ResponseWriter, r *http.Request, student int
 		httpx.WriteJSON(w, r, http.StatusCreated, map[string]string{"id": id})
 	default: // sent before
 		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"id": id})
+	}
+}
+
+func (h *Handler) myGoals(w http.ResponseWriter, r *http.Request, student int32) {
+	g, err := h.svc.Goals(r.Context(), student)
+	if err != nil {
+		h.internal(w, r, "goals", err)
+		return
+	}
+	httpx.WriteJSON(w, r, http.StatusOK, g)
+}
+
+func (h *Handler) setGoals(w http.ResponseWriter, r *http.Request, student int32) {
+	var in GoalsInput
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	y, m, d := time.Now().In(h.location).Date()
+	g, err := h.svc.SetGoals(r.Context(), student, in, time.Date(y, m, d, 0, 0, 0, 0, time.UTC))
+	var bad *GoalsError
+	switch {
+	case errors.As(err, &bad):
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidGoals, bad.Reason)
+	case err != nil:
+		h.internal(w, r, "set goals", err)
+	default:
+		httpx.WriteJSON(w, r, http.StatusOK, g)
 	}
 }
 

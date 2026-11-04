@@ -685,6 +685,53 @@ paths:
           description: "`forbidden`: not a teacher, or not this group's"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/me/goals:
+    get:
+      summary: The student's SAT goals (all null until set)
+      operationId: myGoals
+      tags: [practice]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The goals
+          content: { application/json: { schema: { $ref: "#/components/schemas/Goals" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    put:
+      summary: Set the student's SAT goals
+      description: |
+        Replaces all three: each may be null (a missing field counts as
+        null). Targets are 200–800 in steps of 10. The exam date can't be
+        before today (Tashkent), except the date already stored, so a
+        student whose exam has passed can still change a target.
+      operationId: setGoals
+      tags: [practice]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_math: { type: [integer, "null"], minimum: 200, maximum: 800, multipleOf: 10 }
+                target_rw: { type: [integer, "null"], minimum: 200, maximum: 800, multipleOf: 10 }
+                exam_date: { type: [string, "null"], format: date }
+      responses:
+        "200":
+          description: The stored goals
+          content: { application/json: { schema: { $ref: "#/components/schemas/Goals" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_goals`: a target out of range or not a multiple of 10, or an exam date that isn't a date or is in the past"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /v1/me/parked:
     get:
       summary: The student's parked questions ("Ask later"), newest first
@@ -2261,7 +2308,7 @@ components:
               type: [string, "null"]
               enum: [didnt_understand, didnt_know_start, lost_partway, ran_out_of_time, null]
             note: { type: string, maxLength: 1000, default: "" }
-            fix: { type: string, maxLength: 300, default: "", description: The fix in one line, once the student understands it }
+            fix: { type: string, maxLength: 300, default: "", description: "The fix in one line, once the student understands it" }
             status: { type: string, enum: [waiting, sorted], default: waiting }
 
     ParkedQuestion:
@@ -2280,6 +2327,16 @@ components:
             status: { type: string, enum: [waiting, sorted] }
             created_at: { type: string, format: date-time }
             updated_at: { type: string, format: date-time }
+
+    Goals:
+      type: object
+      required: [target_math, target_rw, target_total, exam_date, updated_at]
+      properties:
+        target_math: { type: [integer, "null"], description: "Math target, 200–800" }
+        target_rw: { type: [integer, "null"], description: "Reading and Writing target, 200–800" }
+        target_total: { type: [integer, "null"], description: "The two targets' sum, when both are set" }
+        exam_date: { type: [string, "null"], format: date }
+        updated_at: { type: [string, "null"], format: date-time, description: Null when never set }
 
     AdminPracticeReport:
       allOf:
@@ -2693,6 +2750,7 @@ components:
                 - test_not_found
                 - invalid_parked
                 - report_id_taken
+                - invalid_goals
             message:
               type: string
               description: Human-readable explanation; may change.

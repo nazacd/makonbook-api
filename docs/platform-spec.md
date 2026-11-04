@@ -370,6 +370,10 @@ section (College Board uses IRT; we can't reproduce it exactly).
   newest first, 200 at most, with the student and the test's title) and resolves or reopens one
   (`PUT /v1/admin/practice/reports/{id} {status}`; resolving keeps who resolved it first); the panel has no page
   for them yet. No Telegram message: there is no editors' chat (the review bot's group is the teachers' vote).
+- **Goals** (`student_goals`, one row per student), for the dashboard: a Math and a Reading and Writing target
+  (200–800, steps of 10) and the exam date, each optional. `GET /v1/me/goals` (all null until set, with
+  `target_total` when both targets are set); `PUT /v1/me/goals {target_math, target_rw, exam_date}` replaces
+  them; out of range, or an exam date before today (Tashkent) other than the one stored, is `422 invalid_goals`.
 
 ## 10. Placement test changes (mobile, small)
 
@@ -595,6 +599,7 @@ parked_questions(id uuid PK (the device's), student_client_id FK, test, version,
 practice_reports(id uuid PK (the device's), student_client_id FK, test, version, subject, module, position,
                  question_id, kind (question|technical), reason NULL, text, status (open|resolved), created_at,
                  resolved_at, resolved_by)
+student_goals(student_client_id PK FK, target_math NULL, target_rw NULL, exam_date NULL, updated_at)
 -- built (phase 4): see 11
 vocab_lists(id uuid PK, slug UNIQUE, title, position, removed_at)
 vocab_words(id uuid PK, list_id FK, position, word, part_of_speech, definition, example, image, removed_at,
@@ -646,6 +651,7 @@ GET  /v1/me/parked                     the student's parked questions ("Ask late
 PUT|DELETE /v1/me/parked/{id}          park or change one (idempotent by client UUID); remove one
 GET  /v1/teacher/groups/{id}/parked    a group's students' parked questions
 POST /v1/practice/reports              "Report an issue" on a question; idempotent by client UUID
+GET|PUT /v1/me/goals                   the student's SAT targets and exam date (9.6)
 
 # vocabulary (phase 4)
 GET  /v1/vocab/deck?have=              every list and word (or "unchanged")

@@ -413,3 +413,16 @@ SET status = @status::text,
     resolved_at = CASE WHEN @status::text = 'resolved' THEN coalesce(resolved_at, now()) END,
     resolved_by = CASE WHEN @status::text = 'resolved' THEN coalesce(resolved_by, @resolved_by::text) END
 WHERE id = @id;
+
+-- Goals (spec 9.6) -------------------------------------------------------------
+
+-- name: Goals :one
+SELECT * FROM student_goals WHERE student_client_id = @student_client_id;
+
+-- name: SetGoals :one
+INSERT INTO student_goals (student_client_id, target_math, target_rw, exam_date)
+VALUES (@student_client_id, sqlc.narg('target_math'), sqlc.narg('target_rw'), sqlc.narg('exam_date'))
+ON CONFLICT (student_client_id) DO UPDATE
+SET target_math = EXCLUDED.target_math, target_rw = EXCLUDED.target_rw, exam_date = EXCLUDED.exam_date,
+    updated_at = now()
+RETURNING *;

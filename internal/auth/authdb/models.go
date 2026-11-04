@@ -413,6 +413,14 @@ type Student struct {
 	ActivatedAt   pgtype.Timestamptz
 }
 
+type StudentGoal struct {
+	StudentClientID int32
+	TargetMath      pgtype.Int2
+	TargetRw        pgtype.Int2
+	ExamDate        pgtype.Date
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type SyncCursor struct {
 	Name      string
 	Value     string

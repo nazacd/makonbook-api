@@ -188,6 +188,26 @@ func TestHandler(t *testing.T) {
 	if status, body := do("POST", "/v1/practice/reports", student, report); status != http.StatusUnprocessableEntity || body["error"].(map[string]any)["code"] != CodeInvalidReport {
 		t.Errorf("a wrong kind: %d %v", status, body)
 	}
+
+	// Goals.
+	if status, body := do("GET", "/v1/me/goals", student, nil); status != http.StatusOK || len(body) != 5 || body["target_total"] != nil || body["updated_at"] != nil {
+		t.Errorf("goals never set: %d %v", status, body)
+	}
+	exam := now.AddDate(0, 1, 0).Format("2006-01-02")
+	goals := map[string]any{"target_math": 700, "target_rw": 650, "exam_date": exam}
+	if status, _ := do("PUT", "/v1/me/goals", teacher, goals); status != http.StatusForbidden {
+		t.Errorf("a teacher's goals: %d", status)
+	}
+	if status, body := do("PUT", "/v1/me/goals", student, goals); status != http.StatusOK || body["target_total"] != 1350.0 || body["exam_date"] != exam {
+		t.Errorf("set goals: %d %v", status, body)
+	}
+	goals["exam_date"] = now.AddDate(0, 0, -1).Format("2006-01-02")
+	if status, body := do("PUT", "/v1/me/goals", student, goals); status != http.StatusUnprocessableEntity || body["error"].(map[string]any)["code"] != CodeInvalidGoals {
+		t.Errorf("an exam in the past: %d %v", status, body)
+	}
+	if status, body := do("GET", "/v1/me/goals", student, nil); status != http.StatusOK || body["target_math"] != 700.0 || body["exam_date"] != exam {
+		t.Errorf("goals: %d %v", status, body)
+	}
 	status, body = do("GET", "/v1/teacher/groups/100/practice", teacher, nil)
 	if students, _ := body["students"].([]any); status != http.StatusOK || len(students) != 1 ||
 		len(students[0].(map[string]any)["attempts"].([]any)) != 1 {
