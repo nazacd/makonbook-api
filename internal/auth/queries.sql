@@ -80,3 +80,13 @@ WHERE person_kind = @person_kind AND person_id = @person_id AND id <> @keep_id A
 -- name: RevokeAllSessions :execrows
 UPDATE auth_sessions SET revoked_at = now()
 WHERE person_kind = @person_kind AND person_id = @person_id AND revoked_at IS NULL;
+
+-- Enrolment (spec 21): a self-registered student re-keyed to their HolliHop
+-- ClientId keeps their password, username, lockout and sessions.
+-- name: MoveStudentCredentials :exec
+UPDATE credentials SET person_id = @to_id
+WHERE person_kind = 'student' AND person_id = @from_id;
+
+-- name: MoveStudentSessions :exec
+UPDATE auth_sessions SET person_id = @to_id
+WHERE person_kind = 'student' AND person_id = @from_id;

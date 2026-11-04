@@ -2,6 +2,7 @@ package people_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -183,5 +184,51 @@ func TestApplyIsIdempotent(t *testing.T) {
 	}
 	if len(res.DeactivatedStudents)+len(res.ReactivatedStudents)+res.IssuesResolved != 0 {
 		t.Errorf("second identical run changed state: %+v", res)
+	}
+}
+
+// A name a person chose for themselves survives every sync; HolliHop's
+// changes still land underneath, for when they clear it (spec 21).
+func TestNameOverridesSurviveTheSync(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := t.Context()
+	apply(t, pool, baseSnapshot())
+	dir := people.NewDirectory(pool)
+
+	first, last := "Azizbek", "Karimov-Webb"
+	if err := dir.SetNames(ctx, people.KindStudent, 1, &first, &last); err != nil {
+		t.Fatal(err)
+	}
+	teacher := "Alisher"
+	if err := dir.SetNames(ctx, people.KindTeacher, 10, &teacher, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := dir.SetNames(ctx, people.KindStudent, 999, &first, nil); !errors.Is(err, people.ErrNotFound) {
+		t.Errorf("unknown student: %v", err)
+	}
+
+	s := baseSnapshot()
+	s.Students[0].FirstName, s.Students[0].LastName = "Aziz", "Karimoff"
+	s.Teachers[0].FirstName, s.Teachers[0].LastName = "Ali", "Valiev"
+	apply(t, pool, s)
+
+	p, err := dir.Get(ctx, people.KindStudent, 1)
+	if err != nil || p.FirstName != "Azizbek" || p.LastName != "Karimov-Webb" || p.Registered {
+		t.Errorf("student = %+v %v", p, err)
+	}
+	if got := scalar[string](t, pool, "SELECT last_name FROM students WHERE client_id = 1"); got != "Karimoff" {
+		t.Errorf("HolliHop's last name = %q", got)
+	}
+	tp, err := dir.Get(ctx, people.KindTeacher, 10)
+	if err != nil || tp.FirstName != "Alisher" || tp.LastName != "Valiev" {
+		t.Errorf("teacher = %+v %v", tp, err)
+	}
+
+	// Cleared: HolliHop's name again.
+	if err := dir.SetNames(ctx, people.KindStudent, 1, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := dir.Get(ctx, people.KindStudent, 1); p.FirstName != "Aziz" || p.LastName != "Karimoff" {
+		t.Errorf("after clearing: %+v", p)
 	}
 }

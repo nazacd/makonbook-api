@@ -19,6 +19,15 @@ const (
 	IssuePhoneMissing   = "phone_missing"
 	IssuePhoneInvalid   = "phone_invalid"
 	IssuePhoneDuplicate = "phone_duplicate"
+	// IssueSelfAccount: the person's number is a self-registered account's
+	// (spec 21), and the sync doesn't merge the two (see linkSelfAccounts).
+	IssueSelfAccount = "self_account_conflict"
+)
+
+// Student sources, as stored in students.source.
+const (
+	SourceHolliHop = "hollihop"
+	SourceSelf     = "self" // signed up themselves (spec 21)
 )
 
 // NormalizePhone turns a number as typed in HolliHop into E.164
@@ -101,6 +110,12 @@ func PlanLoginPhones(people []PersonPhone) (login map[PersonKey]string, issues [
 		}
 	}
 
+	sortIssues(issues)
+	return login, issues
+}
+
+// sortIssues orders issues by person, then kind.
+func sortIssues(issues []Issue) {
 	sort.Slice(issues, func(i, j int) bool {
 		a, b := issues[i], issues[j]
 		if a.Person.Kind != b.Person.Kind {
@@ -111,5 +126,4 @@ func PlanLoginPhones(people []PersonPhone) (login map[PersonKey]string, issues [
 		}
 		return a.Kind < b.Kind
 	})
-	return login, issues
 }

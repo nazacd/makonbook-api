@@ -127,6 +127,38 @@ func (q *Queries) GetLiveSession(ctx context.Context, tokenHash []byte) (GetLive
 	return i, err
 }
 
+const moveStudentCredentials = `-- name: MoveStudentCredentials :exec
+UPDATE credentials SET person_id = $1
+WHERE person_kind = 'student' AND person_id = $2
+`
+
+type MoveStudentCredentialsParams struct {
+	ToID   int32
+	FromID int32
+}
+
+// Enrolment (spec 21): a self-registered student re-keyed to their HolliHop
+// ClientId keeps their password, username, lockout and sessions.
+func (q *Queries) MoveStudentCredentials(ctx context.Context, arg MoveStudentCredentialsParams) error {
+	_, err := q.db.Exec(ctx, moveStudentCredentials, arg.ToID, arg.FromID)
+	return err
+}
+
+const moveStudentSessions = `-- name: MoveStudentSessions :exec
+UPDATE auth_sessions SET person_id = $1
+WHERE person_kind = 'student' AND person_id = $2
+`
+
+type MoveStudentSessionsParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentSessions(ctx context.Context, arg MoveStudentSessionsParams) error {
+	_, err := q.db.Exec(ctx, moveStudentSessions, arg.ToID, arg.FromID)
+	return err
+}
+
 const recordLoginFailure = `-- name: RecordLoginFailure :one
 INSERT INTO credentials (person_kind, person_id, failed_attempts)
 VALUES ($1, $2, 1)

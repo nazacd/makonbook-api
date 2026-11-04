@@ -153,11 +153,33 @@ func TestSetupAndRemove(t *testing.T) {
 		t.Errorf("login after the reset: %v", err)
 	}
 
+	// A self-registered student (ids below the demo's, spec 21) is a real
+	// person: removing the demo leaves them, with their password.
+	self, err := people.CreateSelfStudent(ctx, pool, "Real", "Person", "+998935550009")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO credentials (person_kind, person_id, password_hash, password_changed_at)
+		VALUES ('student', $1, 'x', now())`, self); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := svc.Remove(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := authSvc.Login(ctx, demo.Username, password, "phone-1"); !errors.Is(err, auth.ErrInvalidCredentials) {
 		t.Errorf("login after remove: %v", err)
+	}
+	var kept int
+	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM students WHERE client_id = $1)
+		+ (SELECT count(*) FROM credentials WHERE person_id = $1)`, self).Scan(&kept); err != nil || kept != 2 {
+		t.Errorf("self-registered student after remove: %d rows %v", kept, err)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM credentials WHERE person_id = $1", self); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "DELETE FROM students WHERE client_id = $1", self); err != nil {
+		t.Fatal(err)
 	}
 	var left int
 	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM students WHERE client_id < 0) + (SELECT count(*) FROM groups WHERE id < 0)

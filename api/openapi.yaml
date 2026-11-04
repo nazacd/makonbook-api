@@ -2046,7 +2046,10 @@ components:
         first_name: { type: string }
         last_name: { type: string }
         phone: { type: string, description: As typed in HolliHop }
-        kind: { type: string, enum: [phone_missing, phone_invalid, phone_duplicate] }
+        kind:
+          type: string
+          enum: [phone_missing, phone_invalid, phone_duplicate, self_account_conflict]
+          description: "self_account_conflict: the number is a self-registered account's, which the sync merges only with a new HolliHop student"
         detail: { type: string }
         since: { type: string, format: date-time }
 

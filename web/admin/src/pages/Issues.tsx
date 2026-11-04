@@ -11,6 +11,7 @@ const PHONE: Record<string, string> = {
   phone_missing: 'No phone number',
   phone_invalid: 'Phone number isn’t valid',
   phone_duplicate: 'Phone number shared',
+  self_account_conflict: 'Phone number of a web account',
 };
 
 function problem(g: GroupIssue): { label: string; detail: string; fix: string } {

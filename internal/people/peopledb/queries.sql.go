@@ -54,9 +54,11 @@ func (q *Queries) ClearTeacherLoginPhones(ctx context.Context, arg ClearTeacherL
 }
 
 const countActiveStudents = `-- name: CountActiveStudents :one
-SELECT count(*) FROM students WHERE deactivated_at IS NULL
+SELECT count(*) FROM students WHERE deactivated_at IS NULL AND source = 'hollihop'
 `
 
+// Self-registered students don't count: the mass-change guard is about
+// HolliHop's students.
 func (q *Queries) CountActiveStudents(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, countActiveStudents)
 	var count int64
@@ -138,6 +140,37 @@ func (q *Queries) DeleteEnrollments(ctx context.Context) error {
 	return err
 }
 
+const deleteNewStudent = `-- name: DeleteNewStudent :one
+DELETE FROM students WHERE client_id = $1 AND source = 'hollihop'
+RETURNING hh_student_id, first_name, last_name, phone_raw, hh_status_id, office_ids
+`
+
+type DeleteNewStudentRow struct {
+	HhStudentID int32
+	FirstName   string
+	LastName    string
+	PhoneRaw    string
+	HhStatusID  pgtype.Int4
+	OfficeIds   []int32
+}
+
+// A HolliHop student stored a moment ago in this run, removed again because
+// a self-registered account takes their id (RekeySelfStudent). Nothing points
+// to them yet: enrollments come later in the run.
+func (q *Queries) DeleteNewStudent(ctx context.Context, clientID int32) (DeleteNewStudentRow, error) {
+	row := q.db.QueryRow(ctx, deleteNewStudent, clientID)
+	var i DeleteNewStudentRow
+	err := row.Scan(
+		&i.HhStudentID,
+		&i.FirstName,
+		&i.LastName,
+		&i.PhoneRaw,
+		&i.HhStatusID,
+		&i.OfficeIds,
+	)
+	return i, err
+}
+
 const deleteScheduleItems = `-- name: DeleteScheduleItems :exec
 DELETE FROM schedule_items WHERE group_id > 0
 `
@@ -149,10 +182,12 @@ func (q *Queries) DeleteScheduleItems(ctx context.Context) error {
 
 const findByLoginPhone = `-- name: FindByLoginPhone :many
 
-SELECT 'student'::text AS kind, client_id AS id, first_name, last_name, login_phone, deactivated_at, activated_at
+SELECT 'student'::text AS kind, client_id AS id, coalesce(first_name_custom, first_name)::text AS first_name,
+       coalesce(last_name_custom, last_name)::text AS last_name, login_phone, deactivated_at, activated_at, source
 FROM students WHERE login_phone = $1::text
 UNION ALL
-SELECT 'teacher'::text, id, first_name, last_name, login_phone, deactivated_at, activated_at
+SELECT 'teacher'::text, id, coalesce(first_name_custom, first_name)::text, coalesce(last_name_custom, last_name)::text,
+       login_phone, deactivated_at, activated_at, 'hollihop'::text
 FROM teachers WHERE login_phone = $1::text
 `
 
@@ -164,9 +199,11 @@ type FindByLoginPhoneRow struct {
 	LoginPhone    pgtype.Text
 	DeactivatedAt pgtype.Timestamptz
 	ActivatedAt   pgtype.Timestamptz
+	Source        string
 }
 
 // Reads for other features (see directory.go). -------------------------------
+// Names are as the person sees their own: their override, else HolliHop's.
 func (q *Queries) FindByLoginPhone(ctx context.Context, phone string) ([]FindByLoginPhoneRow, error) {
 	rows, err := q.db.Query(ctx, findByLoginPhone, phone)
 	if err != nil {
@@ -184,6 +221,7 @@ func (q *Queries) FindByLoginPhone(ctx context.Context, phone string) ([]FindByL
 			&i.LoginPhone,
 			&i.DeactivatedAt,
 			&i.ActivatedAt,
+			&i.Source,
 		); err != nil {
 			return nil, err
 		}
@@ -196,7 +234,8 @@ func (q *Queries) FindByLoginPhone(ctx context.Context, phone string) ([]FindByL
 }
 
 const getStudent = `-- name: GetStudent :one
-SELECT client_id, first_name, last_name, login_phone, deactivated_at, activated_at
+SELECT client_id, coalesce(first_name_custom, first_name)::text AS first_name,
+       coalesce(last_name_custom, last_name)::text AS last_name, login_phone, deactivated_at, activated_at, source
 FROM students WHERE client_id = $1
 `
 
@@ -207,6 +246,7 @@ type GetStudentRow struct {
 	LoginPhone    pgtype.Text
 	DeactivatedAt pgtype.Timestamptz
 	ActivatedAt   pgtype.Timestamptz
+	Source        string
 }
 
 func (q *Queries) GetStudent(ctx context.Context, clientID int32) (GetStudentRow, error) {
@@ -219,12 +259,14 @@ func (q *Queries) GetStudent(ctx context.Context, clientID int32) (GetStudentRow
 		&i.LoginPhone,
 		&i.DeactivatedAt,
 		&i.ActivatedAt,
+		&i.Source,
 	)
 	return i, err
 }
 
 const getTeacher = `-- name: GetTeacher :one
-SELECT id, first_name, last_name, login_phone, deactivated_at, activated_at
+SELECT id, coalesce(first_name_custom, first_name)::text AS first_name,
+       coalesce(last_name_custom, last_name)::text AS last_name, login_phone, deactivated_at, activated_at
 FROM teachers WHERE id = $1
 `
 
@@ -322,6 +364,30 @@ type InsertScheduleItemsParams struct {
 	Weekdays   int16
 	Classroom  string
 	TeacherIds []int32
+}
+
+const insertSelfStudent = `-- name: InsertSelfStudent :one
+
+WITH n AS (SELECT nextval('self_student_ids')::int AS id)
+INSERT INTO students (client_id, hh_student_id, first_name, last_name, phone_raw, login_phone, hh_status_id, office_ids, source)
+SELECT n.id, n.id, $1, $2, $3::text, $3::text, NULL, '{}', 'self' FROM n
+RETURNING client_id
+`
+
+type InsertSelfStudentParams struct {
+	FirstName string
+	LastName  string
+	Phone     string
+}
+
+// Accounts (spec 21) ------------------------------------------------------------
+// A student who signed up themselves with a verified phone: not in HolliHop,
+// no branch, no groups. hh_student_id repeats the id (HolliHop never has it).
+func (q *Queries) InsertSelfStudent(ctx context.Context, arg InsertSelfStudentParams) (int32, error) {
+	row := q.db.QueryRow(ctx, insertSelfStudent, arg.FirstName, arg.LastName, arg.Phone)
+	var client_id int32
+	err := row.Scan(&client_id)
+	return client_id, err
 }
 
 const listActivePhones = `-- name: ListActivePhones :many
@@ -518,7 +584,7 @@ func (q *Queries) OpenIssues(ctx context.Context, arg OpenIssuesParams) ([]OpenI
 const reactivateStudents = `-- name: ReactivateStudents :many
 UPDATE students
 SET deactivated_at = NULL, activated_at = now(), updated_at = now()
-WHERE deactivated_at IS NOT NULL AND hh_status_id = $1::int
+WHERE deactivated_at IS NOT NULL AND hh_status_id = $1::int AND source = 'hollihop'
 RETURNING client_id
 `
 
@@ -569,6 +635,47 @@ func (q *Queries) ReactivateTeachers(ctx context.Context, activeIds []int32) ([]
 	return items, nil
 }
 
+const rekeySelfStudent = `-- name: RekeySelfStudent :execrows
+UPDATE students
+SET client_id = $1, hh_student_id = $2, first_name = $3, last_name = $4,
+    phone_raw = $5, hh_status_id = $6, office_ids = $7, source = 'hollihop',
+    updated_at = now()
+WHERE client_id = $8 AND source = 'self'
+`
+
+type RekeySelfStudentParams struct {
+	ClientID    int32
+	HhStudentID int32
+	FirstName   string
+	LastName    string
+	PhoneRaw    string
+	HhStatusID  pgtype.Int4
+	OfficeIds   []int32
+	SelfID      int32
+}
+
+// Enrolment: the self-registered account becomes the HolliHop student.
+// Every foreign key cascades the new id; the password, username, Google
+// link and sessions are moved by their owners (auth.MoveStudent). Its
+// activated_at stays, so its password and sessions stay valid, and so do the
+// name overrides.
+func (q *Queries) RekeySelfStudent(ctx context.Context, arg RekeySelfStudentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rekeySelfStudent,
+		arg.ClientID,
+		arg.HhStudentID,
+		arg.FirstName,
+		arg.LastName,
+		arg.PhoneRaw,
+		arg.HhStatusID,
+		arg.OfficeIds,
+		arg.SelfID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const resolveIssuesExcept = `-- name: ResolveIssuesExcept :execrows
 UPDATE data_quality_issues i
 SET resolved_at = now()
@@ -592,6 +699,47 @@ func (q *Queries) ResolveIssuesExcept(ctx context.Context, arg ResolveIssuesExce
 	return result.RowsAffected(), nil
 }
 
+const selfStudentPhones = `-- name: SelfStudentPhones :many
+SELECT client_id, login_phone::text AS login_phone, first_name, last_name
+FROM students
+WHERE source = 'self' AND login_phone IS NOT NULL AND deactivated_at IS NULL
+`
+
+type SelfStudentPhonesRow struct {
+	ClientID   int32
+	LoginPhone string
+	FirstName  string
+	LastName   string
+}
+
+// Self-registered accounts and their verified phones: a new HolliHop student
+// with one of these numbers is the same person (linkSelfAccounts); anyone
+// else in HolliHop with one is a conflict for admins.
+func (q *Queries) SelfStudentPhones(ctx context.Context) ([]SelfStudentPhonesRow, error) {
+	rows, err := q.db.Query(ctx, selfStudentPhones)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SelfStudentPhonesRow
+	for rows.Next() {
+		var i SelfStudentPhonesRow
+		if err := rows.Scan(
+			&i.ClientID,
+			&i.LoginPhone,
+			&i.FirstName,
+			&i.LastName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setStudentLoginPhones = `-- name: SetStudentLoginPhones :exec
 UPDATE students s
 SET login_phone = w.phone
@@ -609,6 +757,26 @@ func (q *Queries) SetStudentLoginPhones(ctx context.Context, arg SetStudentLogin
 	return err
 }
 
+const setStudentNames = `-- name: SetStudentNames :execrows
+UPDATE students SET first_name_custom = $1, last_name_custom = $2
+WHERE client_id = $3
+`
+
+type SetStudentNamesParams struct {
+	FirstName pgtype.Text
+	LastName  pgtype.Text
+	ClientID  int32
+}
+
+// Name overrides: NULL clears one (back to HolliHop's name).
+func (q *Queries) SetStudentNames(ctx context.Context, arg SetStudentNamesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setStudentNames, arg.FirstName, arg.LastName, arg.ClientID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setTeacherLoginPhones = `-- name: SetTeacherLoginPhones :exec
 UPDATE teachers t
 SET login_phone = w.phone
@@ -624,6 +792,25 @@ type SetTeacherLoginPhonesParams struct {
 func (q *Queries) SetTeacherLoginPhones(ctx context.Context, arg SetTeacherLoginPhonesParams) error {
 	_, err := q.db.Exec(ctx, setTeacherLoginPhones, arg.Ids, arg.Phones)
 	return err
+}
+
+const setTeacherNames = `-- name: SetTeacherNames :execrows
+UPDATE teachers SET first_name_custom = $1, last_name_custom = $2
+WHERE id = $3
+`
+
+type SetTeacherNamesParams struct {
+	FirstName pgtype.Text
+	LastName  pgtype.Text
+	ID        int32
+}
+
+func (q *Queries) SetTeacherNames(ctx context.Context, arg SetTeacherNamesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setTeacherNames, arg.FirstName, arg.LastName, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const studentGroups = `-- name: StudentGroups :many

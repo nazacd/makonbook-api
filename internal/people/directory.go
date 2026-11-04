@@ -19,13 +19,18 @@ var ErrNotFound = errors.New("person not found")
 
 // Person is the view of a student or teacher that other features use.
 type Person struct {
-	Kind        string // KindStudent or KindTeacher
-	ID          int32  // students.client_id or teachers.id
+	Kind string // KindStudent or KindTeacher
+	ID   int32  // students.client_id or teachers.id
+	// FirstName and LastName are the names as the person sees their own:
+	// the ones they chose (SetNames), else HolliHop's.
 	FirstName   string
 	LastName    string
 	LoginPhone  string // E.164; "" = cannot log in by phone (see data_quality_issues)
 	Active      bool
 	ActivatedAt time.Time // start of the current active period
+	// Registered: a student who signed up themselves and isn't (yet) in
+	// HolliHop (spec 21). Everyone else is enrolled.
+	Registered bool
 }
 
 // Directory is the read API of this feature. Other features (auth,
@@ -50,7 +55,9 @@ func (d *Directory) ByLoginPhone(ctx context.Context, phone string) (Person, err
 		return Person{}, ErrNotFound
 	}
 	r := rows[0]
-	return person(r.Kind, r.ID, r.FirstName, r.LastName, r.LoginPhone, r.DeactivatedAt, r.ActivatedAt), nil
+	p := person(r.Kind, r.ID, r.FirstName, r.LastName, r.LoginPhone, r.DeactivatedAt, r.ActivatedAt)
+	p.Registered = r.Source == SourceSelf
+	return p, nil
 }
 
 // Get returns a stored person, active or not.
@@ -61,7 +68,9 @@ func (d *Directory) Get(ctx context.Context, kind string, id int32) (Person, err
 		if err != nil {
 			return Person{}, notFound(err)
 		}
-		return person(kind, r.ClientID, r.FirstName, r.LastName, r.LoginPhone, r.DeactivatedAt, r.ActivatedAt), nil
+		p := person(kind, r.ClientID, r.FirstName, r.LastName, r.LoginPhone, r.DeactivatedAt, r.ActivatedAt)
+		p.Registered = r.Source == SourceSelf
+		return p, nil
 	case KindTeacher:
 		r, err := d.q.GetTeacher(ctx, id)
 		if err != nil {
@@ -83,6 +92,49 @@ func person(kind string, id int32, first, last string, phone pgtype.Text, deacti
 		Active:      !deactivated.Valid,
 		ActivatedAt: activated.Time,
 	}
+}
+
+// CreateSelfStudent stores a student who signed up themselves (spec 21) with
+// their verified phone (E.164) and names, active from now. db is the
+// sign-up's transaction. A phone another student already logs in with fails
+// with a unique violation.
+func CreateSelfStudent(ctx context.Context, db peopledb.DBTX, firstName, lastName, phone string) (int32, error) {
+	id, err := peopledb.New(db).InsertSelfStudent(ctx, peopledb.InsertSelfStudentParams{FirstName: firstName, LastName: lastName, Phone: phone})
+	if err != nil {
+		return 0, fmt.Errorf("create self-registered student: %w", err)
+	}
+	return id, nil
+}
+
+// SetNames sets the names a person chose for themselves; the sync never
+// changes them, and the person sees them instead of HolliHop's. nil clears
+// one (back to HolliHop's). Names are stored as given: the caller checks them.
+func (d *Directory) SetNames(ctx context.Context, kind string, id int32, firstName, lastName *string) error {
+	first, last := text(firstName), text(lastName)
+	var n int64
+	var err error
+	switch kind {
+	case KindStudent:
+		n, err = d.q.SetStudentNames(ctx, peopledb.SetStudentNamesParams{FirstName: first, LastName: last, ClientID: id})
+	case KindTeacher:
+		n, err = d.q.SetTeacherNames(ctx, peopledb.SetTeacherNamesParams{FirstName: first, LastName: last, ID: id})
+	default:
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("set names: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func text(s *string) pgtype.Text {
+	if s == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *s, Valid: true}
 }
 
 func notFound(err error) error {

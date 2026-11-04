@@ -65,6 +65,9 @@ type Principal struct {
 	// MustChangePassword is true while the person uses the default password;
 	// only a few endpoints are reachable until they choose their own.
 	MustChangePassword bool
+	// Registered: a student who signed up themselves and isn't enrolled at
+	// SAT MAKON (yet); they see only some practice tests (spec 21).
+	Registered bool
 }
 
 type Service struct {
@@ -136,7 +139,7 @@ func (s *Service) Login(ctx context.Context, login, password, deviceID string) (
 	return LoginResult{
 		Token:     token,
 		ExpiresAt: expires,
-		Principal: Principal{SessionID: row.ID, Kind: p.Kind, ID: p.ID, MustChangePassword: !custom},
+		Principal: Principal{SessionID: row.ID, Kind: p.Kind, ID: p.ID, MustChangePassword: !custom, Registered: p.Registered},
 	}, nil
 }
 
@@ -239,7 +242,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (Principal, er
 	}
 
 	_, custom := ownPassword(row.PasswordHash, row.PasswordChangedAt, p)
-	return Principal{SessionID: row.ID, Kind: p.Kind, ID: p.ID, MustChangePassword: !custom}, nil
+	return Principal{SessionID: row.ID, Kind: p.Kind, ID: p.ID, MustChangePassword: !custom, Registered: p.Registered}, nil
 }
 
 // ChangePassword replaces the password (the default one included) after

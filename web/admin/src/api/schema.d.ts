@@ -1464,8 +1464,11 @@ export interface components {
             last_name: string;
             /** @description As typed in HolliHop */
             phone: string;
-            /** @enum {string} */
-            kind: "phone_missing" | "phone_invalid" | "phone_duplicate";
+            /**
+             * @description self_account_conflict: the number is a self-registered account's, which the sync merges only with a new HolliHop student
+             * @enum {string}
+             */
+            kind: "phone_missing" | "phone_invalid" | "phone_duplicate" | "self_account_conflict";
             detail: string;
             /** Format: date-time */
             since: string;

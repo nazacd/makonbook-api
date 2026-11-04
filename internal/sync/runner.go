@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nazacd/makonbook-api/internal/attendance"
+	"github.com/nazacd/makonbook-api/internal/auth"
 	"github.com/nazacd/makonbook-api/internal/hollihop"
 	"github.com/nazacd/makonbook-api/internal/lessons"
 	"github.com/nazacd/makonbook-api/internal/people"
@@ -265,6 +266,12 @@ func (r *Runner) run(ctx context.Context, rep *Report, since string, opts Option
 	if rep.People, err = people.Apply(ctx, tx, snap); err != nil {
 		return err
 	}
+	// Self-registered accounts that enrolled stay signed in (spec 21).
+	for _, l := range rep.People.Linked {
+		if err := auth.MoveStudent(ctx, tx, l.SelfID, l.ClientID); err != nil {
+			return err
+		}
+	}
 	if err := r.Guard.Check(rep.People); err != nil && !opts.AllowMassChange {
 		return err // deferred rollback discards everything
 	}
@@ -287,6 +294,9 @@ func (r *Runner) run(ctx context.Context, rep *Report, since string, opts Option
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit: %w", err)
+	}
+	for _, l := range rep.People.Linked {
+		r.Log.Info("self-registered account enrolled", slog.Int("self_id", int(l.SelfID)), slog.Int("client_id", int(l.ClientID)))
 	}
 	return nil
 }

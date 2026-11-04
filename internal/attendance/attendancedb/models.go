@@ -399,18 +399,21 @@ type ScheduleItem struct {
 }
 
 type Student struct {
-	ClientID      int32
-	HhStudentID   int32
-	FirstName     string
-	LastName      string
-	PhoneRaw      string
-	LoginPhone    pgtype.Text
-	HhStatusID    pgtype.Int4
-	OfficeIds     []int32
-	DeactivatedAt pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
-	ActivatedAt   pgtype.Timestamptz
+	ClientID        int32
+	HhStudentID     int32
+	FirstName       string
+	LastName        string
+	PhoneRaw        string
+	LoginPhone      pgtype.Text
+	HhStatusID      pgtype.Int4
+	OfficeIds       []int32
+	DeactivatedAt   pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	ActivatedAt     pgtype.Timestamptz
+	Source          string
+	FirstNameCustom pgtype.Text
+	LastNameCustom  pgtype.Text
 }
 
 type StudentGoal struct {
@@ -438,16 +441,18 @@ type SyncRun struct {
 }
 
 type Teacher struct {
-	ID            int32
-	FirstName     string
-	LastName      string
-	PhoneRaw      string
-	LoginPhone    pgtype.Text
-	Fired         bool
-	DeactivatedAt pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
-	ActivatedAt   pgtype.Timestamptz
+	ID              int32
+	FirstName       string
+	LastName        string
+	PhoneRaw        string
+	LoginPhone      pgtype.Text
+	Fired           bool
+	DeactivatedAt   pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	ActivatedAt     pgtype.Timestamptz
+	FirstNameCustom pgtype.Text
+	LastNameCustom  pgtype.Text
 }
 
 type VocabDeck struct {

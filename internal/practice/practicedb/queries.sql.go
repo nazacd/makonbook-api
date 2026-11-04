@@ -1391,7 +1391,7 @@ SELECT a.test_id, a.test_version, (x.value->>'subject')::text AS subject,
        (x.value->>'answer')::text AS answer, count(*)::int AS answers
 FROM practice_attempts a
 CROSS JOIN LATERAL jsonb_array_elements(a.answers) AS x(value)
-WHERE a.student_client_id > 0 AND x.value->>'answer' IS NOT NULL
+WHERE a.student_client_id NOT BETWEEN -999999 AND -1 AND x.value->>'answer' IS NOT NULL
 GROUP BY a.test_id, a.test_version, x.value->>'subject', x.value->>'module', x.value->>'position', x.value->>'answer'
 `
 
@@ -1441,7 +1441,7 @@ WITH taken AS (
     SELECT a.test_id, a.test_version, s.subject::text AS subject, count(*)::int AS attempts
     FROM practice_attempts a
     CROSS JOIN LATERAL unnest(a.sections) AS s(subject)
-    WHERE a.student_client_id > 0
+    WHERE a.student_client_id NOT BETWEEN -999999 AND -1
     GROUP BY a.test_id, a.test_version, s.subject
 )
 SELECT t.test_id, t.test_version, t.subject,
@@ -1468,8 +1468,8 @@ type StatsSlotsRow struct {
 }
 
 // Question statistics (spec 9.6) ----------------------------------------------
-// Not the demo account's attempts (negative ids, internal/demo): its
-// results are made up.
+// Not the demo account's attempts (ids -1 … -999999, internal/demo): its
+// results are made up. Self-registered students' (further down) count.
 // Each question place of each version students took, with how many attempts
 // took its section and the question's key (to grade the answers below).
 func (q *Queries) StatsSlots(ctx context.Context) ([]StatsSlotsRow, error) {
