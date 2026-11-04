@@ -337,3 +337,42 @@ FROM practice_attempts a
 CROSS JOIN LATERAL jsonb_array_elements(a.answers) AS x(value)
 WHERE a.student_client_id > 0 AND x.value->>'answer' IS NOT NULL
 GROUP BY a.test_id, a.test_version, x.value->>'subject', x.value->>'module', x.value->>'position', x.value->>'answer';
+
+-- "Ask later" (spec 9.6) -------------------------------------------------------
+
+-- The question at a place in a published version: what a device says about a
+-- question must match its package.
+-- name: VersionSlot :one
+SELECT (q.value->>'id')::text AS question_id
+FROM practice_tests t
+JOIN practice_test_versions v ON v.test_id = t.id
+CROSS JOIN LATERAL jsonb_array_elements(v.package->'sections') AS sec(value)
+CROSS JOIN LATERAL jsonb_array_elements(sec.value->'modules') AS m(value)
+CROSS JOIN LATERAL jsonb_array_elements(m.value->'questions') AS q(value)
+WHERE t.code = @code AND v.version = @version::int AND sec.value->>'subject' = @subject::text
+  AND (m.value->>'module')::int = @module::int AND (q.value->>'position')::int = @position::int
+LIMIT 1;
+
+-- A student's parked question, new or changed; nothing comes back when the id
+-- is another student's.
+-- name: UpsertParked :one
+INSERT INTO parked_questions (id, student_client_id, test, version, subject, module, position, question_id,
+                              folder, reason, note, fix, status)
+VALUES (@id, @student_client_id, @test, @version, @subject, @module, @position, @question_id,
+        @folder, sqlc.narg('reason'), @note, @fix, @status)
+ON CONFLICT (id) DO UPDATE
+SET test = EXCLUDED.test, version = EXCLUDED.version, subject = EXCLUDED.subject, module = EXCLUDED.module,
+    position = EXCLUDED.position, question_id = EXCLUDED.question_id, folder = EXCLUDED.folder,
+    reason = EXCLUDED.reason, note = EXCLUDED.note, fix = EXCLUDED.fix, status = EXCLUDED.status,
+    updated_at = now()
+WHERE parked_questions.student_client_id = EXCLUDED.student_client_id
+RETURNING *;
+
+-- Students' parked questions, newest first.
+-- name: ParkedOf :many
+SELECT * FROM parked_questions
+WHERE student_client_id = ANY (@client_ids::int[])
+ORDER BY created_at DESC, id;
+
+-- name: DeleteParked :execrows
+DELETE FROM parked_questions WHERE id = @id AND student_client_id = @student_client_id;

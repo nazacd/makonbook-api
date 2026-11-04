@@ -235,6 +235,24 @@ type ParentSession struct {
 	RevokedAt       pgtype.Timestamptz
 }
 
+type ParkedQuestion struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Test            string
+	Version         int32
+	Subject         string
+	Module          int16
+	Position        int16
+	QuestionID      pgtype.UUID
+	Folder          string
+	Reason          pgtype.Text
+	Note            string
+	Fix             string
+	Status          string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type PracticeAttempt struct {
 	ID              pgtype.UUID
 	StudentClientID int32

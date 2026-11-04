@@ -215,6 +215,23 @@ func (q *Queries) DeleteOrphanQuestions(ctx context.Context) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const deleteParked = `-- name: DeleteParked :execrows
+DELETE FROM parked_questions WHERE id = $1 AND student_client_id = $2
+`
+
+type DeleteParkedParams struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+}
+
+func (q *Queries) DeleteParked(ctx context.Context, arg DeleteParkedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteParked, arg.ID, arg.StudentClientID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteTest = `-- name: DeleteTest :exec
 DELETE FROM practice_tests WHERE id = $1
 `
@@ -780,6 +797,49 @@ func (q *Queries) OwnAttempts(ctx context.Context, clientID int32) ([]OwnAttempt
 			&i.FinishedAt,
 			&i.Scores,
 			&i.Answers,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const parkedOf = `-- name: ParkedOf :many
+SELECT id, student_client_id, test, version, subject, module, position, question_id, folder, reason, note, fix, status, created_at, updated_at FROM parked_questions
+WHERE student_client_id = ANY ($1::int[])
+ORDER BY created_at DESC, id
+`
+
+// Students' parked questions, newest first.
+func (q *Queries) ParkedOf(ctx context.Context, clientIds []int32) ([]ParkedQuestion, error) {
+	rows, err := q.db.Query(ctx, parkedOf, clientIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ParkedQuestion
+	for rows.Next() {
+		var i ParkedQuestion
+		if err := rows.Scan(
+			&i.ID,
+			&i.StudentClientID,
+			&i.Test,
+			&i.Version,
+			&i.Subject,
+			&i.Module,
+			&i.Position,
+			&i.QuestionID,
+			&i.Folder,
+			&i.Reason,
+			&i.Note,
+			&i.Fix,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1536,4 +1596,110 @@ func (q *Queries) UpdateQuestion(ctx context.Context, arg UpdateQuestionParams) 
 	var version int32
 	err := row.Scan(&version)
 	return version, err
+}
+
+const upsertParked = `-- name: UpsertParked :one
+INSERT INTO parked_questions (id, student_client_id, test, version, subject, module, position, question_id,
+                              folder, reason, note, fix, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10, $11, $12, $13)
+ON CONFLICT (id) DO UPDATE
+SET test = EXCLUDED.test, version = EXCLUDED.version, subject = EXCLUDED.subject, module = EXCLUDED.module,
+    position = EXCLUDED.position, question_id = EXCLUDED.question_id, folder = EXCLUDED.folder,
+    reason = EXCLUDED.reason, note = EXCLUDED.note, fix = EXCLUDED.fix, status = EXCLUDED.status,
+    updated_at = now()
+WHERE parked_questions.student_client_id = EXCLUDED.student_client_id
+RETURNING id, student_client_id, test, version, subject, module, position, question_id, folder, reason, note, fix, status, created_at, updated_at
+`
+
+type UpsertParkedParams struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Test            string
+	Version         int32
+	Subject         string
+	Module          int16
+	Position        int16
+	QuestionID      pgtype.UUID
+	Folder          string
+	Reason          pgtype.Text
+	Note            string
+	Fix             string
+	Status          string
+}
+
+// A student's parked question, new or changed; nothing comes back when the id
+// is another student's.
+func (q *Queries) UpsertParked(ctx context.Context, arg UpsertParkedParams) (ParkedQuestion, error) {
+	row := q.db.QueryRow(ctx, upsertParked,
+		arg.ID,
+		arg.StudentClientID,
+		arg.Test,
+		arg.Version,
+		arg.Subject,
+		arg.Module,
+		arg.Position,
+		arg.QuestionID,
+		arg.Folder,
+		arg.Reason,
+		arg.Note,
+		arg.Fix,
+		arg.Status,
+	)
+	var i ParkedQuestion
+	err := row.Scan(
+		&i.ID,
+		&i.StudentClientID,
+		&i.Test,
+		&i.Version,
+		&i.Subject,
+		&i.Module,
+		&i.Position,
+		&i.QuestionID,
+		&i.Folder,
+		&i.Reason,
+		&i.Note,
+		&i.Fix,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const versionSlot = `-- name: VersionSlot :one
+
+SELECT (q.value->>'id')::text AS question_id
+FROM practice_tests t
+JOIN practice_test_versions v ON v.test_id = t.id
+CROSS JOIN LATERAL jsonb_array_elements(v.package->'sections') AS sec(value)
+CROSS JOIN LATERAL jsonb_array_elements(sec.value->'modules') AS m(value)
+CROSS JOIN LATERAL jsonb_array_elements(m.value->'questions') AS q(value)
+WHERE t.code = $1 AND v.version = $2::int AND sec.value->>'subject' = $3::text
+  AND (m.value->>'module')::int = $4::int AND (q.value->>'position')::int = $5::int
+LIMIT 1
+`
+
+type VersionSlotParams struct {
+	Code     string
+	Version  int32
+	Subject  string
+	Module   int32
+	Position int32
+}
+
+// "Ask later" (spec 9.6) -------------------------------------------------------
+// The question at a place in a published version: what a device says about a
+// question must match its package.
+func (q *Queries) VersionSlot(ctx context.Context, arg VersionSlotParams) (string, error) {
+	row := q.db.QueryRow(ctx, versionSlot,
+		arg.Code,
+		arg.Version,
+		arg.Subject,
+		arg.Module,
+		arg.Position,
+	)
+	var question_id string
+	err := row.Scan(&question_id)
+	return question_id, err
 }

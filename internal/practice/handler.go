@@ -17,6 +17,7 @@ const (
 	CodeInvalidAttempt = "invalid_attempt"
 	CodeAttemptTaken   = "attempt_id_taken"
 	CodeTestNotFound   = "test_not_found"
+	CodeInvalidParked  = "invalid_parked"
 )
 
 // Handler is the apps' practice API: the catalog, packages, attempts.
@@ -38,6 +39,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/practice/attempts", h.require(h.student(h.saveAttempt)))
 	mux.HandleFunc("GET /v1/me/practice/attempts", h.require(h.student(h.myAttempts)))
 	mux.HandleFunc("GET /v1/teacher/groups/{id}/practice", h.require(h.groupPractice))
+	mux.HandleFunc("GET /v1/me/parked", h.require(h.student(h.myParked)))
+	mux.HandleFunc("PUT /v1/me/parked/{id}", h.require(h.student(h.saveParked)))
+	mux.HandleFunc("DELETE /v1/me/parked/{id}", h.require(h.student(h.deleteParked)))
+	mux.HandleFunc("GET /v1/teacher/groups/{id}/parked", h.require(h.groupParked))
 }
 
 func (h *Handler) catalog(w http.ResponseWriter, r *http.Request) {
@@ -132,6 +137,80 @@ func (h *Handler) groupPractice(w http.ResponseWriter, r *http.Request) {
 	default:
 		httpx.WriteJSON(w, r, http.StatusOK, map[string]any{"students": students})
 	}
+}
+
+func (h *Handler) myParked(w http.ResponseWriter, r *http.Request, student int32) {
+	items, err := h.svc.MyParked(r.Context(), student)
+	if err != nil {
+		h.internal(w, r, "my parked", err)
+		return
+	}
+	httpx.WriteJSON(w, r, http.StatusOK, map[string]any{"items": items})
+}
+
+func (h *Handler) saveParked(w http.ResponseWriter, r *http.Request, student int32) {
+	var in ParkedInput
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	p, err := h.svc.SaveParked(r.Context(), student, r.PathValue("id"), in)
+	var bad *ParkedError
+	switch {
+	case errors.As(err, &bad):
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidParked, bad.Reason)
+	case errors.Is(err, ErrNotFound):
+		httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, "no such parked question of yours")
+	case err != nil:
+		h.internal(w, r, "save parked", err)
+	default:
+		httpx.WriteJSON(w, r, http.StatusOK, p)
+	}
+}
+
+func (h *Handler) deleteParked(w http.ResponseWriter, r *http.Request, student int32) {
+	err := h.svc.DeleteParked(r.Context(), student, r.PathValue("id"))
+	switch {
+	case errors.Is(err, ErrNotFound):
+		httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, "no such parked question of yours")
+	case err != nil:
+		h.internal(w, r, "delete parked", err)
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func (h *Handler) groupParked(w http.ResponseWriter, r *http.Request) {
+	teacher, group, today, ok := h.teacherGroup(w, r)
+	if !ok {
+		return
+	}
+	items, err := h.svc.GroupParked(r.Context(), teacher, group, today)
+	switch {
+	case errors.Is(err, ErrNotTeacher):
+		httpx.WriteError(w, r, http.StatusForbidden, httpx.CodeForbidden, err.Error())
+	case err != nil:
+		h.internal(w, r, "group parked", err)
+	default:
+		httpx.WriteJSON(w, r, http.StatusOK, map[string]any{"items": items})
+	}
+}
+
+// teacherGroup is the signed-in teacher, the group in the path and the
+// school's date, as groupPractice reads them; ok is false when it has
+// already answered (not a teacher, or not a group id).
+func (h *Handler) teacherGroup(w http.ResponseWriter, r *http.Request) (teacher, group int32, today time.Time, ok bool) {
+	p, _ := auth.PrincipalFrom(r.Context())
+	if p.Kind != people.KindTeacher {
+		httpx.WriteError(w, r, http.StatusForbidden, httpx.CodeForbidden, "only teachers see a group's questions")
+		return 0, 0, today, false
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 32)
+	if err != nil {
+		httpx.NotFound(w, r)
+		return 0, 0, today, false
+	}
+	y, m, d := time.Now().In(h.location).Date()
+	return p.ID, int32(id), time.Date(y, m, d, 0, 0, 0, 0, time.UTC), true
 }
 
 // student lets only students through.

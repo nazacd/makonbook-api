@@ -445,6 +445,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/parked": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The student's parked questions ("Ask later"), newest first */
+        get: operations["myParkedQuestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/parked/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id the device made */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Park a question, or change a parked one (students)
+         * @description Creates the parked question or replaces its fields (idempotent by
+         *     id, so a retry is safe). The question must be the one at that place
+         *     in that published version. Texts are trimmed; a missing or blank
+         *     `folder` is `Unsorted`, a missing `status` is `waiting`.
+         */
+        put: operations["saveParkedQuestion"];
+        post?: never;
+        /** Remove a parked question (students) */
+        delete: operations["deleteParkedQuestion"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/teacher/groups/{id}/parked": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The parked questions of a group's students (its teachers) */
+        get: operations["groupParkedQuestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/vocab/deck": {
         parameters: {
             query?: never;
@@ -1566,6 +1627,64 @@ export interface components {
             /** @description Both sections' sum (400–1600) when both were taken */
             total: number | null;
         };
+        /** @description A question at its place in a published version, as in the package. */
+        PracticeQuestionRef: {
+            /**
+             * @description The test's code
+             * @example DAY12
+             */
+            test: string;
+            version: number;
+            /** @enum {string} */
+            subject: "english" | "math";
+            /** @enum {integer} */
+            module: 1 | 2;
+            position: number;
+            /**
+             * Format: uuid
+             * @description The question's id in the package
+             */
+            question_id: string;
+        };
+        ParkedQuestionInput: components["schemas"]["PracticeQuestionRef"] & {
+            /** @description Trimmed; null or blank: `Unsorted` */
+            folder?: string | null;
+            /** @enum {string|null} */
+            reason?: "didnt_understand" | "didnt_know_start" | "lost_partway" | "ran_out_of_time" | null;
+            /** @default  */
+            note: string;
+            /**
+             * @description The fix in one line
+             * @default
+             */
+            fix: string;
+            /**
+             * @default waiting
+             * @enum {string}
+             */
+            status: "waiting" | "sorted";
+        };
+        ParkedQuestion: components["schemas"]["PracticeQuestionRef"] & {
+            /** Format: uuid */
+            id: string;
+            folder: string;
+            /** @enum {string|null} */
+            reason: "didnt_understand" | "didnt_know_start" | "lost_partway" | "ran_out_of_time" | null;
+            note: string;
+            fix: string;
+            /** @enum {string} */
+            status: "waiting" | "sorted";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        PracticeStudent: {
+            /** @description The student's HolliHop client id */
+            id: number;
+            first_name: string;
+            last_name: string;
+        };
         PracticePlace: {
             test: string;
             /** @enum {string} */
@@ -1913,7 +2032,7 @@ export interface components {
                  * @description Stable machine-readable code.
                  * @enum {string}
                  */
-                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found";
+                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked";
                 /** @description Human-readable explanation; may change. */
                 message: string;
                 /** @description For a rejected form (`invalid_question`): what is wrong, per field (e.g. `stem`, `choices.B`). */
@@ -2724,6 +2843,170 @@ export interface operations {
                             last_name: string;
                             attempts: components["schemas"]["PracticeAttempt"][];
                         }[];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a teacher, or not this group's */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    myParkedQuestions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every parked question of the student */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ParkedQuestion"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a student */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    saveParkedQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id the device made */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ParkedQuestionInput"];
+            };
+        };
+        responses: {
+            /** @description The stored parked question */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParkedQuestion"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a student */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found`: the id is another student's */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_parked`: a value is wrong (the message says which), or the question isn't at that place in that version */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteParkedQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id the device made */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a student */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found`: the student has no parked question with this id (also when it was already removed) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    groupParkedQuestions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The parked questions of the students enrolled now, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: (components["schemas"]["ParkedQuestion"] & {
+                            student: components["schemas"]["PracticeStudent"];
+                        })[];
                     };
                 };
             };

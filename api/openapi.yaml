@@ -633,6 +633,106 @@ paths:
           description: "`forbidden`: not a teacher, or not this group's"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/me/parked:
+    get:
+      summary: The student's parked questions ("Ask later"), newest first
+      operationId: myParkedQuestions
+      tags: [practice]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: Every parked question of the student
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/ParkedQuestion" } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/me/parked/{id}:
+    parameters:
+      - { name: id, in: path, required: true, description: The id the device made, schema: { type: string, format: uuid } }
+    put:
+      summary: Park a question, or change a parked one (students)
+      description: |
+        Creates the parked question or replaces its fields (idempotent by
+        id, so a retry is safe). The question must be the one at that place
+        in that published version. Texts are trimmed; a missing or blank
+        `folder` is `Unsorted`, a missing `status` is `waiting`.
+      operationId: saveParkedQuestion
+      tags: [practice]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ParkedQuestionInput" }
+      responses:
+        "200":
+          description: The stored parked question
+          content: { application/json: { schema: { $ref: "#/components/schemas/ParkedQuestion" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "404":
+          description: "`not_found`: the id is another student's"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_parked`: a value is wrong (the message says which), or the question isn't at that place in that version"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    delete:
+      summary: Remove a parked question (students)
+      operationId: deleteParkedQuestion
+      tags: [practice]
+      security: [{ bearer: [] }]
+      responses:
+        "204": { description: Removed }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "404":
+          description: "`not_found`: the student has no parked question with this id (also when it was already removed)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/teacher/groups/{id}/parked:
+    get:
+      summary: The parked questions of a group's students (its teachers)
+      operationId: groupParkedQuestions
+      tags: [practice]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: The parked questions of the students enrolled now, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: "#/components/schemas/ParkedQuestion"
+                        - type: object
+                          required: [student]
+                          properties:
+                            student: { $ref: "#/components/schemas/PracticeStudent" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a teacher, or not this group's"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /v1/vocab/deck:
     get:
       summary: Every word list, to study offline (students and teachers)
@@ -2034,6 +2134,56 @@ components:
               score: { type: integer, description: "Estimated, 200–800" }
         total: { type: [integer, "null"], description: "Both sections' sum (400–1600) when both were taken" }
 
+    PracticeQuestionRef:
+      type: object
+      description: A question at its place in a published version, as in the package.
+      required: [test, version, subject, module, position, question_id]
+      properties:
+        test: { type: string, description: The test's code, example: DAY12 }
+        version: { type: integer, minimum: 1 }
+        subject: { type: string, enum: [english, math] }
+        module: { type: integer, enum: [1, 2] }
+        position: { type: integer, minimum: 1 }
+        question_id: { type: string, format: uuid, description: The question's id in the package }
+
+    ParkedQuestionInput:
+      allOf:
+        - $ref: "#/components/schemas/PracticeQuestionRef"
+        - type: object
+          properties:
+            folder: { type: [string, "null"], maxLength: 40, description: "Trimmed; null or blank: `Unsorted`" }
+            reason:
+              type: [string, "null"]
+              enum: [didnt_understand, didnt_know_start, lost_partway, ran_out_of_time, null]
+            note: { type: string, maxLength: 1000, default: "" }
+            fix: { type: string, maxLength: 300, default: "", description: The fix in one line, once the student understands it }
+            status: { type: string, enum: [waiting, sorted], default: waiting }
+
+    ParkedQuestion:
+      allOf:
+        - $ref: "#/components/schemas/PracticeQuestionRef"
+        - type: object
+          required: [id, folder, reason, note, fix, status, created_at, updated_at]
+          properties:
+            id: { type: string, format: uuid }
+            folder: { type: string, minLength: 1, maxLength: 40 }
+            reason:
+              type: [string, "null"]
+              enum: [didnt_understand, didnt_know_start, lost_partway, ran_out_of_time, null]
+            note: { type: string }
+            fix: { type: string }
+            status: { type: string, enum: [waiting, sorted] }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+
+    PracticeStudent:
+      type: object
+      required: [id, first_name, last_name]
+      properties:
+        id: { type: integer, description: The student's HolliHop client id }
+        first_name: { type: string }
+        last_name: { type: string }
+
     PracticePlace:
       type: object
       required: [test, subject, module, position]
@@ -2417,6 +2567,7 @@ components:
                 - invalid_parent_code
                 - invalid_report
                 - test_not_found
+                - invalid_parked
             message:
               type: string
               description: Human-readable explanation; may change.

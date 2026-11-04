@@ -354,6 +354,14 @@ section (College Board uses IRT; we can't reproduce it exactly).
   `correct` (graded right with the keys of the version the attempt used, as its scores). The demo account's
   made-up attempts don't count. Counted in memory and again every 5 minutes at most (`practice.StatsTTL`);
   an unknown or locked test is `404 test_not_found`.
+- **Ask later** (`parked_questions`): a question a student parks during a test to look at later. The device
+  makes the id; `PUT /v1/me/parked/{id}` creates or replaces it (idempotent; another student's id is `404`):
+  the test, version and place, and the question's id, which must be the one at that place in that published
+  version; a folder (trimmed, 1–40 characters, `Unsorted` when blank), why they were stuck (`didnt_understand`,
+  `didnt_know_start`, `lost_partway`, `ran_out_of_time` or none), a note (≤ 1000), "the fix in one line" once
+  they understand it (≤ 300), and `waiting` or `sorted`; a wrong value is `422 invalid_parked`.
+  `GET /v1/me/parked` lists them newest first, `DELETE /v1/me/parked/{id}` removes one. Teachers see their
+  group's current students' ones (`GET /v1/teacher/groups/{id}/parked`, the same check as its practice).
 
 ## 10. Placement test changes (mobile, small)
 
@@ -573,6 +581,9 @@ practice_test_versions(test_id FK, version, content_hash, package jsonb, bytes, 
 practice_published_images(file PK, content_type, bytes, width, height)
 practice_attempts(id uuid PK (the device's), student_client_id FK, (test_id, test_version) FK, sections text[],
                   started_at, finished_at, answers jsonb, scores jsonb, received_at)
+-- built: see 9.6
+parked_questions(id uuid PK (the device's), student_client_id FK, test, version, subject, module, position,
+                 question_id, folder, reason NULL, note, fix, status (waiting|sorted), created_at, updated_at)
 -- built (phase 4): see 11
 vocab_lists(id uuid PK, slug UNIQUE, title, position, removed_at)
 vocab_words(id uuid PK, list_id FK, position, word, part_of_speech, definition, example, image, removed_at,
@@ -620,6 +631,9 @@ GET  /v1/practice/tests/{code}/stats   per question of the latest version: answe
 POST /v1/practice/attempts             idempotent by client UUID; graded on the server
 GET  /v1/me/practice/attempts          the student's attempts
 GET  /v1/teacher/groups/{id}/practice  a group's students and their attempts
+GET  /v1/me/parked                     the student's parked questions ("Ask later", 9.6)
+PUT|DELETE /v1/me/parked/{id}          park or change one (idempotent by client UUID); remove one
+GET  /v1/teacher/groups/{id}/parked    a group's students' parked questions
 
 # vocabulary (phase 4)
 GET  /v1/vocab/deck?have=              every list and word (or "unchanged")

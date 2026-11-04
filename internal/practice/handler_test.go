@@ -138,6 +138,40 @@ func TestHandler(t *testing.T) {
 	if status, _ := do("GET", "/v1/practice/tests/DAY1/stats", "", nil); status != http.StatusUnauthorized {
 		t.Errorf("stats signed out: %d", status)
 	}
+
+	// Ask later.
+	pkg, _ := svc.LatestPackage(ctx, "DAY1")
+	parked := map[string]any{"test": "DAY1", "version": 1, "subject": "math", "module": 1, "position": 1,
+		"question_id": pkg.Sections[1].Modules[0].Questions[0].ID, "folder": "Algebra", "reason": "didnt_understand", "note": "", "fix": "", "status": "waiting"}
+	const parkedPath = "/v1/me/parked/5c4d3e2f-1a0b-4c9d-8e7f-6a5b4c3d2e1f"
+	if status, _ := do("PUT", parkedPath, teacher, parked); status != http.StatusForbidden {
+		t.Errorf("a teacher parks: %d", status)
+	}
+	if status, body := do("PUT", parkedPath, student, parked); status != http.StatusOK || body["folder"] != "Algebra" || body["question_id"] != parked["question_id"] {
+		t.Errorf("park: %d %v", status, body)
+	}
+	parked["reason"] = "bored"
+	if status, body := do("PUT", parkedPath, student, parked); status != http.StatusUnprocessableEntity || body["error"].(map[string]any)["code"] != CodeInvalidParked {
+		t.Errorf("a wrong reason: %d %v", status, body)
+	}
+	if status, body := do("GET", "/v1/me/parked", student, nil); status != http.StatusOK || len(body["items"].([]any)) != 1 {
+		t.Errorf("my parked: %d %v", status, body)
+	}
+	status, body = do("GET", "/v1/teacher/groups/100/parked", teacher, nil)
+	if items, _ := body["items"].([]any); status != http.StatusOK || len(items) != 1 || items[0].(map[string]any)["student"].(map[string]any)["id"] != 1.0 {
+		t.Errorf("group parked: %d %v", status, body)
+	}
+	for path, token := range map[string]string{"/v1/teacher/groups/100/parked": student, "/v1/teacher/groups/999/parked": teacher} {
+		if status, _ := do("GET", path, token, nil); status != http.StatusForbidden {
+			t.Errorf("%s: %d", path, status)
+		}
+	}
+	if status, _ := do("DELETE", parkedPath, student, nil); status != http.StatusNoContent {
+		t.Errorf("delete parked: %d", status)
+	}
+	if status, _ := do("DELETE", parkedPath, student, nil); status != http.StatusNotFound {
+		t.Errorf("delete parked again: %d", status)
+	}
 	status, body = do("GET", "/v1/teacher/groups/100/practice", teacher, nil)
 	if students, _ := body["students"].([]any); status != http.StatusOK || len(students) != 1 ||
 		len(students[0].(map[string]any)["attempts"].([]any)) != 1 {
