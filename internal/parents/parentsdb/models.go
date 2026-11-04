@@ -342,6 +342,7 @@ type PracticeTest struct {
 	Code      string
 	Title     string
 	CreatedAt pgtype.Timestamptz
+	OpenToAll bool
 }
 
 type PracticeTestQuestion struct {

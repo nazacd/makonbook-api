@@ -4,7 +4,7 @@
 SELECT * FROM practice_tests WHERE code = @code;
 
 -- name: CreateTest :one
-INSERT INTO practice_tests (code, title) VALUES (@code, @title) RETURNING *;
+INSERT INTO practice_tests (code, title, open_to_all) VALUES (@code, @title, @open_to_all) RETURNING *;
 
 -- Questions of a test that people have already worked on: approved or
 -- changed by a person. A test with any of these can't be reloaded.
@@ -236,7 +236,7 @@ ON CONFLICT (file) DO NOTHING;
 
 -- For students: every test, its progress, and its latest published version.
 -- name: Catalog :many
-SELECT t.code, t.title,
+SELECT t.code, t.title, t.open_to_all,
        count(*)::int AS questions,
        count(*) FILTER (WHERE q.status = 'approved')::int AS approved,
        count(*) FILTER (WHERE tq.subject = 'english')::int AS english,
@@ -249,6 +249,10 @@ LEFT JOIN LATERAL (SELECT pv.version, pv.bytes, pv.published_at FROM practice_te
                    WHERE pv.test_id = t.id ORDER BY pv.version DESC LIMIT 1) v ON true
 GROUP BY t.id, v.version, v.bytes, v.published_at
 ORDER BY length(t.code), t.code;
+
+-- Whether registered students (spec 21) may take a test.
+-- name: TestOpenToAll :one
+SELECT open_to_all FROM practice_tests WHERE code = @code;
 
 -- A published version of a test; version 0 is the latest.
 -- name: TestVersion :one

@@ -187,7 +187,7 @@ func (q *Queries) ApproveQuestion(ctx context.Context, arg ApproveQuestionParams
 }
 
 const catalog = `-- name: Catalog :many
-SELECT t.code, t.title,
+SELECT t.code, t.title, t.open_to_all,
        count(*)::int AS questions,
        count(*) FILTER (WHERE q.status = 'approved')::int AS approved,
        count(*) FILTER (WHERE tq.subject = 'english')::int AS english,
@@ -205,6 +205,7 @@ ORDER BY length(t.code), t.code
 type CatalogRow struct {
 	Code        string
 	Title       string
+	OpenToAll   bool
 	Questions   int32
 	Approved    int32
 	English     int32
@@ -227,6 +228,7 @@ func (q *Queries) Catalog(ctx context.Context) ([]CatalogRow, error) {
 		if err := rows.Scan(
 			&i.Code,
 			&i.Title,
+			&i.OpenToAll,
 			&i.Questions,
 			&i.Approved,
 			&i.English,
@@ -305,22 +307,24 @@ func (q *Queries) CountQuestions(ctx context.Context, arg CountQuestionsParams) 
 }
 
 const createTest = `-- name: CreateTest :one
-INSERT INTO practice_tests (code, title) VALUES ($1, $2) RETURNING id, code, title, created_at
+INSERT INTO practice_tests (code, title, open_to_all) VALUES ($1, $2, $3) RETURNING id, code, title, created_at, open_to_all
 `
 
 type CreateTestParams struct {
-	Code  string
-	Title string
+	Code      string
+	Title     string
+	OpenToAll bool
 }
 
 func (q *Queries) CreateTest(ctx context.Context, arg CreateTestParams) (PracticeTest, error) {
-	row := q.db.QueryRow(ctx, createTest, arg.Code, arg.Title)
+	row := q.db.QueryRow(ctx, createTest, arg.Code, arg.Title, arg.OpenToAll)
 	var i PracticeTest
 	err := row.Scan(
 		&i.ID,
 		&i.Code,
 		&i.Title,
 		&i.CreatedAt,
+		&i.OpenToAll,
 	)
 	return i, err
 }
@@ -463,7 +467,7 @@ func (q *Queries) GetQuestion(ctx context.Context, id pgtype.UUID) (Question, er
 
 const getTestByCode = `-- name: GetTestByCode :one
 
-SELECT id, code, title, created_at FROM practice_tests WHERE code = $1
+SELECT id, code, title, created_at, open_to_all FROM practice_tests WHERE code = $1
 `
 
 // Practice tests and their question bank (spec 9).
@@ -475,6 +479,7 @@ func (q *Queries) GetTestByCode(ctx context.Context, code string) (PracticeTest,
 		&i.Code,
 		&i.Title,
 		&i.CreatedAt,
+		&i.OpenToAll,
 	)
 	return i, err
 }
@@ -1628,6 +1633,18 @@ func (q *Queries) TestContent(ctx context.Context, testID pgtype.UUID) ([]TestCo
 		return nil, err
 	}
 	return items, nil
+}
+
+const testOpenToAll = `-- name: TestOpenToAll :one
+SELECT open_to_all FROM practice_tests WHERE code = $1
+`
+
+// Whether registered students (spec 21) may take a test.
+func (q *Queries) TestOpenToAll(ctx context.Context, code string) (bool, error) {
+	row := q.db.QueryRow(ctx, testOpenToAll, code)
+	var open_to_all bool
+	err := row.Scan(&open_to_all)
+	return open_to_all, err
 }
 
 const testProgress = `-- name: TestProgress :many

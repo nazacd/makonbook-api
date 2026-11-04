@@ -517,6 +517,10 @@ export interface paths {
          *     version. A locked test has `version: null` and shows how far its
          *     review has come (`approved` of `questions`). A published test stays
          *     open at its last version while an edited question is reviewed again.
+         *     A registered student (`status: registered`) sees the tests not open
+         *     to all (all but DAY1–DAY10) locked too, with `enrolled_only: true`
+         *     (and `bytes`, `published_at` null); for everyone else the field is
+         *     left out.
          */
         get: operations["practiceTests"];
         put?: never;
@@ -1807,6 +1811,8 @@ export interface components {
             bytes: number | null;
             /** Format: date-time */
             published_at: string | null;
+            /** @description Registered students only: for SAT MAKON's students, locked for this person (version null). Left out otherwise */
+            enrolled_only?: boolean;
         };
         /**
          * @description A published version of a test (format 1). Sections come in Bluebook
@@ -3407,6 +3413,15 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+            /** @description `enrolled_only`: a registered student and a test for SAT MAKON's students */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description `not_found`: no such test, or not published (yet), or no such version */
             404: {
                 headers: {
@@ -3500,7 +3515,7 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
-            /** @description `forbidden`: not a student */
+            /** @description `forbidden`: not a student; `enrolled_only`: a registered student and a test for SAT MAKON's students */
             403: {
                 headers: {
                     [name: string]: unknown;

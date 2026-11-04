@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -51,6 +52,11 @@ type CatalogTest struct {
 	Version     *int32     `json:"version"`
 	Bytes       *int32     `json:"bytes"`
 	PublishedAt *time.Time `json:"published_at"`
+	// EnrolledOnly: for SAT MAKON's students; locked for this registered
+	// student (spec 21). Left out for everyone else.
+	EnrolledOnly bool `json:"enrolled_only,omitempty"`
+
+	openToAll bool
 }
 
 // Catalog lists every test: published ones are open, the rest locked with
@@ -62,13 +68,43 @@ func (s *Service) Catalog(ctx context.Context) ([]CatalogTest, error) {
 	}
 	out := make([]CatalogTest, 0, len(rows))
 	for _, r := range rows {
-		t := CatalogTest{Code: r.Code, Title: r.Title, English: r.English, Math: r.Math, Questions: r.Questions, Approved: r.Approved}
+		t := CatalogTest{Code: r.Code, Title: r.Title, English: r.English, Math: r.Math, Questions: r.Questions, Approved: r.Approved,
+			openToAll: r.OpenToAll}
 		if r.Version > 0 {
 			t.Version, t.Bytes, t.PublishedAt = &r.Version, &r.Bytes, &r.PublishedAt.Time
 		}
 		out = append(out, t)
 	}
 	return out, nil
+}
+
+// ForRegistered is the catalog as a registered student sees it (spec 21):
+// tests not open to all are locked, as unpublished ones are (no version, so
+// the phone app shows them locked), and marked enrolled_only.
+func ForRegistered(tests []CatalogTest) []CatalogTest {
+	for i := range tests {
+		if !tests[i].openToAll {
+			tests[i].Version, tests[i].Bytes, tests[i].PublishedAt = nil, nil, nil
+			tests[i].EnrolledOnly = true
+		}
+	}
+	return tests
+}
+
+var openToAll = regexp.MustCompile(`(?i)^DAY([1-9]|10)$`)
+
+// OpenToAll is the rule for new tests: DAY1 … DAY10, the course's first ten
+// days, are open to registered students too (as migration 00030 set them).
+func OpenToAll(code string) bool { return openToAll.MatchString(code) }
+
+// TestOpenToAll says whether registered students may take a test
+// (ErrNotFound: no such test).
+func (s *Service) TestOpenToAll(ctx context.Context, code string) (bool, error) {
+	open, err := practicedb.New(s.pool).TestOpenToAll(ctx, code)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	return open, err
 }
 
 // Download is a published version with links to its images.

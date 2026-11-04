@@ -744,6 +744,10 @@ paths:
         version. A locked test has `version: null` and shows how far its
         review has come (`approved` of `questions`). A published test stays
         open at its last version while an edited question is reviewed again.
+        A registered student (`status: registered`) sees the tests not open
+        to all (all but DAY1–DAY10) locked too, with `enrolled_only: true`
+        (and `bytes`, `published_at` null); for everyone else the field is
+        left out.
       operationId: practiceTests
       tags: [practice]
       security: [{ bearer: [] }]
@@ -794,6 +798,9 @@ paths:
                   expires_at: { type: string, format: date-time }
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`enrolled_only`: a registered student and a test for SAT MAKON's students"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "404":
           description: "`not_found`: no such test, or not published (yet), or no such version"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
@@ -877,7 +884,7 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
         "403":
-          description: "`forbidden`: not a student"
+          description: "`forbidden`: not a student; `enrolled_only`: a registered student and a test for SAT MAKON's students"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "409":
           description: "`attempt_id_taken`: another student sent an attempt with this id"
@@ -2488,6 +2495,9 @@ components:
         version: { type: [integer, "null"], description: The latest published version; null while locked }
         bytes: { type: [integer, "null"], description: "The download's size: the package and its images" }
         published_at: { type: [string, "null"], format: date-time }
+        enrolled_only:
+          type: boolean
+          description: "Registered students only: for SAT MAKON's students, locked for this person (version null). Left out otherwise"
 
     PracticePackage:
       type: object
