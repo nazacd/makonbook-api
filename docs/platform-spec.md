@@ -802,7 +802,7 @@ sign-up, reset, Google, own names), `internal/people` (self-registered students,
   password follows section 7, else `422 weak_password`; null only with a `google_ticket`):
   - the phone already signs in an **active student or teacher** (D24): no account is made; it signs into
     theirs, sets the password if given (their other sessions end, as after a password change; the lockout
-    clears) and links the Google account if given;
+    clears) and links the Google account if given; the names are checked but not used;
   - otherwise a registered student is made with these names (stored as the names, not as overrides: at
     enrolment HolliHop's names replace them, unless they set their own since) and signed in.
   - Answers as a login plus `existing`. `409 google_taken` if the Google account is linked to someone else who

@@ -199,8 +199,8 @@ export interface paths {
          *     signed up before), no account is made: this signs into theirs
          *     (`existing: true`), sets the password if one is given (their other
          *     sessions end, as after a password change) and links the Google account
-         *     if one is given; the names are then ignored. Otherwise a registered
-         *     student is made with these names. Either way it answers as a login.
+         *     if one is given; the names are then ignored (they are checked all the
+         *     same). Otherwise a registered student is made with these names. Either way it answers as a login.
          *     Nothing is spent when a request is turned down.
          */
         post: operations["signup"];

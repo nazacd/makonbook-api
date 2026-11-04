@@ -53,7 +53,11 @@ func (h *Handler) phoneRequest(w http.ResponseWriter, r *http.Request) (phoneReq
 		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, `purpose must be "signup" or "reset"`)
 		return req, false
 	}
-	if len(req.Phone) > 50 || len(req.Code) > 20 {
+	if len(req.Code) > 20 {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "code too long")
+		return req, false
+	}
+	if len(req.Phone) > 50 {
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidPhone, ErrInvalidPhone.Error())
 		return req, false
 	}
