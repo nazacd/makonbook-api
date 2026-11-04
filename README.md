@@ -63,6 +63,12 @@ All configuration comes from environment variables (see `.env.example`).
 | `SYNC_FULL_AT` | `03:00` | Local time of the nightly full sync |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALERT_CHAT_ID` | — | Optional, set both: sync alerts, parents' reports and the parent-code guessing alarm go to this chat instead of only the log |
 | `DEMO_PASSWORD` | — | Optional. Secret. The demo accounts for app store reviewers (`demo.student`, `demo.teacher`; see deploy/DEPLOY.md); without it there are none |
+| `SMS_PROVIDER` | — (off) | Sign-up and password reset by SMS code (spec 21): `eskiz`, or `log` (development: the code goes to the log) |
+| `ESKIZ_EMAIL`, `ESKIZ_PASSWORD` | — | With `SMS_PROVIDER=eskiz`: the Eskiz.uz account. The password is a secret |
+| `ESKIZ_FROM` | `4546` | Eskiz sender name |
+| `SMS_TEXT` | `SATMAKON: your code is {code}` | The SMS; must contain `{code}` and match a template Eskiz approved |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | — (off) | Google sign-in; set both. The secret is a secret |
+| `WEB_ORIGIN` | — | The web app's origin (`https://sat.makonbook.uz`), required with Google: the redirect URI is `${WEB_ORIGIN}/v1/auth/google/callback` |
 | `TEST_DATABASE_URL` | — | Tests only; database tests are skipped without it |
 
 ## Layout
@@ -73,8 +79,9 @@ api/openapi.yaml       API contract for the mobile app and admin panel
 db/migrations/         goose SQL migrations, embedded in the binary
 internal/
   app/                 wires features into one HTTP handler
-  platform/            shared plumbing: config, logging, postgres, migrate, httpx, alert, testdb
-  auth/                login, password rules, lockout, sessions, /v1/me
+  platform/            shared plumbing: config, logging, postgres, migrate, httpx, alert, sms, testdb
+  auth/                login, password rules, lockout, sessions, /v1/me; sign-up, SMS codes,
+                       password reset, Google sign-in, own names (spec 21)
   hollihop/            read-only HolliHop API client
   people/              mirror of HolliHop people and groups; login phones; data-quality issues
   sync/                sync runs: fetch → people.Apply in one transaction → cursor, guard, alerts
@@ -124,6 +131,18 @@ row lock the account for 15 minutes, doubling with each further lockout up to
 logout, on a password change (other devices), when the person stops being
 active in HolliHop, and after 30 days unused. Someone who leaves and returns
 starts again from the default password. Details: spec section 7.
+
+## Accounts in one paragraph
+
+Anyone can sign up on the web as a student: a 6-digit code by SMS (Eskiz.uz)
+proves an Uzbek phone, or Google proves who they are and then the phone. A
+phone that already signs someone in signs into that account instead. These
+"registered" students are rows of `students` with `source = 'self'` and ids
+from −1000001 down; the sync never touches them, except that a new HolliHop
+student with the same verified phone takes over the row (re-keyed to the
+ClientId, everything kept). Registered students see the practice tests DAY1–DAY10
+only. Everyone can set their own name, which the sync never overwrites.
+Details: spec section 21.
 
 ## Deploying
 

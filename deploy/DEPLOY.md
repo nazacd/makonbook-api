@@ -455,12 +455,72 @@ one alert to the Telegram chat with the networks they came from. If that alert
 comes, look at `docker compose logs api | grep parent/login`. A code can't be
 changed yet; ask for that if a code leaks.
 
+## Accounts: sign-up, SMS codes, Google (spec 21)
+
+The web app (sat.makonbook.uz) lets anyone sign up as a student, reset a
+password with a code sent by SMS, and sign in with Google. Each part is off
+until its settings are in `.env`; `/v1/app/config` tells the web which are on
+(`signup`, `google`). Phone + password login works as before either way.
+
+**SMS (Eskiz.uz).** Sign-up and password reset need it.
+
+1. Eskiz account (my.eskiz.uz): a company account with a balance. Ask Eskiz
+   for a **sender name** (alpha name, e.g. `SATMAKON`; until it is approved
+   the account sends as `4546`) and get the **message template** approved:
+   Eskiz sends only approved texts, so the exact text of `SMS_TEXT` (with the
+   code where `{code}` is) must be the approved one.
+2. In `.env`: `SMS_PROVIDER=eskiz`, `ESKIZ_EMAIL`, `ESKIZ_PASSWORD` (the
+   account's; a secret), `ESKIZ_FROM` (the approved sender name, or `4546`),
+   `SMS_TEXT` (default `SATMAKON: your code is {code}`). `docker compose up -d`.
+3. Try it: sign up on the web with your own number. A failed send shows in
+   `docker compose logs api | grep -i eskiz`; the person is told to try again.
+
+Limits: one code a minute and 5 a day per number, 20 an hour per network
+(behind the edge nginx, so `TRUST_PROXY=true` must stay). Each code costs an
+SMS; a reset for a number nobody signs in with sends nothing.
+
+**Google sign-in.**
+
+1. Google Cloud console, a project for SATMAKON → **Google Auth Platform**
+   (formerly APIs & Services → OAuth consent screen). **Branding:** app name
+   **SATMAKON**, support email, logo if wanted, home page
+   `https://sat.makonbook.uz`, privacy policy (and terms) links on that
+   domain, authorized domain `makonbook.uz`. **Audience:** External, then
+   *Publish app* (In production; while "Testing" only listed test users can
+   sign in). The scopes are only `openid`, `email` and `profile`, which are
+   non-sensitive: no scope verification; Google may still ask to verify the
+   brand before the consent screen shows the name and logo.
+2. **Clients → Create client → Web application**: authorized JavaScript
+   origin `https://sat.makonbook.uz`, **authorized redirect URI
+   `https://sat.makonbook.uz/v1/auth/google/callback`** (exactly). Copy the
+   client ID and secret.
+3. In `.env`: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (a secret),
+   `WEB_ORIGIN=https://sat.makonbook.uz`. `docker compose up -d`.
+
+The edge nginx block of sat.makonbook.uz (in makonbook-web's `deploy/`) sends
+`/v1/` to this API, so the callback is on the web's own origin. To turn Google
+off, empty the two `GOOGLE_*` settings.
+
+**Who signed up.** Self-registered students are rows of `students` with
+`source = 'self'` (ids −1000001 and down). When the office adds one of them in
+HolliHop with the same phone, the next sync makes their account the HolliHop
+student's (the run's stats list it under `linked`); nothing to do. If the
+office gives that phone to someone **already** in HolliHop, the HolliHop issues
+page shows *Phone number of a web account*: correct the number in HolliHop if
+it is wrong; if it really is the same person, the two accounts must be merged
+by hand (ask a developer).
+
+```bash
+docker exec db psql -U postgres -d makonbook_api -c \
+  "SELECT count(*) FILTER (WHERE source = 'self') AS registered FROM students;"
+```
+
 ## Everyday operations
 
 | Task | Command (in `/opt/makonbook-api`) |
 |---|---|
 | Logs | `docker compose logs -f api` / `worker` |
-| Someone forgot their password | `docker compose run --rm api reset-password student <client id>` |
+| Someone forgot their password | On the web: *Forgot your password?* (a code by SMS). Or back to the default: `docker compose run --rm api reset-password student <client id>` |
 | Who can use the admin panel | `docker compose run --rm api admin list` |
 | Sync now | `docker compose run --rm api sync incremental` |
 | Sync blocked by the mass-change guard, change is real | `docker compose run --rm api sync full --allow-mass-change` |
