@@ -347,6 +347,34 @@ section (College Board uses IRT; we can't reproduce it exactly).
   the student's history. **Teachers** see the attempts of their groups' students
   (`GET /v1/teacher/groups/{id}/practice`).
 
+### 9.6 Around the tests (built, for the web app)
+- **Question statistics** (`GET /v1/practice/tests/{code}/stats`, students and teachers): for each question of
+  a test's latest published version, in the package's order, `answered` (uploaded attempts that took its
+  section, in every test and version that has the question; a blank answer is answered and wrong) and
+  `correct` (graded right with the keys of the version the attempt used, as its scores). The demo account's
+  made-up attempts don't count. Counted in memory and again every 5 minutes at most (`practice.StatsTTL`);
+  an unknown or locked test is `404 test_not_found`.
+- **Ask later** (`parked_questions`): a question a student parks during a test to look at later. The device
+  makes the id; `PUT /v1/me/parked/{id}` creates or replaces it (idempotent; another student's id is `404`):
+  the test, version and place, and the question's id, which must be the one at that place in that published
+  version; a folder (trimmed, 1–40 characters, `Unsorted` when blank), why they were stuck (`didnt_understand`,
+  `didnt_know_start`, `lost_partway`, `ran_out_of_time` or none), a note (≤ 1000), "the fix in one line" once
+  they understand it (≤ 300), and `waiting` or `sorted`; a wrong value is `422 invalid_parked`.
+  `GET /v1/me/parked` lists them newest first, `DELETE /v1/me/parked/{id}` removes one. Teachers see their
+  group's current students' ones (`GET /v1/teacher/groups/{id}/parked`, the same check as its practice).
+- **Issue reports** (`practice_reports`): the test screen's "Report an issue" (`POST /v1/practice/reports`,
+  students): the device's id (a repeat answers `200` with it, a new one `201`; another student's id is
+  `409 report_id_taken`), the question by its place as above, `question` or `technical`, a reason
+  (`answer_key_wrong`, `typo`, `unclear`, `image_broken`, `formatting`, `other`) and/or a text (≤ 2000); a
+  wrong value is `422 invalid_report`. Any admin sees them (`GET /v1/admin/practice/reports?status=open|resolved`,
+  newest first, 200 at most, with the student and the test's title) and resolves or reopens one
+  (`PUT /v1/admin/practice/reports/{id} {status}`; resolving keeps who resolved it first); the panel has no page
+  for them yet. No Telegram message: there is no editors' chat (the review bot's group is the teachers' vote).
+- **Goals** (`student_goals`, one row per student), for the dashboard: a Math and a Reading and Writing target
+  (200–800, steps of 10) and the exam date, each optional. `GET /v1/me/goals` (all null until set, with
+  `target_total` when both targets are set); `PUT /v1/me/goals {target_math, target_rw, exam_date}` replaces
+  them; out of range, or an exam date before today (Tashkent) other than the one stored, is `422 invalid_goals`.
+
 ## 10. Placement test changes (mobile, small)
 
 Stays bundled, public, offline, unscored-on-server (D1, D9). Data model changes:
@@ -565,6 +593,13 @@ practice_test_versions(test_id FK, version, content_hash, package jsonb, bytes, 
 practice_published_images(file PK, content_type, bytes, width, height)
 practice_attempts(id uuid PK (the device's), student_client_id FK, (test_id, test_version) FK, sections text[],
                   started_at, finished_at, answers jsonb, scores jsonb, received_at)
+-- built: see 9.6
+parked_questions(id uuid PK (the device's), student_client_id FK, test, version, subject, module, position,
+                 question_id, folder, reason NULL, note, fix, status (waiting|sorted), created_at, updated_at)
+practice_reports(id uuid PK (the device's), student_client_id FK, test, version, subject, module, position,
+                 question_id, kind (question|technical), reason NULL, text, status (open|resolved), created_at,
+                 resolved_at, resolved_by)
+student_goals(student_client_id PK FK, target_math NULL, target_rw NULL, exam_date NULL, updated_at)
 -- built (phase 4): see 11
 vocab_lists(id uuid PK, slug UNIQUE, title, position, removed_at)
 vocab_words(id uuid PK, list_id FK, position, word, part_of_speech, definition, example, image, removed_at,
@@ -608,9 +643,15 @@ GET  /v1/me/attendance                 own attendance table (8.7)
 # practice (phase 3)
 GET  /v1/practice/tests                catalog: open (published version) or locked (progress)
 GET  /v1/practice/tests/{code}/package package of a version + signed image links (6 h)
+GET  /v1/practice/tests/{code}/stats   per question of the latest version: answered, correct (9.6)
 POST /v1/practice/attempts             idempotent by client UUID; graded on the server
 GET  /v1/me/practice/attempts          the student's attempts
 GET  /v1/teacher/groups/{id}/practice  a group's students and their attempts
+GET  /v1/me/parked                     the student's parked questions ("Ask later", 9.6)
+PUT|DELETE /v1/me/parked/{id}          park or change one (idempotent by client UUID); remove one
+GET  /v1/teacher/groups/{id}/parked    a group's students' parked questions
+POST /v1/practice/reports              "Report an issue" on a question; idempotent by client UUID
+GET|PUT /v1/me/goals                   the student's SAT targets and exam date (9.6)
 
 # vocabulary (phase 4)
 GET  /v1/vocab/deck?have=              every list and word (or "unchanged")
@@ -630,6 +671,7 @@ GET  /v1/admin/reports/corrections     teachers' corrections
 GET  /v1/admin/hollihop/writes         write-back status; POST …/{id}/retry
 GET  /v1/admin/data-quality            phone issues
 GET|PUT|DELETE /v1/admin/access…       access list (super admins); GET /v1/admin/staff?q=
+GET  /v1/admin/practice/reports?status=   students' issue reports (9.6); PUT …/{id} {status} resolves or reopens
 /v1/admin/...                          later: sync runs, people, reset, content
 ```
 

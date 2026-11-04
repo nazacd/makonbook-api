@@ -484,6 +484,45 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "503": { $ref: "#/components/responses/Error" }
 
+  /v1/practice/tests/{code}/stats:
+    get:
+      summary: How many students got each question right (students and teachers)
+      description: |
+        One entry per question of the test's latest published version, in the
+        package's order (ids as in the package). Counted over every uploaded
+        attempt that had the question, in any test or version (a question
+        several tests share counts in all of them): `answered` is the attempts
+        that took its section (a blank answer counts as answered and wrong),
+        `correct` those graded right, with the keys of the version the attempt
+        used (as its scores). Counted again every 5 minutes at most.
+      operationId: practiceQuestionStats
+      tags: [practice]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: code, in: path, required: true, schema: { type: string }, example: DAY12 }
+      responses:
+        "200":
+          description: The questions' counts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [questions]
+                properties:
+                  questions:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, answered, correct]
+                      properties:
+                        id: { type: string, format: uuid, description: The question's id in the package }
+                        answered: { type: integer }
+                        correct: { type: integer }
+        "401": { $ref: "#/components/responses/Error" }
+        "404":
+          description: "`test_not_found`: no such test, or not published (yet)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /v1/practice/attempts:
     post:
       summary: Upload a finished attempt (students)
@@ -530,6 +569,58 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "422":
           description: "`invalid_attempt`: no such test version, a section or question not in it, an answer given twice, times out of order"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/practice/reports:
+    post:
+      summary: Report an issue with a question (students)
+      description: |
+        From the test screen's "Report an issue": something wrong with the
+        question (`kind: question`) or a technical problem (`technical`). Sent
+        with the id the device made: sending it again answers 200 with the
+        same id, so a retry is safe. The question must be the one at that
+        place in that published version. A reason or a text (trimmed) is
+        needed. The admins see reports in the panel.
+      operationId: sendPracticeReport
+      tags: [practice]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/PracticeQuestionRef"
+                - type: object
+                  required: [id, kind]
+                  properties:
+                    id: { type: string, format: uuid }
+                    kind: { type: string, enum: [question, technical] }
+                    reason:
+                      type: [string, "null"]
+                      enum: [answer_key_wrong, typo, unclear, image_broken, formatting, other, null]
+                    text: { type: string, maxLength: 2000, default: "" }
+      responses:
+        "201":
+          description: Stored
+          content:
+            application/json:
+              schema: { type: object, required: [id], properties: { id: { type: string, format: uuid } } }
+        "200":
+          description: Stored before (a repeat)
+          content:
+            application/json:
+              schema: { type: object, required: [id], properties: { id: { type: string, format: uuid } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "409":
+          description: "`report_id_taken`: another student sent a report with this id"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_report`: a value is wrong (the message says which), neither a reason nor a text, or the question isn't at that place in that version"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
   /v1/me/practice/attempts:
@@ -589,6 +680,153 @@ paths:
                         first_name: { type: string }
                         last_name: { type: string }
                         attempts: { type: array, items: { $ref: "#/components/schemas/PracticeAttempt" } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a teacher, or not this group's"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/me/goals:
+    get:
+      summary: The student's SAT goals (all null until set)
+      operationId: myGoals
+      tags: [practice]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The goals
+          content: { application/json: { schema: { $ref: "#/components/schemas/Goals" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    put:
+      summary: Set the student's SAT goals
+      description: |
+        Replaces all three: each may be null (a missing field counts as
+        null). Targets are 200–800 in steps of 10. The exam date can't be
+        before today (Tashkent), except the date already stored, so a
+        student whose exam has passed can still change a target.
+      operationId: setGoals
+      tags: [practice]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target_math: { type: [integer, "null"], minimum: 200, maximum: 800, multipleOf: 10 }
+                target_rw: { type: [integer, "null"], minimum: 200, maximum: 800, multipleOf: 10 }
+                exam_date: { type: [string, "null"], format: date }
+      responses:
+        "200":
+          description: The stored goals
+          content: { application/json: { schema: { $ref: "#/components/schemas/Goals" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_goals`: a target out of range or not a multiple of 10, or an exam date that isn't a date or is in the past"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/me/parked:
+    get:
+      summary: The student's parked questions ("Ask later"), newest first
+      operationId: myParkedQuestions
+      tags: [practice]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: Every parked question of the student
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/ParkedQuestion" } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/me/parked/{id}:
+    parameters:
+      - { name: id, in: path, required: true, description: The id the device made, schema: { type: string, format: uuid } }
+    put:
+      summary: Park a question, or change a parked one (students)
+      description: |
+        Creates the parked question or replaces its fields (idempotent by
+        id, so a retry is safe). The question must be the one at that place
+        in that published version. Texts are trimmed; a missing or blank
+        `folder` is `Unsorted`, a missing `status` is `waiting`.
+      operationId: saveParkedQuestion
+      tags: [practice]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ParkedQuestionInput" }
+      responses:
+        "200":
+          description: The stored parked question
+          content: { application/json: { schema: { $ref: "#/components/schemas/ParkedQuestion" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "404":
+          description: "`not_found`: the id is another student's"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_parked`: a value is wrong (the message says which), or the question isn't at that place in that version"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    delete:
+      summary: Remove a parked question (students)
+      operationId: deleteParkedQuestion
+      tags: [practice]
+      security: [{ bearer: [] }]
+      responses:
+        "204": { description: Removed }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "404":
+          description: "`not_found`: the student has no parked question with this id (also when it was already removed)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/teacher/groups/{id}/parked:
+    get:
+      summary: The parked questions of a group's students (its teachers)
+      operationId: groupParkedQuestions
+      tags: [practice]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: The parked questions of the students enrolled now, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: "#/components/schemas/ParkedQuestion"
+                        - type: object
+                          required: [student]
+                          properties:
+                            student: { $ref: "#/components/schemas/PracticeStudent" }
         "401": { $ref: "#/components/responses/Error" }
         "403":
           description: "`forbidden`: not a teacher, or not this group's"
@@ -1587,6 +1825,59 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "413": { $ref: "#/components/responses/Error" }
 
+  /v1/admin/practice/reports:
+    get:
+      summary: Students' issue reports on questions (any admin)
+      operationId: adminPracticeReports
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, resolved], default: open } }
+      responses:
+        "200":
+          description: Newest first, at most 200
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reports]
+                properties:
+                  reports: { type: array, items: { $ref: "#/components/schemas/AdminPracticeReport" } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/practice/reports/{id}:
+    put:
+      summary: Resolve a report, or open it again (any admin)
+      description: Resolving keeps who resolved it first and when; opening again clears both.
+      operationId: adminSetPracticeReport
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: "#/components/parameters/AdminCSRF"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [open, resolved] }
+      responses:
+        "200":
+          description: The report
+          content: { application/json: { schema: { $ref: "#/components/schemas/AdminPracticeReport" } } }
+        "400":
+          description: "`bad_request`: status isn't open or resolved"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404":
+          description: "`not_found`: no such report"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /v1/admin/practice/figures:
     get:
       summary: A question image, from the bank's R2 bucket or an upload (editors)
@@ -1995,6 +2286,85 @@ components:
               score: { type: integer, description: "Estimated, 200–800" }
         total: { type: [integer, "null"], description: "Both sections' sum (400–1600) when both were taken" }
 
+    PracticeQuestionRef:
+      type: object
+      description: A question at its place in a published version, as in the package.
+      required: [test, version, subject, module, position, question_id]
+      properties:
+        test: { type: string, description: The test's code, example: DAY12 }
+        version: { type: integer, minimum: 1 }
+        subject: { type: string, enum: [english, math] }
+        module: { type: integer, enum: [1, 2] }
+        position: { type: integer, minimum: 1 }
+        question_id: { type: string, format: uuid, description: The question's id in the package }
+
+    ParkedQuestionInput:
+      allOf:
+        - $ref: "#/components/schemas/PracticeQuestionRef"
+        - type: object
+          properties:
+            folder: { type: [string, "null"], maxLength: 40, description: "Trimmed; null or blank: `Unsorted`" }
+            reason:
+              type: [string, "null"]
+              enum: [didnt_understand, didnt_know_start, lost_partway, ran_out_of_time, null]
+            note: { type: string, maxLength: 1000, default: "" }
+            fix: { type: string, maxLength: 300, default: "", description: "The fix in one line, once the student understands it" }
+            status: { type: string, enum: [waiting, sorted], default: waiting }
+
+    ParkedQuestion:
+      allOf:
+        - $ref: "#/components/schemas/PracticeQuestionRef"
+        - type: object
+          required: [id, folder, reason, note, fix, status, created_at, updated_at]
+          properties:
+            id: { type: string, format: uuid }
+            folder: { type: string, minLength: 1, maxLength: 40 }
+            reason:
+              type: [string, "null"]
+              enum: [didnt_understand, didnt_know_start, lost_partway, ran_out_of_time, null]
+            note: { type: string }
+            fix: { type: string }
+            status: { type: string, enum: [waiting, sorted] }
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+
+    Goals:
+      type: object
+      required: [target_math, target_rw, target_total, exam_date, updated_at]
+      properties:
+        target_math: { type: [integer, "null"], description: "Math target, 200–800" }
+        target_rw: { type: [integer, "null"], description: "Reading and Writing target, 200–800" }
+        target_total: { type: [integer, "null"], description: "The two targets' sum, when both are set" }
+        exam_date: { type: [string, "null"], format: date }
+        updated_at: { type: [string, "null"], format: date-time, description: Null when never set }
+
+    AdminPracticeReport:
+      allOf:
+        - $ref: "#/components/schemas/PracticeQuestionRef"
+        - type: object
+          required: [id, test_title, kind, reason, text, status, created_at, resolved_at, resolved_by, student]
+          properties:
+            id: { type: string, format: uuid }
+            test_title: { type: string, description: Empty if the test is gone }
+            kind: { type: string, enum: [question, technical] }
+            reason:
+              type: [string, "null"]
+              enum: [answer_key_wrong, typo, unclear, image_broken, formatting, other, null]
+            text: { type: string }
+            status: { type: string, enum: [open, resolved] }
+            created_at: { type: string, format: date-time }
+            resolved_at: { type: [string, "null"], format: date-time }
+            resolved_by: { type: [string, "null"], description: The admin's name }
+            student: { $ref: "#/components/schemas/PracticeStudent" }
+
+    PracticeStudent:
+      type: object
+      required: [id, first_name, last_name]
+      properties:
+        id: { type: integer, description: The student's HolliHop client id }
+        first_name: { type: string }
+        last_name: { type: string }
+
     PracticePlace:
       type: object
       required: [test, subject, module, position]
@@ -2372,6 +2742,15 @@ components:
                 - fired
                 - version_conflict
                 - invalid_question
+                - invalid_attempt
+                - attempt_id_taken
+                - invalid_reviews
+                - invalid_parent_code
+                - invalid_report
+                - test_not_found
+                - invalid_parked
+                - report_id_taken
+                - invalid_goals
             message:
               type: string
               description: Human-readable explanation; may change.

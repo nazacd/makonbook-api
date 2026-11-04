@@ -127,6 +127,87 @@ func TestHandler(t *testing.T) {
 	if status, body := do("GET", "/v1/me/practice/attempts", student, nil); status != http.StatusOK || len(body["attempts"].([]any)) != 1 {
 		t.Errorf("my attempts: %d %v", status, body)
 	}
+	status, body = do("GET", "/v1/practice/tests/DAY1/stats", teacher, nil)
+	if qs, _ := body["questions"].([]any); status != http.StatusOK || len(qs) != 98 ||
+		qs[54].(map[string]any)["answered"] != 1.0 || qs[54].(map[string]any)["correct"] != 1.0 {
+		t.Errorf("stats: %d %v", status, body)
+	}
+	if status, body := do("GET", "/v1/practice/tests/DAY2/stats", student, nil); status != http.StatusNotFound || body["error"].(map[string]any)["code"] != CodeTestNotFound {
+		t.Errorf("stats of an unknown test: %d %v", status, body)
+	}
+	if status, _ := do("GET", "/v1/practice/tests/DAY1/stats", "", nil); status != http.StatusUnauthorized {
+		t.Errorf("stats signed out: %d", status)
+	}
+
+	// Ask later.
+	pkg, _ := svc.LatestPackage(ctx, "DAY1")
+	parked := map[string]any{"test": "DAY1", "version": 1, "subject": "math", "module": 1, "position": 1,
+		"question_id": pkg.Sections[1].Modules[0].Questions[0].ID, "folder": "Algebra", "reason": "didnt_understand", "note": "", "fix": "", "status": "waiting"}
+	const parkedPath = "/v1/me/parked/5c4d3e2f-1a0b-4c9d-8e7f-6a5b4c3d2e1f"
+	if status, _ := do("PUT", parkedPath, teacher, parked); status != http.StatusForbidden {
+		t.Errorf("a teacher parks: %d", status)
+	}
+	if status, body := do("PUT", parkedPath, student, parked); status != http.StatusOK || body["folder"] != "Algebra" || body["question_id"] != parked["question_id"] {
+		t.Errorf("park: %d %v", status, body)
+	}
+	parked["reason"] = "bored"
+	if status, body := do("PUT", parkedPath, student, parked); status != http.StatusUnprocessableEntity || body["error"].(map[string]any)["code"] != CodeInvalidParked {
+		t.Errorf("a wrong reason: %d %v", status, body)
+	}
+	if status, body := do("GET", "/v1/me/parked", student, nil); status != http.StatusOK || len(body["items"].([]any)) != 1 {
+		t.Errorf("my parked: %d %v", status, body)
+	}
+	status, body = do("GET", "/v1/teacher/groups/100/parked", teacher, nil)
+	if items, _ := body["items"].([]any); status != http.StatusOK || len(items) != 1 || items[0].(map[string]any)["student"].(map[string]any)["id"] != 1.0 {
+		t.Errorf("group parked: %d %v", status, body)
+	}
+	for path, token := range map[string]string{"/v1/teacher/groups/100/parked": student, "/v1/teacher/groups/999/parked": teacher} {
+		if status, _ := do("GET", path, token, nil); status != http.StatusForbidden {
+			t.Errorf("%s: %d", path, status)
+		}
+	}
+	if status, _ := do("DELETE", parkedPath, student, nil); status != http.StatusNoContent {
+		t.Errorf("delete parked: %d", status)
+	}
+	if status, _ := do("DELETE", parkedPath, student, nil); status != http.StatusNotFound {
+		t.Errorf("delete parked again: %d", status)
+	}
+
+	// Report an issue.
+	report := map[string]any{"id": "6b5a4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c2d", "test": "DAY1", "version": 1, "subject": "math", "module": 1,
+		"position": 1, "question_id": parked["question_id"], "kind": "question", "reason": "typo", "text": "A typo in choice C."}
+	if status, _ := do("POST", "/v1/practice/reports", teacher, report); status != http.StatusForbidden {
+		t.Errorf("a teacher reports: %d", status)
+	}
+	for _, want := range []int{http.StatusCreated, http.StatusOK} {
+		if status, body := do("POST", "/v1/practice/reports", student, report); status != want || body["id"] != report["id"] {
+			t.Errorf("report: %d %v, want %d", status, body, want)
+		}
+	}
+	report["id"], report["kind"] = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f", "bug"
+	if status, body := do("POST", "/v1/practice/reports", student, report); status != http.StatusUnprocessableEntity || body["error"].(map[string]any)["code"] != CodeInvalidReport {
+		t.Errorf("a wrong kind: %d %v", status, body)
+	}
+
+	// Goals.
+	if status, body := do("GET", "/v1/me/goals", student, nil); status != http.StatusOK || len(body) != 5 || body["target_total"] != nil || body["updated_at"] != nil {
+		t.Errorf("goals never set: %d %v", status, body)
+	}
+	exam := now.AddDate(0, 1, 0).Format("2006-01-02")
+	goals := map[string]any{"target_math": 700, "target_rw": 650, "exam_date": exam}
+	if status, _ := do("PUT", "/v1/me/goals", teacher, goals); status != http.StatusForbidden {
+		t.Errorf("a teacher's goals: %d", status)
+	}
+	if status, body := do("PUT", "/v1/me/goals", student, goals); status != http.StatusOK || body["target_total"] != 1350.0 || body["exam_date"] != exam {
+		t.Errorf("set goals: %d %v", status, body)
+	}
+	goals["exam_date"] = now.AddDate(0, 0, -1).Format("2006-01-02")
+	if status, body := do("PUT", "/v1/me/goals", student, goals); status != http.StatusUnprocessableEntity || body["error"].(map[string]any)["code"] != CodeInvalidGoals {
+		t.Errorf("an exam in the past: %d %v", status, body)
+	}
+	if status, body := do("GET", "/v1/me/goals", student, nil); status != http.StatusOK || body["target_math"] != 700.0 || body["exam_date"] != exam {
+		t.Errorf("goals: %d %v", status, body)
+	}
 	status, body = do("GET", "/v1/teacher/groups/100/practice", teacher, nil)
 	if students, _ := body["students"].([]any); status != http.StatusOK || len(students) != 1 ||
 		len(students[0].(map[string]any)["attempts"].([]any)) != 1 {

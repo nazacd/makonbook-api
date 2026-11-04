@@ -11,6 +11,132 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const adminReport = `-- name: AdminReport :one
+SELECT r.id, r.student_client_id, r.test, r.version, r.subject, r.module, r.position, r.question_id, r.kind, r.reason, r.text, r.status, r.created_at, r.resolved_at, r.resolved_by, s.first_name, s.last_name, coalesce(t.title, '')::text AS test_title
+FROM practice_reports r
+JOIN students s ON s.client_id = r.student_client_id
+LEFT JOIN practice_tests t ON t.code = r.test
+WHERE r.id = $1
+`
+
+type AdminReportRow struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Test            string
+	Version         int32
+	Subject         string
+	Module          int16
+	Position        int16
+	QuestionID      pgtype.UUID
+	Kind            string
+	Reason          pgtype.Text
+	Text            string
+	Status          string
+	CreatedAt       pgtype.Timestamptz
+	ResolvedAt      pgtype.Timestamptz
+	ResolvedBy      pgtype.Text
+	FirstName       string
+	LastName        string
+	TestTitle       string
+}
+
+func (q *Queries) AdminReport(ctx context.Context, id pgtype.UUID) (AdminReportRow, error) {
+	row := q.db.QueryRow(ctx, adminReport, id)
+	var i AdminReportRow
+	err := row.Scan(
+		&i.ID,
+		&i.StudentClientID,
+		&i.Test,
+		&i.Version,
+		&i.Subject,
+		&i.Module,
+		&i.Position,
+		&i.QuestionID,
+		&i.Kind,
+		&i.Reason,
+		&i.Text,
+		&i.Status,
+		&i.CreatedAt,
+		&i.ResolvedAt,
+		&i.ResolvedBy,
+		&i.FirstName,
+		&i.LastName,
+		&i.TestTitle,
+	)
+	return i, err
+}
+
+const adminReports = `-- name: AdminReports :many
+SELECT r.id, r.student_client_id, r.test, r.version, r.subject, r.module, r.position, r.question_id, r.kind, r.reason, r.text, r.status, r.created_at, r.resolved_at, r.resolved_by, s.first_name, s.last_name, coalesce(t.title, '')::text AS test_title
+FROM practice_reports r
+JOIN students s ON s.client_id = r.student_client_id
+LEFT JOIN practice_tests t ON t.code = r.test
+WHERE r.status = $1
+ORDER BY r.created_at DESC, r.id
+LIMIT 200
+`
+
+type AdminReportsRow struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Test            string
+	Version         int32
+	Subject         string
+	Module          int16
+	Position        int16
+	QuestionID      pgtype.UUID
+	Kind            string
+	Reason          pgtype.Text
+	Text            string
+	Status          string
+	CreatedAt       pgtype.Timestamptz
+	ResolvedAt      pgtype.Timestamptz
+	ResolvedBy      pgtype.Text
+	FirstName       string
+	LastName        string
+	TestTitle       string
+}
+
+// Reports for the admin panel, newest first.
+func (q *Queries) AdminReports(ctx context.Context, status string) ([]AdminReportsRow, error) {
+	rows, err := q.db.Query(ctx, adminReports, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminReportsRow
+	for rows.Next() {
+		var i AdminReportsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.StudentClientID,
+			&i.Test,
+			&i.Version,
+			&i.Subject,
+			&i.Module,
+			&i.Position,
+			&i.QuestionID,
+			&i.Kind,
+			&i.Reason,
+			&i.Text,
+			&i.Status,
+			&i.CreatedAt,
+			&i.ResolvedAt,
+			&i.ResolvedBy,
+			&i.FirstName,
+			&i.LastName,
+			&i.TestTitle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const applyAIFix = `-- name: ApplyAIFix :one
 UPDATE questions
 SET passage = $1, stem = $2, choices = $3,
@@ -215,6 +341,23 @@ func (q *Queries) DeleteOrphanQuestions(ctx context.Context) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const deleteParked = `-- name: DeleteParked :execrows
+DELETE FROM parked_questions WHERE id = $1 AND student_client_id = $2
+`
+
+type DeleteParkedParams struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+}
+
+func (q *Queries) DeleteParked(ctx context.Context, arg DeleteParkedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteParked, arg.ID, arg.StudentClientID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteTest = `-- name: DeleteTest :exec
 DELETE FROM practice_tests WHERE id = $1
 `
@@ -332,6 +475,25 @@ func (q *Queries) GetTestByCode(ctx context.Context, code string) (PracticeTest,
 		&i.Code,
 		&i.Title,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const goals = `-- name: Goals :one
+
+SELECT student_client_id, target_math, target_rw, exam_date, updated_at FROM student_goals WHERE student_client_id = $1
+`
+
+// Goals (spec 9.6) -------------------------------------------------------------
+func (q *Queries) Goals(ctx context.Context, studentClientID int32) (StudentGoal, error) {
+	row := q.db.QueryRow(ctx, goals, studentClientID)
+	var i StudentGoal
+	err := row.Scan(
+		&i.StudentClientID,
+		&i.TargetMath,
+		&i.TargetRw,
+		&i.ExamDate,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -547,6 +709,50 @@ func (q *Queries) InsertQuestion(ctx context.Context, arg InsertQuestionParams) 
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const insertReport = `-- name: InsertReport :execrows
+
+INSERT INTO practice_reports (id, student_client_id, test, version, subject, module, position, question_id,
+                              kind, reason, text)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10, $11)
+ON CONFLICT (id) DO NOTHING
+`
+
+type InsertReportParams struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Test            string
+	Version         int32
+	Subject         string
+	Module          int16
+	Position        int16
+	QuestionID      pgtype.UUID
+	Kind            string
+	Reason          pgtype.Text
+	Text            string
+}
+
+// Issue reports (spec 9.6) -----------------------------------------------------
+func (q *Queries) InsertReport(ctx context.Context, arg InsertReportParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertReport,
+		arg.ID,
+		arg.StudentClientID,
+		arg.Test,
+		arg.Version,
+		arg.Subject,
+		arg.Module,
+		arg.Position,
+		arg.QuestionID,
+		arg.Kind,
+		arg.Reason,
+		arg.Text,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertTestVersion = `-- name: InsertTestVersion :exec
@@ -780,6 +986,49 @@ func (q *Queries) OwnAttempts(ctx context.Context, clientID int32) ([]OwnAttempt
 			&i.FinishedAt,
 			&i.Scores,
 			&i.Answers,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const parkedOf = `-- name: ParkedOf :many
+SELECT id, student_client_id, test, version, subject, module, position, question_id, folder, reason, note, fix, status, created_at, updated_at FROM parked_questions
+WHERE student_client_id = ANY ($1::int[])
+ORDER BY created_at DESC, id
+`
+
+// Students' parked questions, newest first.
+func (q *Queries) ParkedOf(ctx context.Context, clientIds []int32) ([]ParkedQuestion, error) {
+	rows, err := q.db.Query(ctx, parkedOf, clientIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ParkedQuestion
+	for rows.Next() {
+		var i ParkedQuestion
+		if err := rows.Scan(
+			&i.ID,
+			&i.StudentClientID,
+			&i.Test,
+			&i.Version,
+			&i.Subject,
+			&i.Module,
+			&i.Position,
+			&i.QuestionID,
+			&i.Folder,
+			&i.Reason,
+			&i.Note,
+			&i.Fix,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1066,6 +1315,189 @@ func (q *Queries) RefreshAIReview(ctx context.Context, arg RefreshAIReviewParams
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const reportOwner = `-- name: ReportOwner :one
+SELECT student_client_id FROM practice_reports WHERE id = $1
+`
+
+func (q *Queries) ReportOwner(ctx context.Context, id pgtype.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, reportOwner, id)
+	var student_client_id int32
+	err := row.Scan(&student_client_id)
+	return student_client_id, err
+}
+
+const setGoals = `-- name: SetGoals :one
+INSERT INTO student_goals (student_client_id, target_math, target_rw, exam_date)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (student_client_id) DO UPDATE
+SET target_math = EXCLUDED.target_math, target_rw = EXCLUDED.target_rw, exam_date = EXCLUDED.exam_date,
+    updated_at = now()
+RETURNING student_client_id, target_math, target_rw, exam_date, updated_at
+`
+
+type SetGoalsParams struct {
+	StudentClientID int32
+	TargetMath      pgtype.Int2
+	TargetRw        pgtype.Int2
+	ExamDate        pgtype.Date
+}
+
+func (q *Queries) SetGoals(ctx context.Context, arg SetGoalsParams) (StudentGoal, error) {
+	row := q.db.QueryRow(ctx, setGoals,
+		arg.StudentClientID,
+		arg.TargetMath,
+		arg.TargetRw,
+		arg.ExamDate,
+	)
+	var i StudentGoal
+	err := row.Scan(
+		&i.StudentClientID,
+		&i.TargetMath,
+		&i.TargetRw,
+		&i.ExamDate,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setReportStatus = `-- name: SetReportStatus :execrows
+UPDATE practice_reports
+SET status = $1::text,
+    resolved_at = CASE WHEN $1::text = 'resolved' THEN coalesce(resolved_at, now()) END,
+    resolved_by = CASE WHEN $1::text = 'resolved' THEN coalesce(resolved_by, $2::text) END
+WHERE id = $3
+`
+
+type SetReportStatusParams struct {
+	Status     string
+	ResolvedBy string
+	ID         pgtype.UUID
+}
+
+// Resolving keeps who resolved it first; reopening clears it.
+func (q *Queries) SetReportStatus(ctx context.Context, arg SetReportStatusParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setReportStatus, arg.Status, arg.ResolvedBy, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const statsAnswers = `-- name: StatsAnswers :many
+SELECT a.test_id, a.test_version, (x.value->>'subject')::text AS subject,
+       (x.value->>'module')::smallint AS module, (x.value->>'position')::smallint AS position,
+       (x.value->>'answer')::text AS answer, count(*)::int AS answers
+FROM practice_attempts a
+CROSS JOIN LATERAL jsonb_array_elements(a.answers) AS x(value)
+WHERE a.student_client_id > 0 AND x.value->>'answer' IS NOT NULL
+GROUP BY a.test_id, a.test_version, x.value->>'subject', x.value->>'module', x.value->>'position', x.value->>'answer'
+`
+
+type StatsAnswersRow struct {
+	TestID      pgtype.UUID
+	TestVersion int32
+	Subject     string
+	Module      int16
+	Position    int16
+	Answer      string
+	Answers     int32
+}
+
+// The answers in those attempts, counted per place and answer (blank ones
+// are left out: they are wrong).
+func (q *Queries) StatsAnswers(ctx context.Context) ([]StatsAnswersRow, error) {
+	rows, err := q.db.Query(ctx, statsAnswers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []StatsAnswersRow
+	for rows.Next() {
+		var i StatsAnswersRow
+		if err := rows.Scan(
+			&i.TestID,
+			&i.TestVersion,
+			&i.Subject,
+			&i.Module,
+			&i.Position,
+			&i.Answer,
+			&i.Answers,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const statsSlots = `-- name: StatsSlots :many
+
+WITH taken AS (
+    SELECT a.test_id, a.test_version, s.subject::text AS subject, count(*)::int AS attempts
+    FROM practice_attempts a
+    CROSS JOIN LATERAL unnest(a.sections) AS s(subject)
+    WHERE a.student_client_id > 0
+    GROUP BY a.test_id, a.test_version, s.subject
+)
+SELECT t.test_id, t.test_version, t.subject,
+       (m.value->>'module')::smallint AS module, (q.value->>'position')::smallint AS position,
+       jsonb_build_object('id', q.value->'id', 'type', q.value->'type', 'correct', q.value->'correct',
+                          'accepted', q.value->'accepted')::jsonb AS question,
+       t.attempts
+FROM taken t
+JOIN practice_test_versions v ON v.test_id = t.test_id AND v.version = t.test_version
+CROSS JOIN LATERAL jsonb_array_elements(v.package->'sections') AS sec(value)
+CROSS JOIN LATERAL jsonb_array_elements(sec.value->'modules') AS m(value)
+CROSS JOIN LATERAL jsonb_array_elements(m.value->'questions') AS q(value)
+WHERE sec.value->>'subject' = t.subject
+`
+
+type StatsSlotsRow struct {
+	TestID      pgtype.UUID
+	TestVersion int32
+	Subject     string
+	Module      int16
+	Position    int16
+	Question    []byte
+	Attempts    int32
+}
+
+// Question statistics (spec 9.6) ----------------------------------------------
+// Not the demo account's attempts (negative ids, internal/demo): its
+// results are made up.
+// Each question place of each version students took, with how many attempts
+// took its section and the question's key (to grade the answers below).
+func (q *Queries) StatsSlots(ctx context.Context) ([]StatsSlotsRow, error) {
+	rows, err := q.db.Query(ctx, statsSlots)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []StatsSlotsRow
+	for rows.Next() {
+		var i StatsSlotsRow
+		if err := rows.Scan(
+			&i.TestID,
+			&i.TestVersion,
+			&i.Subject,
+			&i.Module,
+			&i.Position,
+			&i.Question,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const studentAttempts = `-- name: StudentAttempts :many
@@ -1421,4 +1853,110 @@ func (q *Queries) UpdateQuestion(ctx context.Context, arg UpdateQuestionParams) 
 	var version int32
 	err := row.Scan(&version)
 	return version, err
+}
+
+const upsertParked = `-- name: UpsertParked :one
+INSERT INTO parked_questions (id, student_client_id, test, version, subject, module, position, question_id,
+                              folder, reason, note, fix, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10, $11, $12, $13)
+ON CONFLICT (id) DO UPDATE
+SET test = EXCLUDED.test, version = EXCLUDED.version, subject = EXCLUDED.subject, module = EXCLUDED.module,
+    position = EXCLUDED.position, question_id = EXCLUDED.question_id, folder = EXCLUDED.folder,
+    reason = EXCLUDED.reason, note = EXCLUDED.note, fix = EXCLUDED.fix, status = EXCLUDED.status,
+    updated_at = now()
+WHERE parked_questions.student_client_id = EXCLUDED.student_client_id
+RETURNING id, student_client_id, test, version, subject, module, position, question_id, folder, reason, note, fix, status, created_at, updated_at
+`
+
+type UpsertParkedParams struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Test            string
+	Version         int32
+	Subject         string
+	Module          int16
+	Position        int16
+	QuestionID      pgtype.UUID
+	Folder          string
+	Reason          pgtype.Text
+	Note            string
+	Fix             string
+	Status          string
+}
+
+// A student's parked question, new or changed; nothing comes back when the id
+// is another student's.
+func (q *Queries) UpsertParked(ctx context.Context, arg UpsertParkedParams) (ParkedQuestion, error) {
+	row := q.db.QueryRow(ctx, upsertParked,
+		arg.ID,
+		arg.StudentClientID,
+		arg.Test,
+		arg.Version,
+		arg.Subject,
+		arg.Module,
+		arg.Position,
+		arg.QuestionID,
+		arg.Folder,
+		arg.Reason,
+		arg.Note,
+		arg.Fix,
+		arg.Status,
+	)
+	var i ParkedQuestion
+	err := row.Scan(
+		&i.ID,
+		&i.StudentClientID,
+		&i.Test,
+		&i.Version,
+		&i.Subject,
+		&i.Module,
+		&i.Position,
+		&i.QuestionID,
+		&i.Folder,
+		&i.Reason,
+		&i.Note,
+		&i.Fix,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const versionSlot = `-- name: VersionSlot :one
+
+SELECT (q.value->>'id')::text AS question_id
+FROM practice_tests t
+JOIN practice_test_versions v ON v.test_id = t.id
+CROSS JOIN LATERAL jsonb_array_elements(v.package->'sections') AS sec(value)
+CROSS JOIN LATERAL jsonb_array_elements(sec.value->'modules') AS m(value)
+CROSS JOIN LATERAL jsonb_array_elements(m.value->'questions') AS q(value)
+WHERE t.code = $1 AND v.version = $2::int AND sec.value->>'subject' = $3::text
+  AND (m.value->>'module')::int = $4::int AND (q.value->>'position')::int = $5::int
+LIMIT 1
+`
+
+type VersionSlotParams struct {
+	Code     string
+	Version  int32
+	Subject  string
+	Module   int32
+	Position int32
+}
+
+// "Ask later" (spec 9.6) -------------------------------------------------------
+// The question at a place in a published version: what a device says about a
+// question must match its package.
+func (q *Queries) VersionSlot(ctx context.Context, arg VersionSlotParams) (string, error) {
+	row := q.db.QueryRow(ctx, versionSlot,
+		arg.Code,
+		arg.Version,
+		arg.Subject,
+		arg.Module,
+		arg.Position,
+	)
+	var question_id string
+	err := row.Scan(&question_id)
+	return question_id, err
 }

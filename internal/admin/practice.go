@@ -31,6 +31,48 @@ func (h *Handler) registerPractice(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/admin/practice/taxonomy", h.RequireEditor(h.practiceTaxonomy))
 	mux.HandleFunc("GET /v1/admin/practice/figures", h.RequireEditor(h.practiceFigure))
 	mux.HandleFunc("POST /v1/admin/practice/images", h.RequireEditor(h.practiceUpload))
+	mux.HandleFunc("GET /v1/admin/practice/reports", h.Require(h.practiceReports))
+	mux.HandleFunc("PUT /v1/admin/practice/reports/{id}", h.Require(h.practiceReportStatus))
+}
+
+// practiceReports lists students' issue reports (spec 9.6); any admin.
+func (h *Handler) practiceReports(w http.ResponseWriter, r *http.Request) {
+	status := r.URL.Query().Get("status")
+	if status == "" {
+		status = "open"
+	}
+	if status != "open" && status != "resolved" {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "status must be open or resolved")
+		return
+	}
+	reports, err := h.panel.Practice.Reports(r.Context(), status)
+	if err != nil {
+		h.internal(w, r, "practice reports", err)
+		return
+	}
+	httpx.WriteJSON(w, r, http.StatusOK, map[string]any{"reports": reports})
+}
+
+func (h *Handler) practiceReportStatus(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Status string `json:"status"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	p, _ := PrincipalFrom(r.Context())
+	report, err := h.panel.Practice.SetReportStatus(r.Context(), r.PathValue("id"), req.Status, p.Name)
+	var bad *practice.ReportError
+	switch {
+	case errors.As(err, &bad):
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, bad.Reason)
+	case errors.Is(err, practice.ErrNotFound):
+		httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, "no such report")
+	case err != nil:
+		h.internal(w, r, "practice report status", err)
+	default:
+		httpx.WriteJSON(w, r, http.StatusOK, report)
+	}
 }
 
 // practiceUpload stores an image an editor uploads (multipart field "file").

@@ -235,6 +235,24 @@ type ParentSession struct {
 	RevokedAt       pgtype.Timestamptz
 }
 
+type ParkedQuestion struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Test            string
+	Version         int32
+	Subject         string
+	Module          int16
+	Position        int16
+	QuestionID      pgtype.UUID
+	Folder          string
+	Reason          pgtype.Text
+	Note            string
+	Fix             string
+	Status          string
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type PracticeAttempt struct {
 	ID              pgtype.UUID
 	StudentClientID int32
@@ -265,6 +283,24 @@ type PracticePublishedImage struct {
 	Width       int32
 	Height      int32
 	CreatedAt   pgtype.Timestamptz
+}
+
+type PracticeReport struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Test            string
+	Version         int32
+	Subject         string
+	Module          int16
+	Position        int16
+	QuestionID      pgtype.UUID
+	Kind            string
+	Reason          pgtype.Text
+	Text            string
+	Status          string
+	CreatedAt       pgtype.Timestamptz
+	ResolvedAt      pgtype.Timestamptz
+	ResolvedBy      pgtype.Text
 }
 
 type PracticeTest struct {
@@ -375,6 +411,14 @@ type Student struct {
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
 	ActivatedAt   pgtype.Timestamptz
+}
+
+type StudentGoal struct {
+	StudentClientID int32
+	TargetMath      pgtype.Int2
+	TargetRw        pgtype.Int2
+	ExamDate        pgtype.Date
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type SyncCursor struct {

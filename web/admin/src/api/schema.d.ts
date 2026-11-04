@@ -358,6 +358,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/practice/tests/{code}/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How many students got each question right (students and teachers)
+         * @description One entry per question of the test's latest published version, in the
+         *     package's order (ids as in the package). Counted over every uploaded
+         *     attempt that had the question, in any test or version (a question
+         *     several tests share counts in all of them): `answered` is the attempts
+         *     that took its section (a blank answer counts as answered and wrong),
+         *     `correct` those graded right, with the keys of the version the attempt
+         *     used (as its scores). Counted again every 5 minutes at most.
+         */
+        get: operations["practiceQuestionStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/practice/attempts": {
         parameters: {
             query?: never;
@@ -375,6 +401,31 @@ export interface paths {
          *     keys; its scores are the ones teachers see.
          */
         post: operations["savePracticeAttempt"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/practice/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report an issue with a question (students)
+         * @description From the test screen's "Report an issue": something wrong with the
+         *     question (`kind: question`) or a technical problem (`technical`). Sent
+         *     with the id the device made: sending it again answers 200 with the
+         *     same id, so a retry is safe. The question must be the one at that
+         *     place in that published version. A reason or a text (trimmed) is
+         *     needed. The admins see reports in the panel.
+         */
+        post: operations["sendPracticeReport"];
         delete?: never;
         options?: never;
         head?: never;
@@ -411,6 +462,91 @@ export interface paths {
         };
         /** A group's students and their practice attempts (its teachers) */
         get: operations["groupPractice"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/goals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The student's SAT goals (all null until set) */
+        get: operations["myGoals"];
+        /**
+         * Set the student's SAT goals
+         * @description Replaces all three: each may be null (a missing field counts as
+         *     null). Targets are 200–800 in steps of 10. The exam date can't be
+         *     before today (Tashkent), except the date already stored, so a
+         *     student whose exam has passed can still change a target.
+         */
+        put: operations["setGoals"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/parked": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The student's parked questions ("Ask later"), newest first */
+        get: operations["myParkedQuestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/parked/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id the device made */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Park a question, or change a parked one (students)
+         * @description Creates the parked question or replaces its fields (idempotent by
+         *     id, so a retry is safe). The question must be the one at that place
+         *     in that published version. Texts are trimmed; a missing or blank
+         *     `folder` is `Unsorted`, a missing `status` is `waiting`.
+         */
+        put: operations["saveParkedQuestion"];
+        post?: never;
+        /** Remove a parked question (students) */
+        delete: operations["deleteParkedQuestion"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/teacher/groups/{id}/parked": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The parked questions of a group's students (its teachers) */
+        get: operations["groupParkedQuestions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1146,6 +1282,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/practice/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Students' issue reports on questions (any admin) */
+        get: operations["adminPracticeReports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/practice/reports/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Resolve a report, or open it again (any admin)
+         * @description Resolving keeps who resolved it first and when; opening again clears both.
+         */
+        put: operations["adminSetPracticeReport"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/practice/figures": {
         parameters: {
             query?: never;
@@ -1540,6 +1713,99 @@ export interface components {
             /** @description Both sections' sum (400–1600) when both were taken */
             total: number | null;
         };
+        /** @description A question at its place in a published version, as in the package. */
+        PracticeQuestionRef: {
+            /**
+             * @description The test's code
+             * @example DAY12
+             */
+            test: string;
+            version: number;
+            /** @enum {string} */
+            subject: "english" | "math";
+            /** @enum {integer} */
+            module: 1 | 2;
+            position: number;
+            /**
+             * Format: uuid
+             * @description The question's id in the package
+             */
+            question_id: string;
+        };
+        ParkedQuestionInput: components["schemas"]["PracticeQuestionRef"] & {
+            /** @description Trimmed; null or blank: `Unsorted` */
+            folder?: string | null;
+            /** @enum {string|null} */
+            reason?: "didnt_understand" | "didnt_know_start" | "lost_partway" | "ran_out_of_time" | null;
+            /** @default  */
+            note: string;
+            /**
+             * @description The fix in one line, once the student understands it
+             * @default
+             */
+            fix: string;
+            /**
+             * @default waiting
+             * @enum {string}
+             */
+            status: "waiting" | "sorted";
+        };
+        ParkedQuestion: components["schemas"]["PracticeQuestionRef"] & {
+            /** Format: uuid */
+            id: string;
+            folder: string;
+            /** @enum {string|null} */
+            reason: "didnt_understand" | "didnt_know_start" | "lost_partway" | "ran_out_of_time" | null;
+            note: string;
+            fix: string;
+            /** @enum {string} */
+            status: "waiting" | "sorted";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        Goals: {
+            /** @description Math target, 200–800 */
+            target_math: number | null;
+            /** @description Reading and Writing target, 200–800 */
+            target_rw: number | null;
+            /** @description The two targets' sum, when both are set */
+            target_total: number | null;
+            /** Format: date */
+            exam_date: string | null;
+            /**
+             * Format: date-time
+             * @description Null when never set
+             */
+            updated_at: string | null;
+        };
+        AdminPracticeReport: components["schemas"]["PracticeQuestionRef"] & {
+            /** Format: uuid */
+            id: string;
+            /** @description Empty if the test is gone */
+            test_title: string;
+            /** @enum {string} */
+            kind: "question" | "technical";
+            /** @enum {string|null} */
+            reason: "answer_key_wrong" | "typo" | "unclear" | "image_broken" | "formatting" | "other" | null;
+            text: string;
+            /** @enum {string} */
+            status: "open" | "resolved";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            resolved_at: string | null;
+            /** @description The admin's name */
+            resolved_by: string | null;
+            student: components["schemas"]["PracticeStudent"];
+        };
+        PracticeStudent: {
+            /** @description The student's HolliHop client id */
+            id: number;
+            first_name: string;
+            last_name: string;
+        };
         PracticePlace: {
             test: string;
             /** @enum {string} */
@@ -1887,7 +2153,7 @@ export interface components {
                  * @description Stable machine-readable code.
                  * @enum {string}
                  */
-                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question";
+                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals";
                 /** @description Human-readable explanation; may change. */
                 message: string;
                 /** @description For a rejected form (`invalid_question`): what is wrong, per field (e.g. `stem`, `choices.B`). */
@@ -2538,6 +2804,49 @@ export interface operations {
             503: components["responses"]["Error"];
         };
     };
+    practiceQuestionStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example DAY12 */
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The questions' counts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        questions: {
+                            /**
+                             * Format: uuid
+                             * @description The question's id in the package
+                             */
+                            id: string;
+                            answered: number;
+                            correct: number;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `test_not_found`: no such test, or not published (yet) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     savePracticeAttempt: {
         parameters: {
             query?: never;
@@ -2605,6 +2914,83 @@ export interface operations {
             };
         };
     };
+    sendPracticeReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PracticeQuestionRef"] & {
+                    /** Format: uuid */
+                    id: string;
+                    /** @enum {string} */
+                    kind: "question" | "technical";
+                    /** @enum {string|null} */
+                    reason?: "answer_key_wrong" | "typo" | "unclear" | "image_broken" | "formatting" | "other" | null;
+                    /** @default  */
+                    text?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Stored before (a repeat) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id: string;
+                    };
+                };
+            };
+            /** @description Stored */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id: string;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a student */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `report_id_taken`: another student sent a report with this id */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_report`: a value is wrong (the message says which), neither a reason nor a text, or the question isn't at that place in that version */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     myPracticeAttempts: {
         parameters: {
             query?: never;
@@ -2655,6 +3041,249 @@ export interface operations {
                             last_name: string;
                             attempts: components["schemas"]["PracticeAttempt"][];
                         }[];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a teacher, or not this group's */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    myGoals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The goals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Goals"];
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a student */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    setGoals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    target_math?: number | null;
+                    target_rw?: number | null;
+                    /** Format: date */
+                    exam_date?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description The stored goals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Goals"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a student */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_goals`: a target out of range or not a multiple of 10, or an exam date that isn't a date or is in the past */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    myParkedQuestions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every parked question of the student */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ParkedQuestion"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a student */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    saveParkedQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id the device made */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ParkedQuestionInput"];
+            };
+        };
+        responses: {
+            /** @description The stored parked question */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParkedQuestion"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a student */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found`: the id is another student's */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_parked`: a value is wrong (the message says which), or the question isn't at that place in that version */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteParkedQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The id the device made */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a student */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found`: the student has no parked question with this id (also when it was already removed) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    groupParkedQuestions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The parked questions of the students enrolled now, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: (components["schemas"]["ParkedQuestion"] & {
+                            student: components["schemas"]["PracticeStudent"];
+                        })[];
                     };
                 };
             };
@@ -3927,6 +4556,84 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             413: components["responses"]["Error"];
+        };
+    };
+    adminPracticeReports: {
+        parameters: {
+            query?: {
+                status?: "open" | "resolved";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest first, at most 200 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        reports: components["schemas"]["AdminPracticeReport"][];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+        };
+    };
+    adminSetPracticeReport: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    status: "open" | "resolved";
+                };
+            };
+        };
+        responses: {
+            /** @description The report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminPracticeReport"];
+                };
+            };
+            /** @description `bad_request`: status isn't open or resolved */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            /** @description `not_found`: no such report */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     adminPracticeFigure: {
