@@ -358,6 +358,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/practice/tests/{code}/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * How many students got each question right (students and teachers)
+         * @description One entry per question of the test's latest published version, in the
+         *     package's order (ids as in the package). Counted over every uploaded
+         *     attempt that had the question, in any test or version (a question
+         *     several tests share counts in all of them): `answered` is the attempts
+         *     that took its section (a blank answer counts as answered and wrong),
+         *     `correct` those graded right, with the keys of the version the attempt
+         *     used (as its scores). Counted again every 5 minutes at most.
+         */
+        get: operations["practiceQuestionStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/practice/attempts": {
         parameters: {
             query?: never;
@@ -1887,7 +1913,7 @@ export interface components {
                  * @description Stable machine-readable code.
                  * @enum {string}
                  */
-                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question";
+                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found";
                 /** @description Human-readable explanation; may change. */
                 message: string;
                 /** @description For a rejected form (`invalid_question`): what is wrong, per field (e.g. `stem`, `choices.B`). */
@@ -2536,6 +2562,49 @@ export interface operations {
                 };
             };
             503: components["responses"]["Error"];
+        };
+    };
+    practiceQuestionStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example DAY12 */
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The questions' counts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        questions: {
+                            /**
+                             * Format: uuid
+                             * @description The question's id in the package
+                             */
+                            id: string;
+                            answered: number;
+                            correct: number;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `test_not_found`: no such test, or not published (yet) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     savePracticeAttempt: {

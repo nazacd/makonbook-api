@@ -484,6 +484,45 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "503": { $ref: "#/components/responses/Error" }
 
+  /v1/practice/tests/{code}/stats:
+    get:
+      summary: How many students got each question right (students and teachers)
+      description: |
+        One entry per question of the test's latest published version, in the
+        package's order (ids as in the package). Counted over every uploaded
+        attempt that had the question, in any test or version (a question
+        several tests share counts in all of them): `answered` is the attempts
+        that took its section (a blank answer counts as answered and wrong),
+        `correct` those graded right, with the keys of the version the attempt
+        used (as its scores). Counted again every 5 minutes at most.
+      operationId: practiceQuestionStats
+      tags: [practice]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: code, in: path, required: true, schema: { type: string }, example: DAY12 }
+      responses:
+        "200":
+          description: The questions' counts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [questions]
+                properties:
+                  questions:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, answered, correct]
+                      properties:
+                        id: { type: string, format: uuid, description: The question's id in the package }
+                        answered: { type: integer }
+                        correct: { type: integer }
+        "401": { $ref: "#/components/responses/Error" }
+        "404":
+          description: "`test_not_found`: no such test, or not published (yet)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /v1/practice/attempts:
     post:
       summary: Upload a finished attempt (students)
@@ -2372,6 +2411,12 @@ components:
                 - fired
                 - version_conflict
                 - invalid_question
+                - invalid_attempt
+                - attempt_id_taken
+                - invalid_reviews
+                - invalid_parent_code
+                - invalid_report
+                - test_not_found
             message:
               type: string
               description: Human-readable explanation; may change.

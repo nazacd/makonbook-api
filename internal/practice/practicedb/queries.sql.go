@@ -1068,6 +1068,121 @@ func (q *Queries) RefreshAIReview(ctx context.Context, arg RefreshAIReviewParams
 	return result.RowsAffected(), nil
 }
 
+const statsAnswers = `-- name: StatsAnswers :many
+SELECT a.test_id, a.test_version, (x.value->>'subject')::text AS subject,
+       (x.value->>'module')::smallint AS module, (x.value->>'position')::smallint AS position,
+       (x.value->>'answer')::text AS answer, count(*)::int AS answers
+FROM practice_attempts a
+CROSS JOIN LATERAL jsonb_array_elements(a.answers) AS x(value)
+WHERE a.student_client_id > 0 AND x.value->>'answer' IS NOT NULL
+GROUP BY a.test_id, a.test_version, x.value->>'subject', x.value->>'module', x.value->>'position', x.value->>'answer'
+`
+
+type StatsAnswersRow struct {
+	TestID      pgtype.UUID
+	TestVersion int32
+	Subject     string
+	Module      int16
+	Position    int16
+	Answer      string
+	Answers     int32
+}
+
+// The answers in those attempts, counted per place and answer (blank ones
+// are left out: they are wrong).
+func (q *Queries) StatsAnswers(ctx context.Context) ([]StatsAnswersRow, error) {
+	rows, err := q.db.Query(ctx, statsAnswers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []StatsAnswersRow
+	for rows.Next() {
+		var i StatsAnswersRow
+		if err := rows.Scan(
+			&i.TestID,
+			&i.TestVersion,
+			&i.Subject,
+			&i.Module,
+			&i.Position,
+			&i.Answer,
+			&i.Answers,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const statsSlots = `-- name: StatsSlots :many
+
+WITH taken AS (
+    SELECT a.test_id, a.test_version, s.subject::text AS subject, count(*)::int AS attempts
+    FROM practice_attempts a
+    CROSS JOIN LATERAL unnest(a.sections) AS s(subject)
+    WHERE a.student_client_id > 0
+    GROUP BY a.test_id, a.test_version, s.subject
+)
+SELECT t.test_id, t.test_version, t.subject,
+       (m.value->>'module')::smallint AS module, (q.value->>'position')::smallint AS position,
+       jsonb_build_object('id', q.value->'id', 'type', q.value->'type', 'correct', q.value->'correct',
+                          'accepted', q.value->'accepted')::jsonb AS question,
+       t.attempts
+FROM taken t
+JOIN practice_test_versions v ON v.test_id = t.test_id AND v.version = t.test_version
+CROSS JOIN LATERAL jsonb_array_elements(v.package->'sections') AS sec(value)
+CROSS JOIN LATERAL jsonb_array_elements(sec.value->'modules') AS m(value)
+CROSS JOIN LATERAL jsonb_array_elements(m.value->'questions') AS q(value)
+WHERE sec.value->>'subject' = t.subject
+`
+
+type StatsSlotsRow struct {
+	TestID      pgtype.UUID
+	TestVersion int32
+	Subject     string
+	Module      int16
+	Position    int16
+	Question    []byte
+	Attempts    int32
+}
+
+// Question statistics (spec 9.6) ----------------------------------------------
+// Not the demo account's attempts (negative ids, internal/demo): its
+// results are made up.
+// Each question place of each version students took, with how many attempts
+// took its section and the question's key (to grade the answers below).
+func (q *Queries) StatsSlots(ctx context.Context) ([]StatsSlotsRow, error) {
+	rows, err := q.db.Query(ctx, statsSlots)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []StatsSlotsRow
+	for rows.Next() {
+		var i StatsSlotsRow
+		if err := rows.Scan(
+			&i.TestID,
+			&i.TestVersion,
+			&i.Subject,
+			&i.Module,
+			&i.Position,
+			&i.Question,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const studentAttempts = `-- name: StudentAttempts :many
 SELECT a.id, a.student_client_id, t.code, t.title, a.test_version, a.sections, a.started_at, a.finished_at, a.scores
 FROM practice_attempts a JOIN practice_tests t ON t.id = a.test_id

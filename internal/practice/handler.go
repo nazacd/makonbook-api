@@ -16,6 +16,7 @@ import (
 const (
 	CodeInvalidAttempt = "invalid_attempt"
 	CodeAttemptTaken   = "attempt_id_taken"
+	CodeTestNotFound   = "test_not_found"
 )
 
 // Handler is the apps' practice API: the catalog, packages, attempts.
@@ -33,6 +34,7 @@ func NewHandler(svc *Service, location *time.Location, require func(http.Handler
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/practice/tests", h.require(h.catalog))
 	mux.HandleFunc("GET /v1/practice/tests/{code}/package", h.require(h.download))
+	mux.HandleFunc("GET /v1/practice/tests/{code}/stats", h.require(h.questionStats))
 	mux.HandleFunc("POST /v1/practice/attempts", h.require(h.student(h.saveAttempt)))
 	mux.HandleFunc("GET /v1/me/practice/attempts", h.require(h.student(h.myAttempts)))
 	mux.HandleFunc("GET /v1/teacher/groups/{id}/practice", h.require(h.groupPractice))
@@ -66,6 +68,18 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 		h.internal(w, r, "download", err)
 	default:
 		httpx.WriteJSON(w, r, http.StatusOK, d)
+	}
+}
+
+func (h *Handler) questionStats(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.svc.QuestionStats(r.Context(), r.PathValue("code"))
+	switch {
+	case errors.Is(err, ErrNotFound): // unknown, or locked (never published), as the package
+		httpx.WriteError(w, r, http.StatusNotFound, CodeTestNotFound, "this test isn't published")
+	case err != nil:
+		h.internal(w, r, "question stats", err)
+	default:
+		httpx.WriteJSON(w, r, http.StatusOK, map[string]any{"questions": stats})
 	}
 }
 

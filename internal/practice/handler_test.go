@@ -127,6 +127,17 @@ func TestHandler(t *testing.T) {
 	if status, body := do("GET", "/v1/me/practice/attempts", student, nil); status != http.StatusOK || len(body["attempts"].([]any)) != 1 {
 		t.Errorf("my attempts: %d %v", status, body)
 	}
+	status, body = do("GET", "/v1/practice/tests/DAY1/stats", teacher, nil)
+	if qs, _ := body["questions"].([]any); status != http.StatusOK || len(qs) != 98 ||
+		qs[54].(map[string]any)["answered"] != 1.0 || qs[54].(map[string]any)["correct"] != 1.0 {
+		t.Errorf("stats: %d %v", status, body)
+	}
+	if status, body := do("GET", "/v1/practice/tests/DAY2/stats", student, nil); status != http.StatusNotFound || body["error"].(map[string]any)["code"] != CodeTestNotFound {
+		t.Errorf("stats of an unknown test: %d %v", status, body)
+	}
+	if status, _ := do("GET", "/v1/practice/tests/DAY1/stats", "", nil); status != http.StatusUnauthorized {
+		t.Errorf("stats signed out: %d", status)
+	}
 	status, body = do("GET", "/v1/teacher/groups/100/practice", teacher, nil)
 	if students, _ := body["students"].([]any); status != http.StatusOK || len(students) != 1 ||
 		len(students[0].(map[string]any)["attempts"].([]any)) != 1 {

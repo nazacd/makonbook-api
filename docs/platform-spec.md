@@ -347,6 +347,14 @@ section (College Board uses IRT; we can't reproduce it exactly).
   the student's history. **Teachers** see the attempts of their groups' students
   (`GET /v1/teacher/groups/{id}/practice`).
 
+### 9.6 Around the tests (built, for the web app)
+- **Question statistics** (`GET /v1/practice/tests/{code}/stats`, students and teachers): for each question of
+  a test's latest published version, in the package's order, `answered` (uploaded attempts that took its
+  section, in every test and version that has the question; a blank answer is answered and wrong) and
+  `correct` (graded right with the keys of the version the attempt used, as its scores). The demo account's
+  made-up attempts don't count. Counted in memory and again every 5 minutes at most (`practice.StatsTTL`);
+  an unknown or locked test is `404 test_not_found`.
+
 ## 10. Placement test changes (mobile, small)
 
 Stays bundled, public, offline, unscored-on-server (D1, D9). Data model changes:
@@ -608,6 +616,7 @@ GET  /v1/me/attendance                 own attendance table (8.7)
 # practice (phase 3)
 GET  /v1/practice/tests                catalog: open (published version) or locked (progress)
 GET  /v1/practice/tests/{code}/package package of a version + signed image links (6 h)
+GET  /v1/practice/tests/{code}/stats   per question of the latest version: answered, correct (9.6)
 POST /v1/practice/attempts             idempotent by client UUID; graded on the server
 GET  /v1/me/practice/attempts          the student's attempts
 GET  /v1/teacher/groups/{id}/practice  a group's students and their attempts

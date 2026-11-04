@@ -39,6 +39,7 @@ type Service struct {
 	bank     Bank     // nil: the bank's images not configured
 	pictures Pictures // nil: question pictures not configured
 	page     string   // the question picture page (web/admin's CardPage)
+	stats    statsCache
 }
 
 // NewService: uploads is MakonBook's image bucket, or nil.
