@@ -376,3 +376,40 @@ ORDER BY created_at DESC, id;
 
 -- name: DeleteParked :execrows
 DELETE FROM parked_questions WHERE id = @id AND student_client_id = @student_client_id;
+
+-- Issue reports (spec 9.6) -----------------------------------------------------
+
+-- name: InsertReport :execrows
+INSERT INTO practice_reports (id, student_client_id, test, version, subject, module, position, question_id,
+                              kind, reason, text)
+VALUES (@id, @student_client_id, @test, @version, @subject, @module, @position, @question_id,
+        @kind, sqlc.narg('reason'), @text)
+ON CONFLICT (id) DO NOTHING;
+
+-- name: ReportOwner :one
+SELECT student_client_id FROM practice_reports WHERE id = @id;
+
+-- Reports for the admin panel, newest first.
+-- name: AdminReports :many
+SELECT r.*, s.first_name, s.last_name, coalesce(t.title, '')::text AS test_title
+FROM practice_reports r
+JOIN students s ON s.client_id = r.student_client_id
+LEFT JOIN practice_tests t ON t.code = r.test
+WHERE r.status = @status
+ORDER BY r.created_at DESC, r.id
+LIMIT 200;
+
+-- name: AdminReport :one
+SELECT r.*, s.first_name, s.last_name, coalesce(t.title, '')::text AS test_title
+FROM practice_reports r
+JOIN students s ON s.client_id = r.student_client_id
+LEFT JOIN practice_tests t ON t.code = r.test
+WHERE r.id = @id;
+
+-- Resolving keeps who resolved it first; reopening clears it.
+-- name: SetReportStatus :execrows
+UPDATE practice_reports
+SET status = @status::text,
+    resolved_at = CASE WHEN @status::text = 'resolved' THEN coalesce(resolved_at, now()) END,
+    resolved_by = CASE WHEN @status::text = 'resolved' THEN coalesce(resolved_by, @resolved_by::text) END
+WHERE id = @id;

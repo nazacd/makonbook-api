@@ -571,6 +571,58 @@ paths:
           description: "`invalid_attempt`: no such test version, a section or question not in it, an answer given twice, times out of order"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/practice/reports:
+    post:
+      summary: Report an issue with a question (students)
+      description: |
+        From the test screen's "Report an issue": something wrong with the
+        question (`kind: question`) or a technical problem (`technical`). Sent
+        with the id the device made: sending it again answers 200 with the
+        same id, so a retry is safe. The question must be the one at that
+        place in that published version. A reason or a text (trimmed) is
+        needed. The admins see reports in the panel.
+      operationId: sendPracticeReport
+      tags: [practice]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/PracticeQuestionRef"
+                - type: object
+                  required: [id, kind]
+                  properties:
+                    id: { type: string, format: uuid }
+                    kind: { type: string, enum: [question, technical] }
+                    reason:
+                      type: [string, "null"]
+                      enum: [answer_key_wrong, typo, unclear, image_broken, formatting, other, null]
+                    text: { type: string, maxLength: 2000, default: "" }
+      responses:
+        "201":
+          description: Stored
+          content:
+            application/json:
+              schema: { type: object, required: [id], properties: { id: { type: string, format: uuid } } }
+        "200":
+          description: Stored before (a repeat)
+          content:
+            application/json:
+              schema: { type: object, required: [id], properties: { id: { type: string, format: uuid } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "409":
+          description: "`report_id_taken`: another student sent a report with this id"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_report`: a value is wrong (the message says which), neither a reason nor a text, or the question isn't at that place in that version"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /v1/me/practice/attempts:
     get:
       summary: The student's attempts, latest first, with their answers
@@ -1726,6 +1778,59 @@ paths:
         "403": { $ref: "#/components/responses/Error" }
         "413": { $ref: "#/components/responses/Error" }
 
+  /v1/admin/practice/reports:
+    get:
+      summary: Students' issue reports on questions (any admin)
+      operationId: adminPracticeReports
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [open, resolved], default: open } }
+      responses:
+        "200":
+          description: Newest first, at most 200
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [reports]
+                properties:
+                  reports: { type: array, items: { $ref: "#/components/schemas/AdminPracticeReport" } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/practice/reports/{id}:
+    put:
+      summary: Resolve a report, or open it again (any admin)
+      description: Resolving keeps who resolved it first and when; opening again clears both.
+      operationId: adminSetPracticeReport
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: "#/components/parameters/AdminCSRF"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [open, resolved] }
+      responses:
+        "200":
+          description: The report
+          content: { application/json: { schema: { $ref: "#/components/schemas/AdminPracticeReport" } } }
+        "400":
+          description: "`bad_request`: status isn't open or resolved"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404":
+          description: "`not_found`: no such report"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /v1/admin/practice/figures:
     get:
       summary: A question image, from the bank's R2 bucket or an upload (editors)
@@ -2176,6 +2281,25 @@ components:
             created_at: { type: string, format: date-time }
             updated_at: { type: string, format: date-time }
 
+    AdminPracticeReport:
+      allOf:
+        - $ref: "#/components/schemas/PracticeQuestionRef"
+        - type: object
+          required: [id, test_title, kind, reason, text, status, created_at, resolved_at, resolved_by, student]
+          properties:
+            id: { type: string, format: uuid }
+            test_title: { type: string, description: Empty if the test is gone }
+            kind: { type: string, enum: [question, technical] }
+            reason:
+              type: [string, "null"]
+              enum: [answer_key_wrong, typo, unclear, image_broken, formatting, other, null]
+            text: { type: string }
+            status: { type: string, enum: [open, resolved] }
+            created_at: { type: string, format: date-time }
+            resolved_at: { type: [string, "null"], format: date-time }
+            resolved_by: { type: [string, "null"], description: The admin's name }
+            student: { $ref: "#/components/schemas/PracticeStudent" }
+
     PracticeStudent:
       type: object
       required: [id, first_name, last_name]
@@ -2568,6 +2692,7 @@ components:
                 - invalid_report
                 - test_not_found
                 - invalid_parked
+                - report_id_taken
             message:
               type: string
               description: Human-readable explanation; may change.

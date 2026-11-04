@@ -407,6 +407,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/practice/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report an issue with a question (students)
+         * @description From the test screen's "Report an issue": something wrong with the
+         *     question (`kind: question`) or a technical problem (`technical`). Sent
+         *     with the id the device made: sending it again answers 200 with the
+         *     same id, so a retry is safe. The question must be the one at that
+         *     place in that published version. A reason or a text (trimmed) is
+         *     needed. The admins see reports in the panel.
+         */
+        post: operations["sendPracticeReport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/practice/attempts": {
         parameters: {
             query?: never;
@@ -1233,6 +1258,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/practice/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Students' issue reports on questions (any admin) */
+        get: operations["adminPracticeReports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/practice/reports/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Resolve a report, or open it again (any admin)
+         * @description Resolving keeps who resolved it first and when; opening again clears both.
+         */
+        put: operations["adminSetPracticeReport"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/practice/figures": {
         parameters: {
             query?: never;
@@ -1679,6 +1741,26 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        AdminPracticeReport: components["schemas"]["PracticeQuestionRef"] & {
+            /** Format: uuid */
+            id: string;
+            /** @description Empty if the test is gone */
+            test_title: string;
+            /** @enum {string} */
+            kind: "question" | "technical";
+            /** @enum {string|null} */
+            reason: "answer_key_wrong" | "typo" | "unclear" | "image_broken" | "formatting" | "other" | null;
+            text: string;
+            /** @enum {string} */
+            status: "open" | "resolved";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            resolved_at: string | null;
+            /** @description The admin's name */
+            resolved_by: string | null;
+            student: components["schemas"]["PracticeStudent"];
+        };
         PracticeStudent: {
             /** @description The student's HolliHop client id */
             id: number;
@@ -2032,7 +2114,7 @@ export interface components {
                  * @description Stable machine-readable code.
                  * @enum {string}
                  */
-                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked";
+                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken";
                 /** @description Human-readable explanation; may change. */
                 message: string;
                 /** @description For a rejected form (`invalid_question`): what is wrong, per field (e.g. `stem`, `choices.B`). */
@@ -2783,6 +2865,83 @@ export interface operations {
                 };
             };
             /** @description `invalid_attempt`: no such test version, a section or question not in it, an answer given twice, times out of order */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    sendPracticeReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PracticeQuestionRef"] & {
+                    /** Format: uuid */
+                    id: string;
+                    /** @enum {string} */
+                    kind: "question" | "technical";
+                    /** @enum {string|null} */
+                    reason?: "answer_key_wrong" | "typo" | "unclear" | "image_broken" | "formatting" | "other" | null;
+                    /** @default  */
+                    text?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Stored before (a repeat) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id: string;
+                    };
+                };
+            };
+            /** @description Stored */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id: string;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a student */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `report_id_taken`: another student sent a report with this id */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_report`: a value is wrong (the message says which), neither a reason nor a text, or the question isn't at that place in that version */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -4279,6 +4438,84 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             413: components["responses"]["Error"];
+        };
+    };
+    adminPracticeReports: {
+        parameters: {
+            query?: {
+                status?: "open" | "resolved";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest first, at most 200 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        reports: components["schemas"]["AdminPracticeReport"][];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+        };
+    };
+    adminSetPracticeReport: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    status: "open" | "resolved";
+                };
+            };
+        };
+        responses: {
+            /** @description The report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminPracticeReport"];
+                };
+            };
+            /** @description `bad_request`: status isn't open or resolved */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            /** @description `not_found`: no such report */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     adminPracticeFigure: {

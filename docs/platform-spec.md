@@ -362,6 +362,14 @@ section (College Board uses IRT; we can't reproduce it exactly).
   they understand it (≤ 300), and `waiting` or `sorted`; a wrong value is `422 invalid_parked`.
   `GET /v1/me/parked` lists them newest first, `DELETE /v1/me/parked/{id}` removes one. Teachers see their
   group's current students' ones (`GET /v1/teacher/groups/{id}/parked`, the same check as its practice).
+- **Issue reports** (`practice_reports`): the test screen's "Report an issue" (`POST /v1/practice/reports`,
+  students): the device's id (a repeat answers `200` with it, a new one `201`; another student's id is
+  `409 report_id_taken`), the question by its place as above, `question` or `technical`, a reason
+  (`answer_key_wrong`, `typo`, `unclear`, `image_broken`, `formatting`, `other`) and/or a text (≤ 2000); a
+  wrong value is `422 invalid_report`. Any admin sees them (`GET /v1/admin/practice/reports?status=open|resolved`,
+  newest first, 200 at most, with the student and the test's title) and resolves or reopens one
+  (`PUT /v1/admin/practice/reports/{id} {status}`; resolving keeps who resolved it first); the panel has no page
+  for them yet. No Telegram message: there is no editors' chat (the review bot's group is the teachers' vote).
 
 ## 10. Placement test changes (mobile, small)
 
@@ -584,6 +592,9 @@ practice_attempts(id uuid PK (the device's), student_client_id FK, (test_id, tes
 -- built: see 9.6
 parked_questions(id uuid PK (the device's), student_client_id FK, test, version, subject, module, position,
                  question_id, folder, reason NULL, note, fix, status (waiting|sorted), created_at, updated_at)
+practice_reports(id uuid PK (the device's), student_client_id FK, test, version, subject, module, position,
+                 question_id, kind (question|technical), reason NULL, text, status (open|resolved), created_at,
+                 resolved_at, resolved_by)
 -- built (phase 4): see 11
 vocab_lists(id uuid PK, slug UNIQUE, title, position, removed_at)
 vocab_words(id uuid PK, list_id FK, position, word, part_of_speech, definition, example, image, removed_at,
@@ -634,6 +645,7 @@ GET  /v1/teacher/groups/{id}/practice  a group's students and their attempts
 GET  /v1/me/parked                     the student's parked questions ("Ask later", 9.6)
 PUT|DELETE /v1/me/parked/{id}          park or change one (idempotent by client UUID); remove one
 GET  /v1/teacher/groups/{id}/parked    a group's students' parked questions
+POST /v1/practice/reports              "Report an issue" on a question; idempotent by client UUID
 
 # vocabulary (phase 4)
 GET  /v1/vocab/deck?have=              every list and word (or "unchanged")
@@ -653,6 +665,7 @@ GET  /v1/admin/reports/corrections     teachers' corrections
 GET  /v1/admin/hollihop/writes         write-back status; POST …/{id}/retry
 GET  /v1/admin/data-quality            phone issues
 GET|PUT|DELETE /v1/admin/access…       access list (super admins); GET /v1/admin/staff?q=
+GET  /v1/admin/practice/reports?status=   students' issue reports (9.6); PUT …/{id} {status} resolves or reopens
 /v1/admin/...                          later: sync runs, people, reset, content
 ```
 

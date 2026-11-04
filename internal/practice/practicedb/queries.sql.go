@@ -11,6 +11,132 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const adminReport = `-- name: AdminReport :one
+SELECT r.id, r.student_client_id, r.test, r.version, r.subject, r.module, r.position, r.question_id, r.kind, r.reason, r.text, r.status, r.created_at, r.resolved_at, r.resolved_by, s.first_name, s.last_name, coalesce(t.title, '')::text AS test_title
+FROM practice_reports r
+JOIN students s ON s.client_id = r.student_client_id
+LEFT JOIN practice_tests t ON t.code = r.test
+WHERE r.id = $1
+`
+
+type AdminReportRow struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Test            string
+	Version         int32
+	Subject         string
+	Module          int16
+	Position        int16
+	QuestionID      pgtype.UUID
+	Kind            string
+	Reason          pgtype.Text
+	Text            string
+	Status          string
+	CreatedAt       pgtype.Timestamptz
+	ResolvedAt      pgtype.Timestamptz
+	ResolvedBy      pgtype.Text
+	FirstName       string
+	LastName        string
+	TestTitle       string
+}
+
+func (q *Queries) AdminReport(ctx context.Context, id pgtype.UUID) (AdminReportRow, error) {
+	row := q.db.QueryRow(ctx, adminReport, id)
+	var i AdminReportRow
+	err := row.Scan(
+		&i.ID,
+		&i.StudentClientID,
+		&i.Test,
+		&i.Version,
+		&i.Subject,
+		&i.Module,
+		&i.Position,
+		&i.QuestionID,
+		&i.Kind,
+		&i.Reason,
+		&i.Text,
+		&i.Status,
+		&i.CreatedAt,
+		&i.ResolvedAt,
+		&i.ResolvedBy,
+		&i.FirstName,
+		&i.LastName,
+		&i.TestTitle,
+	)
+	return i, err
+}
+
+const adminReports = `-- name: AdminReports :many
+SELECT r.id, r.student_client_id, r.test, r.version, r.subject, r.module, r.position, r.question_id, r.kind, r.reason, r.text, r.status, r.created_at, r.resolved_at, r.resolved_by, s.first_name, s.last_name, coalesce(t.title, '')::text AS test_title
+FROM practice_reports r
+JOIN students s ON s.client_id = r.student_client_id
+LEFT JOIN practice_tests t ON t.code = r.test
+WHERE r.status = $1
+ORDER BY r.created_at DESC, r.id
+LIMIT 200
+`
+
+type AdminReportsRow struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Test            string
+	Version         int32
+	Subject         string
+	Module          int16
+	Position        int16
+	QuestionID      pgtype.UUID
+	Kind            string
+	Reason          pgtype.Text
+	Text            string
+	Status          string
+	CreatedAt       pgtype.Timestamptz
+	ResolvedAt      pgtype.Timestamptz
+	ResolvedBy      pgtype.Text
+	FirstName       string
+	LastName        string
+	TestTitle       string
+}
+
+// Reports for the admin panel, newest first.
+func (q *Queries) AdminReports(ctx context.Context, status string) ([]AdminReportsRow, error) {
+	rows, err := q.db.Query(ctx, adminReports, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminReportsRow
+	for rows.Next() {
+		var i AdminReportsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.StudentClientID,
+			&i.Test,
+			&i.Version,
+			&i.Subject,
+			&i.Module,
+			&i.Position,
+			&i.QuestionID,
+			&i.Kind,
+			&i.Reason,
+			&i.Text,
+			&i.Status,
+			&i.CreatedAt,
+			&i.ResolvedAt,
+			&i.ResolvedBy,
+			&i.FirstName,
+			&i.LastName,
+			&i.TestTitle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const applyAIFix = `-- name: ApplyAIFix :one
 UPDATE questions
 SET passage = $1, stem = $2, choices = $3,
@@ -564,6 +690,50 @@ func (q *Queries) InsertQuestion(ctx context.Context, arg InsertQuestionParams) 
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const insertReport = `-- name: InsertReport :execrows
+
+INSERT INTO practice_reports (id, student_client_id, test, version, subject, module, position, question_id,
+                              kind, reason, text)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10, $11)
+ON CONFLICT (id) DO NOTHING
+`
+
+type InsertReportParams struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Test            string
+	Version         int32
+	Subject         string
+	Module          int16
+	Position        int16
+	QuestionID      pgtype.UUID
+	Kind            string
+	Reason          pgtype.Text
+	Text            string
+}
+
+// Issue reports (spec 9.6) -----------------------------------------------------
+func (q *Queries) InsertReport(ctx context.Context, arg InsertReportParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertReport,
+		arg.ID,
+		arg.StudentClientID,
+		arg.Test,
+		arg.Version,
+		arg.Subject,
+		arg.Module,
+		arg.Position,
+		arg.QuestionID,
+		arg.Kind,
+		arg.Reason,
+		arg.Text,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertTestVersion = `-- name: InsertTestVersion :exec
@@ -1122,6 +1292,40 @@ func (q *Queries) RefreshAIReview(ctx context.Context, arg RefreshAIReviewParams
 		arg.Risk,
 		arg.Verdict,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const reportOwner = `-- name: ReportOwner :one
+SELECT student_client_id FROM practice_reports WHERE id = $1
+`
+
+func (q *Queries) ReportOwner(ctx context.Context, id pgtype.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, reportOwner, id)
+	var student_client_id int32
+	err := row.Scan(&student_client_id)
+	return student_client_id, err
+}
+
+const setReportStatus = `-- name: SetReportStatus :execrows
+UPDATE practice_reports
+SET status = $1::text,
+    resolved_at = CASE WHEN $1::text = 'resolved' THEN coalesce(resolved_at, now()) END,
+    resolved_by = CASE WHEN $1::text = 'resolved' THEN coalesce(resolved_by, $2::text) END
+WHERE id = $3
+`
+
+type SetReportStatusParams struct {
+	Status     string
+	ResolvedBy string
+	ID         pgtype.UUID
+}
+
+// Resolving keeps who resolved it first; reopening clears it.
+func (q *Queries) SetReportStatus(ctx context.Context, arg SetReportStatusParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setReportStatus, arg.Status, arg.ResolvedBy, arg.ID)
 	if err != nil {
 		return 0, err
 	}

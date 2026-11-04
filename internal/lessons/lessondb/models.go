@@ -285,6 +285,24 @@ type PracticePublishedImage struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type PracticeReport struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Test            string
+	Version         int32
+	Subject         string
+	Module          int16
+	Position        int16
+	QuestionID      pgtype.UUID
+	Kind            string
+	Reason          pgtype.Text
+	Text            string
+	Status          string
+	CreatedAt       pgtype.Timestamptz
+	ResolvedAt      pgtype.Timestamptz
+	ResolvedBy      pgtype.Text
+}
+
 type PracticeTest struct {
 	ID        pgtype.UUID
 	Code      string

@@ -18,6 +18,8 @@ const (
 	CodeAttemptTaken   = "attempt_id_taken"
 	CodeTestNotFound   = "test_not_found"
 	CodeInvalidParked  = "invalid_parked"
+	CodeInvalidReport  = "invalid_report"
+	CodeReportTaken    = "report_id_taken"
 )
 
 // Handler is the apps' practice API: the catalog, packages, attempts.
@@ -43,6 +45,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /v1/me/parked/{id}", h.require(h.student(h.saveParked)))
 	mux.HandleFunc("DELETE /v1/me/parked/{id}", h.require(h.student(h.deleteParked)))
 	mux.HandleFunc("GET /v1/teacher/groups/{id}/parked", h.require(h.groupParked))
+	mux.HandleFunc("POST /v1/practice/reports", h.require(h.student(h.sendReport)))
 }
 
 func (h *Handler) catalog(w http.ResponseWriter, r *http.Request) {
@@ -192,6 +195,27 @@ func (h *Handler) groupParked(w http.ResponseWriter, r *http.Request) {
 		h.internal(w, r, "group parked", err)
 	default:
 		httpx.WriteJSON(w, r, http.StatusOK, map[string]any{"items": items})
+	}
+}
+
+func (h *Handler) sendReport(w http.ResponseWriter, r *http.Request, student int32) {
+	var in ReportInput
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	id, created, err := h.svc.SendReport(r.Context(), student, in)
+	var bad *ReportError
+	switch {
+	case errors.As(err, &bad):
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidReport, bad.Reason)
+	case errors.Is(err, ErrReportTaken):
+		httpx.WriteError(w, r, http.StatusConflict, CodeReportTaken, err.Error())
+	case err != nil:
+		h.internal(w, r, "send report", err)
+	case created:
+		httpx.WriteJSON(w, r, http.StatusCreated, map[string]string{"id": id})
+	default: // sent before
+		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"id": id})
 	}
 }
 

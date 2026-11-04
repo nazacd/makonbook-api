@@ -283,3 +283,56 @@ func TestPracticeUpload(t *testing.T) {
 		t.Errorf("never uploaded: %d %v", status, body)
 	}
 }
+
+func TestPracticeReports(t *testing.T) {
+	e := setup(t)
+	e.loadTest("DAY5")
+	if _, err := e.pool.Exec(e.t.Context(), `
+		INSERT INTO practice_reports (id, student_client_id, test, version, subject, module, position, question_id, kind, reason, text)
+		VALUES ('3f2b8a6e-1c4d-4e5f-9a0b-1c2d3e4f5a6b', 2, 'DAY5', 1, 'math', 1, 4, '7d1e2f3a-4b5c-4d6e-8f70-8192a3b4c5d6',
+		        'question', 'answer_key_wrong', 'B is right.')`); err != nil {
+		t.Fatal(err)
+	}
+	// Any admin, of any branch: the report's student is in CHILONZOR.
+	_, _, novza := e.login("novza", "pw-novza")
+	status, body, _ := e.do("GET", "/v1/admin/practice/reports", novza, nil, false)
+	reports, _ := body["reports"].([]any)
+	if status != 200 || len(reports) != 1 {
+		t.Fatalf("reports: %d %v", status, body)
+	}
+	r := reports[0].(map[string]any)
+	if r["test_title"] == "" || r["reason"] != "answer_key_wrong" || r["status"] != "open" ||
+		r["student"].(map[string]any)["id"] != 2.0 || r["student"].(map[string]any)["last_name"] != "Saidova" {
+		t.Errorf("report: %v", r)
+	}
+	if status, _, _ := e.do("GET", "/v1/admin/practice/reports?status=closed", novza, nil, false); status != 400 {
+		t.Errorf("unknown status filter: %d", status)
+	}
+
+	path := "/v1/admin/practice/reports/" + r["id"].(string)
+	if status, _, _ := e.do("PUT", path, novza, map[string]string{"status": "resolved"}, false); status != 403 {
+		t.Errorf("without CSRF header: %d", status)
+	}
+	status, body, _ = e.do("PUT", path, novza, map[string]string{"status": "resolved"}, true)
+	if status != 200 || body["status"] != "resolved" || body["resolved_by"] != "Nodira N" || body["resolved_at"] == nil {
+		t.Errorf("resolve: %d %v", status, body)
+	}
+	if _, body, _ := e.do("GET", "/v1/admin/practice/reports?status=resolved", novza, nil, false); len(body["reports"].([]any)) != 1 {
+		t.Errorf("resolved: %v", body)
+	}
+	if _, body, _ := e.do("GET", "/v1/admin/practice/reports", novza, nil, false); len(body["reports"].([]any)) != 0 {
+		t.Errorf("open after resolving: %v", body)
+	}
+	if status, body, _ := e.do("PUT", path, novza, map[string]string{"status": "open"}, true); status != 200 || body["resolved_at"] != nil {
+		t.Errorf("reopen: %d %v", status, body)
+	}
+	if status, _, _ := e.do("PUT", path, novza, map[string]string{"status": "done"}, true); status != 400 {
+		t.Errorf("unknown status: %d", status)
+	}
+	if status, _, _ := e.do("PUT", "/v1/admin/practice/reports/0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d", novza, map[string]string{"status": "open"}, true); status != 404 {
+		t.Errorf("unknown report: %d", status)
+	}
+	if status, _, _ := e.do("GET", "/v1/admin/practice/reports", "", nil, false); status != 401 {
+		t.Errorf("signed out: %d", status)
+	}
+}

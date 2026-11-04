@@ -172,6 +172,22 @@ func TestHandler(t *testing.T) {
 	if status, _ := do("DELETE", parkedPath, student, nil); status != http.StatusNotFound {
 		t.Errorf("delete parked again: %d", status)
 	}
+
+	// Report an issue.
+	report := map[string]any{"id": "6b5a4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c2d", "test": "DAY1", "version": 1, "subject": "math", "module": 1,
+		"position": 1, "question_id": parked["question_id"], "kind": "question", "reason": "typo", "text": "A typo in choice C."}
+	if status, _ := do("POST", "/v1/practice/reports", teacher, report); status != http.StatusForbidden {
+		t.Errorf("a teacher reports: %d", status)
+	}
+	for _, want := range []int{http.StatusCreated, http.StatusOK} {
+		if status, body := do("POST", "/v1/practice/reports", student, report); status != want || body["id"] != report["id"] {
+			t.Errorf("report: %d %v, want %d", status, body, want)
+		}
+	}
+	report["id"], report["kind"] = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f", "bug"
+	if status, body := do("POST", "/v1/practice/reports", student, report); status != http.StatusUnprocessableEntity || body["error"].(map[string]any)["code"] != CodeInvalidReport {
+		t.Errorf("a wrong kind: %d %v", status, body)
+	}
 	status, body = do("GET", "/v1/teacher/groups/100/practice", teacher, nil)
 	if students, _ := body["students"].([]any); status != http.StatusOK || len(students) != 1 ||
 		len(students[0].(map[string]any)["attempts"].([]any)) != 1 {
