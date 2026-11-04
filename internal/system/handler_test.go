@@ -74,6 +74,24 @@ func TestAppConfigFromDatabase(t *testing.T) {
 	if got.MinAppVersion != want {
 		t.Errorf("min_app_version = %+v, want %+v", got.MinAppVersion, want)
 	}
+	if got.Signup || got.Google {
+		t.Errorf("sign-up and Google on without settings: %+v", got)
+	}
+}
+
+// What the web offers on its sign-in page.
+func TestAppConfigSignIn(t *testing.T) {
+	store := fakeStore{value: []byte(`{"android":"1.0.0","ios":"1.0.0"}`)}
+	for _, c := range [][2]bool{{true, false}, {false, true}, {true, true}} {
+		rec := serve(t, system.NewHandler(store, fakePinger{}).WithSignIn(c[0], c[1]), "/v1/app/config")
+		var got map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got["signup"] != c[0] || got["google"] != c[1] {
+			t.Errorf("%v: %s", c, rec.Body)
+		}
+	}
 }
 
 func TestUnknownRouteIsJSON404(t *testing.T) {

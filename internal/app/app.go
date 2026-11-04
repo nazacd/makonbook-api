@@ -20,6 +20,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
 	"github.com/nazacd/makonbook-api/internal/platform/r2"
 	"github.com/nazacd/makonbook-api/internal/platform/render"
+	"github.com/nazacd/makonbook-api/internal/platform/sms"
 	"github.com/nazacd/makonbook-api/internal/practice"
 	"github.com/nazacd/makonbook-api/internal/system"
 	"github.com/nazacd/makonbook-api/internal/system/systemdb"
@@ -54,6 +55,12 @@ type Deps struct {
 	AdminHost string
 	// Notifier tells the admins about parents' reports (Telegram, or the log).
 	Notifier alert.Notifier
+	// Accounts (spec 21): SMS sends the codes of sign-up and password reset,
+	// in SMSText ({code}); nil turns both off. Google turns on Google
+	// sign-in; nil leaves it off.
+	SMS     sms.Sender
+	SMSText string
+	Google  *auth.GoogleConfig
 }
 
 // Handler builds the complete HTTP handler: every feature's routes behind the
@@ -64,8 +71,14 @@ func Handler(d Deps) http.Handler {
 
 	directory := people.NewDirectory(d.Pool)
 	authSvc := auth.NewService(d.Pool, directory, auth.NewHasher())
+	if d.SMS != nil {
+		authSvc.WithSMS(d.SMS, d.SMSText, d.Log)
+	}
+	if d.Google != nil {
+		authSvc.WithGoogle(*d.Google)
+	}
 
-	system.NewHandler(systemdb.New(d.Pool), d.Pool).Register(mux)
+	system.NewHandler(systemdb.New(d.Pool), d.Pool).WithSignIn(authSvc.SignupEnabled(), authSvc.GoogleEnabled()).Register(mux)
 	authHandler := auth.NewHandler(authSvc, d.Location, d.TrustProxy)
 	authHandler.Register(mux)
 	lessonsSvc := lessons.NewService(d.Pool, d.Location)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -81,7 +82,25 @@ type Config struct {
 	// in with (internal/demo; demo.student and demo.teacher). Secret.
 	// Optional: without it there are no demo accounts.
 	DemoPassword string
+
+	// Accounts (spec 21). SMSProvider sends the codes of sign-up and password
+	// reset: "" (no sign-up or reset by SMS), "log" (development only: the
+	// code goes to the log) or "eskiz" (Eskiz.uz, with ESKIZ_EMAIL and
+	// ESKIZ_PASSWORD, a secret). SMSText is the message, with {code}; Eskiz
+	// sends only texts it has approved.
+	SMSProvider                          string
+	EskizEmail, EskizPassword, EskizFrom string
+	SMSText                              string
+	// Google sign-in: the OAuth client's id and secret (a secret); both or
+	// neither. It needs WebOrigin, the web app's origin (e.g.
+	// https://sat.makonbook.uz), which serves /v1/ from this API: Google sends
+	// people back to WebOrigin + /v1/auth/google/callback.
+	GoogleClientID, GoogleClientSecret string
+	WebOrigin                          string
 }
+
+// DefaultSMSText is the SMS with a sign-up or reset code ({code}).
+const DefaultSMSText = "SATMAKON: your code is {code}"
 
 // Load reads configuration through getenv (os.Getenv in production, a map
 // lookup in tests) and reports every invalid or missing variable at once.
@@ -205,7 +224,64 @@ func Load(getenv func(string) string) (Config, error) {
 		errs = append(errs, errors.New("DEMO_PASSWORD must be 8 to 128 characters"))
 	}
 
+	errs = append(errs, cfg.loadAccounts(getenv)...)
+
 	return cfg, errors.Join(errs...)
+}
+
+func (c *Config) loadAccounts(getenv func(string) string) (errs []error) {
+	c.SMSProvider = strings.ToLower(strings.TrimSpace(getenv("SMS_PROVIDER")))
+	c.EskizEmail = strings.TrimSpace(getenv("ESKIZ_EMAIL"))
+	c.EskizPassword = getenv("ESKIZ_PASSWORD")
+	c.EskizFrom = withDefault(strings.TrimSpace(getenv("ESKIZ_FROM")), "4546")
+	c.SMSText = withDefault(getenv("SMS_TEXT"), DefaultSMSText)
+	switch c.SMSProvider {
+	case "":
+	case "log":
+		if c.Env == EnvProduction {
+			errs = append(errs, errors.New("SMS_PROVIDER=log only writes codes to the log: not in production"))
+		}
+	case "eskiz":
+		if c.EskizEmail == "" || c.EskizPassword == "" {
+			errs = append(errs, errors.New("SMS_PROVIDER=eskiz needs ESKIZ_EMAIL and ESKIZ_PASSWORD"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("SMS_PROVIDER must be empty, \"log\" or \"eskiz\", got %q", c.SMSProvider))
+	}
+	if !strings.Contains(c.SMSText, "{code}") {
+		errs = append(errs, errors.New("SMS_TEXT must contain {code}"))
+	}
+
+	c.GoogleClientID = strings.TrimSpace(getenv("GOOGLE_CLIENT_ID"))
+	c.GoogleClientSecret = strings.TrimSpace(getenv("GOOGLE_CLIENT_SECRET"))
+	if (c.GoogleClientID == "") != (c.GoogleClientSecret == "") {
+		errs = append(errs, errors.New("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set together"))
+	}
+	if origin := strings.TrimSpace(getenv("WEB_ORIGIN")); origin != "" {
+		o, err := webOrigin(origin, c.Env)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		c.WebOrigin = o
+	} else if c.GoogleClientID != "" {
+		errs = append(errs, errors.New("WEB_ORIGIN is required for Google sign-in (e.g. https://sat.makonbook.uz)"))
+	}
+	return errs
+}
+
+// webOrigin checks an origin: https://host[:port], or plain http on this
+// computer during development. A trailing slash is dropped.
+func webOrigin(s, env string) (string, error) {
+	bad := fmt.Errorf("WEB_ORIGIN must be an origin like https://sat.makonbook.uz, got %q", s)
+	u, err := url.Parse(strings.TrimRight(s, "/"))
+	if err != nil || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+		return "", bad
+	}
+	local := u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1"
+	if u.Scheme != "https" && (u.Scheme != "http" || !local || env == EnvProduction) {
+		return "", bad
+	}
+	return u.Scheme + "://" + u.Host, nil
 }
 
 // RequireSync reports the settings the HolliHop sync needs but serve doesn't.

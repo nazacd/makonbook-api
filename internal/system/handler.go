@@ -23,12 +23,20 @@ type Pinger interface {
 }
 
 type Handler struct {
-	store Store
-	db    Pinger
+	store          Store
+	db             Pinger
+	signup, google bool
 }
 
 func NewHandler(store Store, db Pinger) *Handler {
 	return &Handler{store: store, db: db}
+}
+
+// WithSignIn says which ways in the app config offers (spec 21): sign-up
+// (and password reset) by SMS code, and Google sign-in.
+func (h *Handler) WithSignIn(signup, google bool) *Handler {
+	h.signup, h.google = signup, google
+	return h
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -64,6 +72,10 @@ type MinAppVersion struct {
 
 type AppConfig struct {
 	MinAppVersion MinAppVersion `json:"min_app_version"`
+	// Signup: people can sign up and reset their password with a code sent
+	// by SMS. Google: they can sign in with Google.
+	Signup bool `json:"signup"`
+	Google bool `json:"google"`
 }
 
 func (h *Handler) appConfig(w http.ResponseWriter, r *http.Request) {
@@ -74,7 +86,7 @@ func (h *Handler) appConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var cfg AppConfig
+	cfg := AppConfig{Signup: h.signup, Google: h.google}
 	if err := json.Unmarshal(raw, &cfg.MinAppVersion); err != nil {
 		httpx.Logger(r.Context()).Error("decode min_app_version", slog.Any("err", err))
 		httpx.WriteError(w, r, http.StatusInternalServerError, httpx.CodeInternal, "internal error")

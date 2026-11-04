@@ -90,6 +90,19 @@ type AuthSession struct {
 	RevokedAt  pgtype.Timestamptz
 }
 
+type AuthTicket struct {
+	TokenHash []byte
+	Purpose   string
+	Phone     pgtype.Text
+	GoogleSub pgtype.Text
+	Email     pgtype.Text
+	FirstName pgtype.Text
+	LastName  pgtype.Text
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+	UsedAt    pgtype.Timestamptz
+}
+
 type Credential struct {
 	PersonKind        string
 	PersonID          int32
@@ -118,6 +131,14 @@ type Enrollment struct {
 	BeginDate       pgtype.Date
 	EndDate         pgtype.Date
 	Weekdays        int16
+}
+
+type GoogleLink struct {
+	Sub        string
+	PersonKind string
+	PersonID   int32
+	Email      string
+	CreatedAt  pgtype.Timestamptz
 }
 
 type Group struct {
@@ -251,6 +272,19 @@ type ParkedQuestion struct {
 	Status          string
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+}
+
+type PhoneCode struct {
+	ID        int64
+	Phone     string
+	Purpose   string
+	Salt      []byte
+	CodeHash  []byte
+	Ip        string
+	Tries     int16
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+	UsedAt    pgtype.Timestamptz
 }
 
 type PracticeAttempt struct {

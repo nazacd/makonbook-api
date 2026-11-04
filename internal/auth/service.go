@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/nazacd/makonbook-api/internal/auth/authdb"
 	"github.com/nazacd/makonbook-api/internal/people"
+	"github.com/nazacd/makonbook-api/internal/platform/sms"
 )
 
 const (
@@ -55,6 +57,13 @@ type People interface {
 	ByLoginPhone(ctx context.Context, phone string) (people.Person, error)
 	Get(ctx context.Context, kind string, id int32) (people.Person, error)
 	Groups(ctx context.Context, kind string, id int32, today time.Time) ([]people.GroupInfo, error)
+	SetNames(ctx context.Context, kind string, id int32, firstName, lastName *string) error
+}
+
+// DB is the database (a pool): queries, and transactions for sign-up.
+type DB interface {
+	authdb.DBTX
+	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
 // Principal is the logged-in person behind a request.
@@ -71,14 +80,21 @@ type Principal struct {
 }
 
 type Service struct {
+	db     DB
 	q      *authdb.Queries
 	people People
 	hasher *Hasher
 	now    func() time.Time
+	log    *slog.Logger
+
+	// Accounts (spec 21): nil when not configured.
+	sms     sms.Sender
+	smsText string
+	google  *GoogleConfig
 }
 
-func NewService(db authdb.DBTX, p People, h *Hasher) *Service {
-	return &Service{q: authdb.New(db), people: p, hasher: h, now: time.Now}
+func NewService(db DB, p People, h *Hasher) *Service {
+	return &Service{db: db, q: authdb.New(db), people: p, hasher: h, now: time.Now, log: slog.New(slog.DiscardHandler)}
 }
 
 // LoginResult is a new session.
@@ -120,13 +136,18 @@ func (s *Service) Login(ctx context.Context, login, password, deviceID string) (
 	if err := s.q.ResetLoginFailures(ctx, authdb.ResetLoginFailuresParams{PersonKind: p.Kind, PersonID: p.ID}); err != nil {
 		return LoginResult{}, fmt.Errorf("reset failures: %w", err)
 	}
+	return s.openSession(ctx, s.q, p, deviceID, usesDefault(p, custom))
+}
 
+// openSession starts a session for p (q: the pool's queries, or a
+// transaction's).
+func (s *Service) openSession(ctx context.Context, q *authdb.Queries, p people.Person, deviceID string, mustChange bool) (LoginResult, error) {
 	token, hash, err := newToken()
 	if err != nil {
 		return LoginResult{}, err
 	}
 	expires := s.now().Add(SessionTTL)
-	row, err := s.q.CreateSession(ctx, authdb.CreateSessionParams{
+	row, err := q.CreateSession(ctx, authdb.CreateSessionParams{
 		TokenHash:  hash,
 		PersonKind: p.Kind,
 		PersonID:   p.ID,
@@ -139,8 +160,16 @@ func (s *Service) Login(ctx context.Context, login, password, deviceID string) (
 	return LoginResult{
 		Token:     token,
 		ExpiresAt: expires,
-		Principal: Principal{SessionID: row.ID, Kind: p.Kind, ID: p.ID, MustChangePassword: !custom, Registered: p.Registered},
+		Principal: Principal{SessionID: row.ID, Kind: p.Kind, ID: p.ID, MustChangePassword: mustChange, Registered: p.Registered},
 	}, nil
+}
+
+// usesDefault: the person has no password of their own, so the default one
+// (the last 4 digits of their phone) applies and must be replaced. People who
+// signed up themselves have no default password: without their own they
+// sign in only with Google (spec 21).
+func usesDefault(p people.Person, custom bool) bool {
+	return !custom && !p.Registered
 }
 
 // lookup resolves a login identifier: phone numbers go through people's login
@@ -196,8 +225,8 @@ func (s *Service) checkPassword(p people.Person, c authdb.Credential, password s
 	}
 	s.hasher.Burn() // same cost as a real check
 	def := defaultPassword(p.LoginPhone)
-	if def == "" {
-		return false, false // no valid phone: no default password
+	if def == "" || p.Registered {
+		return false, false // no valid phone, or signed up themselves: no default password
 	}
 	return false, subtle.ConstantTimeCompare([]byte(password), []byte(def)) == 1
 }
@@ -242,7 +271,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (Principal, er
 	}
 
 	_, custom := ownPassword(row.PasswordHash, row.PasswordChangedAt, p)
-	return Principal{SessionID: row.ID, Kind: p.Kind, ID: p.ID, MustChangePassword: !custom, Registered: p.Registered}, nil
+	return Principal{SessionID: row.ID, Kind: p.Kind, ID: p.ID, MustChangePassword: usesDefault(p, custom), Registered: p.Registered}, nil
 }
 
 // ChangePassword replaces the password (the default one included) after
@@ -324,14 +353,27 @@ func (s *Service) ResetToDefault(ctx context.Context, kind string, id int32) (pe
 
 // Profile is the logged-in person as shown to the app.
 type Profile struct {
-	Kind               string             `json:"kind"`
-	ID                 int32              `json:"id"`
-	FirstName          string             `json:"first_name"`
-	LastName           string             `json:"last_name"`
-	Username           *string            `json:"username"`
-	MustChangePassword bool               `json:"must_change_password"`
-	Groups             []people.GroupInfo `json:"groups"`
+	Kind string `json:"kind"`
+	ID   int32  `json:"id"`
+	// The names the person chose (PUT /v1/me/profile), else HolliHop's.
+	FirstName          string  `json:"first_name"`
+	LastName           string  `json:"last_name"`
+	Username           *string `json:"username"`
+	MustChangePassword bool    `json:"must_change_password"`
+	// Status: "registered" (signed up themselves, not a SAT MAKON student
+	// yet) or "enrolled" (in HolliHop; teachers too).
+	Status      string             `json:"status"`
+	Phone       *string            `json:"phone"`        // the login phone, E.164
+	Google      bool               `json:"google"`       // a Google account is linked
+	HasPassword bool               `json:"has_password"` // their own, not the default one
+	Groups      []people.GroupInfo `json:"groups"`
 }
+
+// Profile statuses.
+const (
+	StatusEnrolled   = "enrolled"
+	StatusRegistered = "registered"
+)
 
 // Profile returns the principal's profile with their groups as of today
 // (a date in the school's time zone, as midnight UTC).
@@ -348,13 +390,27 @@ func (s *Service) Profile(ctx context.Context, pr Principal, today time.Time) (P
 	if err != nil {
 		return Profile{}, err
 	}
+	google, err := s.q.HasGoogleLink(ctx, authdb.HasGoogleLinkParams{PersonKind: p.Kind, PersonID: p.ID})
+	if err != nil {
+		return Profile{}, fmt.Errorf("google link: %w", err)
+	}
+	_, hasPassword := ownPassword(cred.PasswordHash, cred.PasswordChangedAt, p)
 	prof := Profile{
 		Kind:               p.Kind,
 		ID:                 p.ID,
 		FirstName:          p.FirstName,
 		LastName:           p.LastName,
 		MustChangePassword: pr.MustChangePassword,
+		Status:             StatusEnrolled,
+		Google:             google,
+		HasPassword:        hasPassword,
 		Groups:             groups,
+	}
+	if p.Registered {
+		prof.Status = StatusRegistered
+	}
+	if p.LoginPhone != "" {
+		prof.Phone = &p.LoginPhone
 	}
 	if cred.Username.Valid {
 		prof.Username = &cred.Username.String
