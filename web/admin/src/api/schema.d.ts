@@ -175,6 +175,15 @@ export interface paths {
          * @description The ticket is single-use and good for 15 minutes, for the purpose the
          *     code was sent for: `/v1/auth/signup` takes a `signup` ticket,
          *     `/v1/auth/reset` a `reset` one.
+         *
+         *     For `signup` the answer also says who already signs in with the
+         *     number (`account`): null (nobody: sign-up makes an account),
+         *     `{"status": "registered"}` (someone signed up with it: sign-up is
+         *     refused, `409 phone_taken`; offer sign-in and *Forgot your
+         *     password?*), or `{"status": "enrolled", "kind", "name"}` (a SAT MAKON
+         *     student or teacher: ask "Is this you?" with `name`, e.g. "Diyora A.",
+         *     and on yes sign up, which signs into that account). A `reset` answer
+         *     has `ticket` only.
          */
         post: operations["verifyPhoneCode"];
         delete?: never;
@@ -193,14 +202,19 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Create a student account, or sign into the one the phone has
-         * @description Needs a `signup` ticket from `/v1/auth/phone/verify`. If an active
-         *     student or teacher already signs in with that phone (from HolliHop, or
-         *     signed up before), no account is made: this signs into theirs
-         *     (`existing: true`), sets the password if one is given (their other
-         *     sessions end, as after a password change) and links the Google account
-         *     if one is given; the names are then ignored (they are checked all the
-         *     same). Otherwise a registered student is made with these names. Either way it answers as a login.
+         * Create a student account, or sign into the SAT MAKON account the phone has
+         * @description Needs a `signup` ticket from `/v1/auth/phone/verify`, whose `account`
+         *     says which case this is:
+         *     - an **enrolled** person (a student or teacher in HolliHop) signs in
+         *       with that phone: no account is made; this signs into theirs
+         *       (`existing: true`; the client asked "Is this you?" first), sets the
+         *       password if one is given (their other sessions end, as after a
+         *       password change) and links the Google account if one is given. The
+         *       names are ignored and may be null.
+         *     - a **registered** student (signed up before) does: `409 phone_taken`;
+         *       nothing changes (no session, no Google link, same password).
+         *     - nobody does: a registered student is made with these names (required
+         *       then) and signed in.
          *     Nothing is spent when a request is turned down.
          */
         post: operations["signup"];
@@ -2371,7 +2385,7 @@ export interface components {
                  * @description Stable machine-readable code.
                  * @enum {string}
                  */
-                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "google_unavailable" | "enrolled_only";
+                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "phone_taken" | "google_unavailable" | "enrolled_only";
                 /** @description Human-readable explanation; may change. */
                 message: string;
                 /** @description For a rejected form (`invalid_question`): what is wrong, per field (e.g. `stem`, `choices.B`). */
@@ -2758,6 +2772,21 @@ export interface operations {
                 content: {
                     "application/json": {
                         ticket: string;
+                        /** @description `signup` only (always present then): who signs in with this number; null for nobody */
+                        account?: null | {
+                            /** @enum {string} */
+                            status: "registered";
+                        } | {
+                            /** @enum {string} */
+                            status: "enrolled";
+                            /** @enum {string} */
+                            kind: "student" | "teacher";
+                            /**
+                             * @description First name and the last name's initial (their own name if they set one)
+                             * @example Diyora A.
+                             */
+                            name: string;
+                        };
                     };
                 };
             };
@@ -2813,10 +2842,10 @@ export interface operations {
                 "application/json": {
                     /** @description A `signup` ticket */
                     ticket: string;
-                    /** @description 1–60 characters after trimming */
-                    first_name: string;
-                    /** @description 1–60 characters after trimming */
-                    last_name: string;
+                    /** @description 1–60 characters after trimming; needed only for a new account */
+                    first_name: string | null;
+                    /** @description 1–60 characters after trimming; needed only for a new account */
+                    last_name: string | null;
                     /** @description The rules of `/v1/auth/password`; null only with a `google_ticket` */
                     password: string | null;
                     /** @description From `/v1/auth/google/ticket` (`needs_phone`), to sign in with Google from then on */
@@ -2839,7 +2868,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
-            /** @description `google_taken`: that Google account is linked to someone else */
+            /** @description `phone_taken`: a registered student already signs in with this phone; `google_taken`: that Google account is linked to someone else */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -2848,7 +2877,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `invalid_ticket` (a ticket is unknown, used, expired or for another purpose), `weak_password`, `invalid_profile` */
+            /** @description `invalid_ticket` (a ticket is unknown, used, expired or for another purpose), `weak_password`, `invalid_profile` (a new account's names) */
             422: {
                 headers: {
                     [name: string]: unknown;

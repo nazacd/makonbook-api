@@ -122,6 +122,12 @@ func (a accounts) verify(phone, code, purpose string) response {
 // ticket proves phone (E.164) for purpose, through an SMS code.
 func (a accounts) ticket(phone, purpose string) string {
 	a.t.Helper()
+	return a.verified(phone, purpose).body["ticket"].(string)
+}
+
+// verified is the answer to the right code for phone.
+func (a accounts) verified(phone, purpose string) response {
+	a.t.Helper()
 	a.clock.add(2 * time.Minute) // past the per-phone minute
 	n := a.sms.count(phone)
 	if r := a.start(phone, purpose); r.status != http.StatusOK {
@@ -131,7 +137,7 @@ func (a accounts) ticket(phone, purpose string) string {
 	if r.status != http.StatusOK {
 		a.t.Fatalf("verify %s: %d %v", phone, r.status, r.body)
 	}
-	return r.body["ticket"].(string)
+	return r
 }
 
 func retryAfterSeconds(t *testing.T, r response) int {
@@ -212,7 +218,7 @@ func TestPhoneCodes(t *testing.T) {
 	}
 	code = a.sms.code(t, phone, 3)
 	r = a.verify("903000001", code[:3]+" "+code[3:], PurposeSignup)
-	if r.status != http.StatusOK || len(r.body["ticket"].(string)) < 40 {
+	if account, said := r.body["account"]; r.status != http.StatusOK || len(r.body["ticket"].(string)) < 40 || !said || account != nil {
 		t.Fatalf("right code: %d %v", r.status, r.body)
 	}
 	if r := a.verify(phone, code, PurposeSignup); r.status != http.StatusGone {
@@ -277,7 +283,7 @@ func TestSMSOff(t *testing.T) {
 	}
 }
 
-func signupBody(ticket, first, last string, password, google any) map[string]any {
+func signupBody(ticket string, first, last, password, google any) map[string]any {
 	return map[string]any{"ticket": ticket, "first_name": first, "last_name": last, "password": password, "google_ticket": google}
 }
 
@@ -295,6 +301,7 @@ func TestSignupNewAccount(t *testing.T) {
 		{signupBody(ticket, "Malika", "Yusupova", "pass903000002", nil), CodeWeakPassword}, // contains the phone
 		{signupBody(ticket, "Malika", "Yusupova", nil, nil), CodeWeakPassword},             // no password, no Google
 		{signupBody(ticket, "  ", "Yusupova", "a good password", nil), CodeInvalidProfile},
+		{signupBody(ticket, nil, nil, "a good password", nil), CodeInvalidProfile},
 		{signupBody(ticket, strings.Repeat("я", 61), "Yusupova", "a good password", nil), CodeInvalidProfile},
 		{signupBody("nope", "Malika", "Yusupova", "a good password", nil), CodeInvalidTicket},
 		{signupBody(ticket, "Malika", "Yusupova", "a good password", "nope"), CodeInvalidTicket},
@@ -339,14 +346,43 @@ func TestSignupNewAccount(t *testing.T) {
 		t.Errorf("clearing a registered student's name: %d %v", r.status, r.body)
 	}
 
-	// Asking for a sign-up code again for the same number is fine; signing
-	// up again signs into this account.
-	r = a.do("POST", "/v1/auth/signup", "", signupBody(a.ticket(phone, PurposeSignup), "Someone", "Else", "another password", nil))
-	if r.status != http.StatusOK || r.body["existing"] != true || r.body["user"].(map[string]any)["first_name"] != "Malik" {
-		t.Errorf("signup with a registered number: %d %v", r.status, r.body)
+	// Signing up again with the number: the code says whose it is, and
+	// sign-up is refused, with or without Google; nothing changes.
+	v := a.verified(phone, PurposeSignup)
+	if account, _ := v.body["account"].(map[string]any); len(account) != 1 || account["status"] != StatusRegistered {
+		t.Errorf("verify a registered number: %v", v.body)
 	}
-	if r := a.do("GET", "/v1/me", token, nil); r.status != http.StatusUnauthorized {
-		t.Errorf("the old session lives on after a new password: %d", r.status)
+	var sessions int
+	if err := a.pool.QueryRow(t.Context(), "SELECT count(*) FROM auth_sessions").Scan(&sessions); err != nil {
+		t.Fatal(err)
+	}
+	google, err := a.svc.newTicket(t.Context(), a.svc.q, ticketData{purpose: ticketGoogleSignup,
+		google: &GoogleAccount{Sub: "g-9", Email: "g9@gmail.com"}}, GoogleSignupTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []map[string]any{
+		signupBody(v.body["ticket"].(string), "Someone", "Else", "another password", nil),
+		signupBody(v.body["ticket"].(string), nil, nil, nil, google),
+	} {
+		if r := a.do("POST", "/v1/auth/signup", "", body); r.status != http.StatusConflict || r.code() != CodePhoneTaken || r.body["token"] != nil {
+			t.Errorf("signup with a registered number: %d %v", r.status, r.body)
+		}
+	}
+	var after, links int
+	if err := a.pool.QueryRow(t.Context(), "SELECT (SELECT count(*) FROM auth_sessions), (SELECT count(*) FROM google_links)").Scan(&after, &links); err != nil {
+		t.Fatal(err)
+	}
+	if after != sessions || links != 0 {
+		t.Errorf("sessions %d → %d, Google links %d", sessions, after, links)
+	}
+	if r := a.do("GET", "/v1/me", token, nil); r.status != http.StatusOK || r.body["google"] != false {
+		t.Errorf("the account changed: %d %v", r.status, r.body)
+	}
+	a.mustLogin(phone, "a good password")
+	// A reset's answer says nothing about the account.
+	if r := a.verified(phone, PurposeReset); r.body["account"] != nil || len(r.body) != 1 {
+		t.Errorf("verify for a reset: %v", r.body)
 	}
 }
 
@@ -364,7 +400,13 @@ func TestSignupExistingAccount(t *testing.T) {
 		t.Fatalf("not locked: %d %v", r.status, r.body)
 	}
 
-	r := a.do("POST", "/v1/auth/signup", "", signupBody(a.ticket(phone, PurposeSignup), "Whoever", "Typed", "my own password", nil))
+	// The code tells whose number it is: the client asks "is this you?".
+	v := a.verified(phone, PurposeSignup)
+	if account, _ := v.body["account"].(map[string]any); account["status"] != StatusEnrolled || account["kind"] != "student" || account["name"] != "Aziz K." {
+		t.Errorf("verify an enrolled student's number: %v", v.body)
+	}
+	// Yes: their account, with the password chosen; names aren't needed.
+	r := a.do("POST", "/v1/auth/signup", "", signupBody(v.body["ticket"].(string), nil, "", "my own password", nil))
 	if r.status != http.StatusOK || r.body["existing"] != true {
 		t.Fatalf("signup: %d %v", r.status, r.body)
 	}
@@ -384,10 +426,28 @@ func TestSignupExistingAccount(t *testing.T) {
 		t.Errorf("self-registered students: %d %v", n, err)
 	}
 
-	// A teacher's number too.
-	r = a.do("POST", "/v1/auth/signup", "", signupBody(a.ticket("+998901000010", PurposeSignup), "A", "B", "teacher password", nil))
+	// A teacher's number too, with the name they chose for themselves.
+	first := "Alisher"
+	if err := people.NewDirectory(a.pool).SetNames(t.Context(), people.KindTeacher, 10, &first, nil); err != nil {
+		t.Fatal(err)
+	}
+	v = a.verified("+998901000010", PurposeSignup)
+	if account, _ := v.body["account"].(map[string]any); account["status"] != StatusEnrolled || account["kind"] != "teacher" || account["name"] != "Alisher V." {
+		t.Errorf("verify a teacher's number: %v", v.body)
+	}
+	r = a.do("POST", "/v1/auth/signup", "", signupBody(v.body["ticket"].(string), nil, nil, "teacher password", nil))
 	if r.status != http.StatusOK || r.body["existing"] != true || r.body["user"].(map[string]any)["kind"] != "teacher" {
 		t.Errorf("teacher: %d %v", r.status, r.body)
+	}
+}
+
+func TestShortName(t *testing.T) {
+	for in, want := range map[[2]string]string{
+		{"Diyora", "Abdullayeva"}: "Diyora A.", {" Ali ", "valiyev"}: "Ali V.", {"Ali", ""}: "Ali", {"Шахзода", "Юсупова"}: "Шахзода Ю.",
+	} {
+		if got := shortName(in[0], in[1]); got != want {
+			t.Errorf("shortName(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

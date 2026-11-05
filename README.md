@@ -136,7 +136,8 @@ starts again from the default password. Details: spec section 7.
 
 Anyone can sign up on the web as a student: a 6-digit code by SMS (Eskiz.uz)
 proves an Uzbek phone, or Google proves who they are and then the phone. A
-phone that already signs someone in signs into that account instead. These
+SAT MAKON student's or teacher's phone signs into their account instead (once
+they confirm it is them); a phone someone already signed up with is refused. These
 "registered" students are rows of `students` with `source = 'self'` and ids
 from −1000001 down; the sync never touches them, except that a new HolliHop
 student with the same verified phone takes over the row (re-keyed to the

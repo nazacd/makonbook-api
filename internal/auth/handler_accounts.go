@@ -24,6 +24,7 @@ const (
 	CodeInvalidProfile    = "invalid_profile"
 	CodeNoAccount         = "no_account"
 	CodeGoogleTaken       = "google_taken"
+	CodePhoneTaken        = "phone_taken"
 	CodeGoogleUnavailable = "google_unavailable"
 )
 
@@ -88,7 +89,7 @@ func (h *Handler) phoneVerify(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ticket, err := h.svc.VerifyPhone(r.Context(), req.Phone, req.Code, req.Purpose)
+	ticket, owner, err := h.svc.VerifyPhone(r.Context(), req.Phone, req.Code, req.Purpose)
 	var wrong *WrongCodeError
 	switch {
 	case errors.As(err, &wrong) && wrong.TriesLeft == 0:
@@ -99,9 +100,18 @@ func (h *Handler) phoneVerify(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrCodeExpired):
 		httpx.WriteError(w, r, http.StatusGone, CodeCodeExpired, err.Error())
 	case h.accountsError(w, r, "verify code", err):
+	case req.Purpose == PurposeSignup:
+		httpx.WriteJSON(w, r, http.StatusOK, verifySignupResponse{Ticket: ticket, Account: owner})
 	default:
 		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"ticket": ticket})
 	}
+}
+
+// verifySignupResponse: the ticket, and who already signs in with the phone
+// (null: nobody).
+type verifySignupResponse struct {
+	Ticket  string      `json:"ticket"`
+	Account *PhoneOwner `json:"account"`
 }
 
 // signupResponse is loginResponse with whether the phone had an account.
@@ -293,6 +303,8 @@ func (h *Handler) accountsError(w http.ResponseWriter, r *http.Request, what str
 		httpx.WriteError(w, r, http.StatusNotFound, CodeNoAccount, err.Error())
 	case errors.Is(err, ErrGoogleTaken):
 		httpx.WriteError(w, r, http.StatusConflict, CodeGoogleTaken, err.Error())
+	case errors.Is(err, ErrPhoneTaken):
+		httpx.WriteError(w, r, http.StatusConflict, CodePhoneTaken, err.Error())
 	default:
 		h.internal(w, r, what, err)
 	}

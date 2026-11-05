@@ -51,7 +51,7 @@ enrol).
 | D21 | **Every question that isn't green gets an AI fix** (even made up, labelled so). It is approved one of two ways: by an **editor** in the panel (a list of trusted teachers granted by super admins), or by a **vote of the teachers' Telegram group** on the original next to the fixed version. No blind solving. | Changed 2026-10-20 (was: reviewers solve blind first). See 9.4. |
 | D22 | **Sign-up is open to everyone, for student accounts only**; teachers and support teachers come only from HolliHop. A new account proves a phone number by **SMS code** (Eskiz.uz); **Google sign-in** exists too. Phone + password login is unchanged. | 2026-11. See 21. |
 | D23 | Self-registered students are **students like the others**, in `students` (`source = 'self'`, ids −1000001 and down). When the same verified phone shows up in HolliHop as a **new** student, the sync **re-keys their row to the HolliHop ClientId**: one account, keeping everything they did. A person **already stored** from HolliHop who gets that phone is **not merged**: admins see a data-quality issue. | Merging two histories is left to people (an open item). |
-| D24 | A **sign-up whose verified phone already signs someone in** (an active student or teacher) makes no account: it signs into that one, sets the password chosen and links Google. | Proving the phone is proving the account (as a reset). |
+| D24 | A **sign-up whose verified phone already signs in an enrolled person** (a HolliHop student or teacher) makes no account: the client shows whose it is ("Diyora A. — is this you?") and, on yes, sign-up signs into that account, sets the password chosen and links Google. A number a **registered** student already has refuses sign-up ("This phone number already exists": sign in or reset the password). | Proving the phone is proving the account (as a reset). Changed 2026-11-05 (was: any existing account was signed into without asking). |
 | D25 | People may **set their own name**; the sync never overwrites it. They see it; teachers, admins and parents keep seeing HolliHop's. Groups, classes and attendance stay HolliHop-only. | |
 | D26 | **Registered** (not yet enrolled) students see the mock tests **DAY1–DAY10** only; the rest of practice (statistics, Ask later, reports, goals) and the vocabulary are open to them. Enrolled students see everything, as before. | `practice_tests.open_to_all`. |
 | D27 | Registered students **may sign in to the phone app** (no classes; DAY1–DAY10 open). | For now; **revisit** (the app was built for SAT MAKON's students). |
@@ -783,11 +783,15 @@ sign-up, reset, Google, own names), `internal/people` (self-registered students,
   limits behave the same too), and the SMS goes only to a number that has an account, in the background, so
   the time taken says nothing either. A sign-up SMS that fails answers `503 sms_unavailable`.
 - `POST /v1/auth/phone/verify {phone, code, purpose}` → `{ticket}`: single-use, **15 minutes**, for that purpose.
+  For `signup` it also says whose the number is (`account`, D24): `null` (nobody), `{"status": "registered"}`
+  (a registered student), or `{"status": "enrolled", "kind": "student"|"teacher", "name": "Diyora A."}` (first
+  name and the last name's initial, their own name if they set one). Proving the phone is what earns this. A
+  `reset` answer has `ticket` only.
   Wrong: `422 invalid_code` (the message says how many tries are left); the 5th wrong one spends the code:
   `429 too_many_tries` (`Retry-After`: when a new code can be sent); expired, used, replaced or never sent:
   `410 code_expired`.
 - Tickets (`auth_tickets`) are 32 random bytes, stored as SHA-256, spent in the same transaction as what they
-  allow; a request that is turned down (weak password, bad name, Google taken) spends nothing.
+  allow; a request that is turned down (weak password, bad name, phone or Google taken) spends nothing.
 - Gateway: `SMS_PROVIDER=eskiz` — Eskiz.uz (`POST notify.eskiz.uz/api/auth/login` with the account's email and
   password gives a JWT, kept and renewed an hour before it expires or on a 401; `POST /api/message/sms/send`
   with `mobile_phone` (digits), `message`, `from`). Eskiz sends only texts it has approved: `SMS_TEXT`
@@ -797,14 +801,18 @@ sign-up, reset, Google, own names), `internal/people` (self-registered students,
   `signup: false`).
 
 ### 21.3 Sign-up and reset
-- `POST /v1/auth/signup {ticket, first_name, last_name, password|null, google_ticket|null}` (a `signup`
-  ticket; names 1–60 characters after trimming, no control characters, else `422 invalid_profile`; the
-  password follows section 7, else `422 weak_password`; null only with a `google_ticket`):
-  - the phone already signs in an **active student or teacher** (D24): no account is made; it signs into
-    theirs, sets the password if given (their other sessions end, as after a password change; the lockout
-    clears) and links the Google account if given; the names are checked but not used;
-  - otherwise a registered student is made with these names (stored as the names, not as overrides: at
-    enrolment HolliHop's names replace them, unless they set their own since) and signed in.
+- `POST /v1/auth/signup {ticket, first_name|null, last_name|null, password|null, google_ticket|null}` (a
+  `signup` ticket; the password follows section 7, else `422 weak_password`; null only with a
+  `google_ticket`):
+  - the phone signs in an **enrolled** person, a HolliHop student or teacher (D24; the client asked "is this
+    you?"): no account is made; it signs into theirs, sets the password if given (their other sessions end, as
+    after a password change; the lockout clears) and links the Google account if given; the names are
+    ignored and may be null;
+  - the phone signs in a **registered** student: `409 phone_taken`, and nothing changes (no session, no Google
+    link, the same password);
+  - nobody's: a registered student is made with these names (required: 1–60 characters after trimming, no
+    control characters, else `422 invalid_profile`; stored as the names, not as overrides: at enrolment
+    HolliHop's names replace them, unless they set their own since) and signed in.
   - Answers as a login plus `existing`. `409 google_taken` if the Google account is linked to someone else who
     is active (a link to someone who left moves).
 - `POST /v1/auth/reset {ticket, password}` (a `reset` ticket): sets the password of whoever signs in with that
