@@ -55,6 +55,7 @@ enrol).
 | D25 | People may **set their own name**; the sync never overwrites it. They see it; teachers, admins and parents keep seeing HolliHop's. Groups, classes and attendance stay HolliHop-only. | |
 | D26 | **Registered** (not yet enrolled) students see the mock tests **DAY1–DAY10** only; the rest of practice (statistics, Ask later, reports, goals) and the vocabulary are open to them. Enrolled students see everything, as before. | `practice_tests.open_to_all`. |
 | D27 | Registered students **may sign in to the phone app** (no classes; DAY1–DAY10 open). | For now; **revisit** (the app was built for SAT MAKON's students). |
+| D28 | **Sign-up starts with an identity**: an **email** proved by a 6-digit code sent to it, or **Google**. The **phone** (SMS code) comes second, verified *with* that identity, and only then is the account made or linked. Each identity can show the owner of **one phone at most** (`identity_spent` after). People can sign in with their email too. Phone-first sign-up is gone. | 2026-11-06. Stops a phone number from being looked up without an email or Google account behind it; only the web used phone-first sign-up. |
 
 ## 3. System overview
 
@@ -617,6 +618,9 @@ students.source ('hollihop' | 'self'), students/teachers.first_name_custom, last
             -- every FK to students is ON UPDATE CASCADE (enrolment re-keys)
 practice_tests.open_to_all                           -- DAY1–DAY10: registered students take them
 phone_codes(id, phone, purpose (signup|reset), salt, code_hash NULL, ip, tries, created_at, expires_at, used_at)
+email_codes(id, email, salt, code_hash, ip, tries, created_at, expires_at, used_at)
+credentials.email UNIQUE NULL                        -- lower case; sign-in identifier
+auth_tickets.identity (a phone ticket's identity ticket hash), revealed_phone (an identity's one shown phone)
 auth_tickets(token_hash PK, purpose (signup|reset|google|google_signup), phone NULL, google_sub NULL, email,
              first_name, last_name, created_at, expires_at, used_at)
 google_links(sub PK, person_kind, person_id, email, created_at, UNIQUE(person_kind, person_id))
@@ -651,9 +655,11 @@ GET  /v1/me                            profile, role, groups
 PUT  /v1/me/profile                    {first_name, last_name} — own names (21)
 
 # accounts (21)
+POST /v1/auth/email/start              {email} → {resend_in, expires_in}; a code by email (sign-up's first step)
+POST /v1/auth/email/verify             {email, code} → {email_ticket} | 409 email_taken
 POST /v1/auth/phone/start              {phone, purpose: signup|reset} → {resend_in, expires_in}; SMS code
-POST /v1/auth/phone/verify             {phone, code, purpose} → {ticket}
-POST /v1/auth/signup                   {ticket, first_name, last_name, password|null, google_ticket|null} → login + existing
+POST /v1/auth/phone/verify             {phone, code, purpose, email_ticket|google_ticket} → {ticket, account}
+POST /v1/auth/signup                   {ticket, email_ticket|google_ticket, first_name, last_name, password|null} → login + existing
 POST /v1/auth/reset                    {ticket, password} → login
 GET  /v1/auth/google/start?return=     302 to Google (PKCE, state cookie)
 GET  /v1/auth/google/callback          302 to WEB_ORIGIN/auth/google#ticket=…&return=… or #error=…
@@ -754,8 +760,13 @@ Deferred on purpose: stricter device policy (D14), substitute-teacher handling w
 
 Sign-up is open to everyone, for **student accounts only** (D22); teachers and support teachers come only
 from HolliHop. Phone + password login (section 7) is unchanged. Built in `internal/auth` (codes, tickets,
-sign-up, reset, Google, own names), `internal/people` (self-registered students, the enrolment link) and
-`internal/platform/sms` (the gateway).
+sign-up, reset, Google, own names), `internal/people` (self-registered students, the enrolment link),
+`internal/platform/sms` (the SMS gateway) and `internal/platform/mail` (SMTP).
+
+**Order of a sign-up (D28):** (1) an identity: an email (`/v1/auth/email/start`, `/v1/auth/email/verify` →
+`email_ticket`) or Google (`/v1/auth/google/*` → `google_ticket`); (2) the phone, by SMS code, with that
+identity (`/v1/auth/phone/start`, `/v1/auth/phone/verify` → `ticket` and whose the number is); (3)
+`/v1/auth/signup` with the phone ticket and the same identity.
 
 ### 21.1 Who is who
 - **Registered** student (`Profile.status = "registered"`): signed up themselves; a row in `students` with
@@ -773,7 +784,18 @@ sign-up, reset, Google, own names), `internal/people` (self-registered students,
   open. Enrolled students and teachers: no change.
 - They may sign in to the phone app (D27).
 
-### 21.2 Codes by SMS
+### 21.2 Codes by email and SMS
+- `POST /v1/auth/email/start {email}` → `{resend_in: 60, expires_in: 600}`. The address is trimmed and
+  lower-cased and must be a plain `name@domain.tld` (else `422 invalid_email`). Codes follow the SMS rules below
+  (`email_codes`: hashed, 10 minutes, 5 tries, per address one a minute and 5 a day, per network 20 an hour).
+  Sent by SMTP (`SMTP_HOST`, `SMTP_PORT` 587 with STARTTLS or 465 with TLS, `SMTP_USERNAME`, `SMTP_PASSWORD`,
+  `MAIL_FROM`); `SMTP_HOST=log` writes the code to the log (development; refused in production); empty is off
+  (`503 email_unavailable`, also when sending fails).
+- `POST /v1/auth/email/verify {email, code}` → `{email_ticket}` (single-use, **30 minutes**: the identity for the
+  phone step), or `409 email_taken` when an active account already has the address (the code proved it, so
+  saying so is fine). Errors as for the phone code.
+- The email is kept in `credentials.email` (unique, lower case); someone who left gives theirs up when another
+  person proves it. `POST /v1/auth/login` takes an email as the identifier too (anything with `@`).
 - `POST /v1/auth/phone/start {phone, purpose: signup|reset}` → `{resend_in: 60, expires_in: 600}`. Uzbek numbers
   only (`+998`, normalised as in section 5), else `422 invalid_phone`. A **6-digit** code from `crypto/rand`,
   stored as SHA-256 with a random salt (`phone_codes`), good for **10 minutes and 5 tries**; only a phone's
@@ -782,8 +804,12 @@ sign-up, reset, Google, own names), `internal/people` (self-registered students,
   answer is the same whether or not anyone signs in with the number (a row without a code is stored, so the
   limits behave the same too), and the SMS goes only to a number that has an account, in the background, so
   the time taken says nothing either. A sign-up SMS that fails answers `503 sms_unavailable`.
-- `POST /v1/auth/phone/verify {phone, code, purpose}` → `{ticket}`: single-use, **15 minutes**, for that purpose.
-  For `signup` it also says whose the number is (`account`, D24): `null` (nobody), `{"status": "registered"}`
+- `POST /v1/auth/phone/verify {phone, code, purpose, email_ticket|google_ticket}` → `{ticket}`: single-use,
+  **15 minutes**, for that purpose. For `signup` exactly one identity is required (`422 invalid_ticket`
+  otherwise, before the code is tried), and the phone ticket is good for sign-up with that identity only. An
+  identity shows the owner of **one phone at most**: once a verify showed a non-null `account`, verifying any
+  other phone with it is `409 identity_spent` (the same phone again is fine; while every phone it verified had
+  nobody, it isn't spent). For `signup` it also says whose the number is (`account`, D24): `null` (nobody), `{"status": "registered"}`
   (a registered student), or `{"status": "enrolled", "kind": "student"|"teacher", "name": "Diyora A."}` (first
   name and the last name's initial, their own name if they set one). Proving the phone is what earns this. A
   `reset` answer has `ticket` only.
@@ -801,16 +827,18 @@ sign-up, reset, Google, own names), `internal/people` (self-registered students,
   `signup: false`).
 
 ### 21.3 Sign-up and reset
-- `POST /v1/auth/signup {ticket, first_name|null, last_name|null, password|null, google_ticket|null}` (a
-  `signup` ticket; the password follows section 7, else `422 weak_password`; null only with a
-  `google_ticket`):
+- `POST /v1/auth/signup {ticket, email_ticket|null, google_ticket|null, first_name|null, last_name|null,
+  password|null}` (a `signup` ticket and the identity it was verified with, exactly one, else `422
+  invalid_ticket`; the password follows section 7, else `422 weak_password`; required with an email, may be null
+  with Google):
   - the phone signs in an **enrolled** person, a HolliHop student or teacher (D24; the client asked "is this
     you?"): no account is made; it signs into theirs, sets the password if given (their other sessions end, as
-    after a password change; the lockout clears) and links the Google account if given; the names are
-    ignored and may be null;
-  - the phone signs in a **registered** student: `409 phone_taken`, and nothing changes (no session, no Google
-    link, the same password);
-  - nobody's: a registered student is made with these names (required: 1–60 characters after trimming, no
+    after a password change; the lockout clears), adds the email if no other active account has it (else
+    leaves it out), or links the Google account; the names are ignored and may be null;
+  - the phone signs in a **registered** student: `409 phone_taken`, and nothing changes (no session, no email
+    or Google link, the same password);
+  - nobody's: a registered student is made with the phone, the email (`409 email_taken` if another account took
+    it meanwhile) or Google account, the password, and these names (required: 1–60 characters after trimming, no
     control characters, else `422 invalid_profile`; stored as the names, not as overrides: at enrolment
     HolliHop's names replace them, unless they set their own since) and signed in.
   - Answers as a login plus `existing`. `409 google_taken` if the Google account is linked to someone else who
@@ -847,6 +875,8 @@ sign-up, reset, Google, own names), `internal/people` (self-registered students,
   `first_name_custom` / `last_name_custom`, which the sync never writes (D25). null clears one, back to
   HolliHop's — for HolliHop people only; a registered student needs both. Teachers', admins' and parents'
   views, and Telegram messages, keep HolliHop's names (staff work from HolliHop).
-- `Profile` gains `status` (`enrolled` | `registered`), `phone` (the login phone, E.164, or null), `google` (a
-  Google account is linked) and `has_password` (their own password, not the default one).
-- `GET /v1/app/config` gains `signup` and `google`; the web shows those options only when true.
+- `Profile` gains `status` (`enrolled` | `registered`), `phone` (the login phone, E.164, or null), `email`
+  (theirs, or null), `google` (a Google account is linked) and `has_password` (their own password, not the
+  default one).
+- `GET /v1/app/config` gains `signup` (SMS and an identity, email or Google, are configured), `reset` (SMS),
+  `email` and `google`; the web shows those options only when true.

@@ -41,6 +41,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/platform/config"
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
 	"github.com/nazacd/makonbook-api/internal/platform/logging"
+	"github.com/nazacd/makonbook-api/internal/platform/mail"
 	"github.com/nazacd/makonbook-api/internal/platform/migrate"
 	"github.com/nazacd/makonbook-api/internal/platform/postgres"
 	"github.com/nazacd/makonbook-api/internal/platform/r2"
@@ -231,6 +232,14 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	deps.SMSText = cfg.SMSText
 	if deps.SMS == nil {
 		log.Info("SMS_PROVIDER not set: no sign-up or password reset by SMS")
+	}
+	switch cfg.SMTPHost {
+	case "":
+		log.Info("SMTP_HOST not set: sign-up can't start with an email")
+	case "log":
+		deps.Mail = mail.Log{Logger: log}
+	default:
+		deps.Mail = &mail.SMTP{Host: cfg.SMTPHost, Port: cfg.SMTPPort, Username: cfg.SMTPUsername, Password: cfg.SMTPPassword, From: cfg.MailFrom}
 	}
 	if cfg.GoogleClientID != "" {
 		deps.Google = &auth.GoogleConfig{ClientID: cfg.GoogleClientID, ClientSecret: cfg.GoogleClientSecret, WebOrigin: cfg.WebOrigin}

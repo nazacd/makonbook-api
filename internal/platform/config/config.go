@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/mail"
 	"net/url"
 	"strconv"
 	"strings"
@@ -97,6 +98,13 @@ type Config struct {
 	// people back to WebOrigin + /v1/auth/google/callback.
 	GoogleClientID, GoogleClientSecret string
 	WebOrigin                          string
+	// Email codes (sign-up starts with an email or Google): SMTPHost empty
+	// is off, "log" writes the code to the log (development only); otherwise
+	// the mail server, SMTPPort 587 (STARTTLS) or 465 (TLS), with
+	// SMTPUsername and SMTPPassword (a secret) if it wants a login, and
+	// MailFrom, e.g. "SATMAKON <no-reply@makonbook.uz>".
+	SMTPHost, SMTPUsername, SMTPPassword, MailFrom string
+	SMTPPort                                       int
 }
 
 // DefaultSMSText is the SMS with a sign-up or reset code ({code}).
@@ -250,6 +258,31 @@ func (c *Config) loadAccounts(getenv func(string) string) (errs []error) {
 	}
 	if !strings.Contains(c.SMSText, "{code}") {
 		errs = append(errs, errors.New("SMS_TEXT must contain {code}"))
+	}
+
+	c.SMTPHost = strings.TrimSpace(getenv("SMTP_HOST"))
+	c.SMTPUsername = strings.TrimSpace(getenv("SMTP_USERNAME"))
+	c.SMTPPassword = getenv("SMTP_PASSWORD")
+	c.MailFrom = strings.TrimSpace(getenv("MAIL_FROM"))
+	port, err := strconv.Atoi(withDefault(strings.TrimSpace(getenv("SMTP_PORT")), "587"))
+	if err != nil || port <= 0 || port > 65535 {
+		errs = append(errs, fmt.Errorf("SMTP_PORT must be a port number, got %q", getenv("SMTP_PORT")))
+	}
+	c.SMTPPort = port
+	switch {
+	case c.SMTPHost == "":
+	case strings.EqualFold(c.SMTPHost, "log"):
+		c.SMTPHost = "log"
+		if c.Env == EnvProduction {
+			errs = append(errs, errors.New("SMTP_HOST=log only writes codes to the log: not in production"))
+		}
+	default:
+		if strings.ContainsAny(c.SMTPHost, "/: ") {
+			errs = append(errs, fmt.Errorf("SMTP_HOST must be a host name like smtp.gmail.com, got %q", c.SMTPHost))
+		}
+		if a, err := mail.ParseAddress(c.MailFrom); err != nil || !strings.Contains(a.Address, "@") {
+			errs = append(errs, fmt.Errorf("MAIL_FROM must be an address like \"SATMAKON <no-reply@makonbook.uz>\", got %q", c.MailFrom))
+		}
 	}
 
 	c.GoogleClientID = strings.TrimSpace(getenv("GOOGLE_CLIENT_ID"))

@@ -457,8 +457,9 @@ changed yet; ask for that if a code leaks.
 
 ## Accounts: sign-up, SMS codes, Google (spec 21)
 
-The web app (sat.makonbook.uz) lets anyone sign up as a student, reset a
-password with a code sent by SMS, and sign in with Google. Each part is off
+The web app (sat.makonbook.uz) lets anyone sign up as a student (first an
+email code or Google, then an SMS code for the phone), reset a password with a
+code sent by SMS, and sign in with Google, a phone or an email. Each part is off
 until its settings are in `.env`; `/v1/app/config` tells the web which are on
 (`signup`, `google`). Phone + password login works as before either way.
 
@@ -478,6 +479,26 @@ until its settings are in `.env`; `/v1/app/config` tells the web which are on
 Limits: one code a minute and 5 a day per number, 20 an hour per network
 (behind the edge nginx, so `TRUST_PROXY=true` must stay). Each code costs an
 SMS; a reset for a number nobody signs in with sends nothing.
+
+**Email (SMTP).** Sign-up starts with an email code (or Google): with neither,
+there is no sign-up (`signup: false`), only password reset.
+
+- **Google Workspace** (if makonbook.uz mail is on Workspace): make a mailbox
+  such as `no-reply@makonbook.uz`, turn on 2-step verification for it and
+  create an **app password**; then `SMTP_HOST=smtp.gmail.com`,
+  `SMTP_PORT=587`, `SMTP_USERNAME=no-reply@makonbook.uz`,
+  `SMTP_PASSWORD=<the app password>`. Gmail sends about 2,000 messages a day
+  per mailbox. For more, or without a mailbox password, use the Workspace
+  **SMTP relay** service (Admin console → Apps → Google Workspace → Gmail →
+  Routing → SMTP relay service; allow the VPS's IP address, require TLS):
+  `SMTP_HOST=smtp-relay.gmail.com`, `SMTP_PORT=587`, no username.
+- Any other provider works the same: port 587 needs STARTTLS, 465 is TLS from
+  the start.
+- `MAIL_FROM="SATMAKON <no-reply@makonbook.uz>"` (the address must be one the
+  server may send as). Make sure makonbook.uz has SPF and DKIM for the
+  provider, or the codes land in spam.
+- `docker compose up -d`, then sign up on the web with your own address.
+  Failures show in `docker compose logs api | grep -i smtp`.
 
 **Google sign-in.**
 

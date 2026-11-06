@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/nazacd/makonbook-api/internal/auth/authdb"
 	"github.com/nazacd/makonbook-api/internal/people"
+	"github.com/nazacd/makonbook-api/internal/platform/mail"
 	"github.com/nazacd/makonbook-api/internal/platform/sms"
 )
 
@@ -91,6 +93,7 @@ type Service struct {
 	sms     sms.Sender
 	smsText string
 	google  *GoogleConfig
+	mail    mail.Sender
 }
 
 func NewService(db DB, p People, h *Hasher) *Service {
@@ -175,6 +178,20 @@ func usesDefault(p people.Person, custom bool) bool {
 // lookup resolves a login identifier: phone numbers go through people's login
 // phone, anything else is a username.
 func (s *Service) lookup(ctx context.Context, login string) (people.Person, error) {
+	if strings.Contains(login, "@") {
+		email, ok := normalizeEmail(login)
+		if !ok {
+			return people.Person{}, people.ErrNotFound
+		}
+		c, err := s.q.EmailOwner(ctx, pgText(email))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return people.Person{}, people.ErrNotFound
+		}
+		if err != nil {
+			return people.Person{}, fmt.Errorf("find email: %w", err)
+		}
+		return s.people.Get(ctx, c.PersonKind, c.PersonID)
+	}
 	if looksLikePhone(login) {
 		phone, ok := people.NormalizePhone(login)
 		if !ok {
@@ -364,6 +381,7 @@ type Profile struct {
 	// yet) or "enrolled" (in HolliHop; teachers too).
 	Status      string             `json:"status"`
 	Phone       *string            `json:"phone"`        // the login phone, E.164
+	Email       *string            `json:"email"`        // their email (sign-in and sign-up), lower case
 	Google      bool               `json:"google"`       // a Google account is linked
 	HasPassword bool               `json:"has_password"` // their own, not the default one
 	Groups      []people.GroupInfo `json:"groups"`
@@ -414,6 +432,9 @@ func (s *Service) Profile(ctx context.Context, pr Principal, today time.Time) (P
 	}
 	if cred.Username.Valid {
 		prof.Username = &cred.Username.String
+	}
+	if cred.Email.Valid {
+		prof.Email = &cred.Email.String
 	}
 	return prof, nil
 }

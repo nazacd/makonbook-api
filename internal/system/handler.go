@@ -23,19 +23,26 @@ type Pinger interface {
 }
 
 type Handler struct {
-	store          Store
-	db             Pinger
-	signup, google bool
+	store  Store
+	db     Pinger
+	signIn SignIn
+}
+
+// SignIn is which ways in the app config offers (spec 21).
+type SignIn struct {
+	Signup bool // sign-up (an email code or Google, then an SMS code)
+	Reset  bool // password reset by SMS code
+	Email  bool // sign-up can start with an email code
+	Google bool // Google sign-in
 }
 
 func NewHandler(store Store, db Pinger) *Handler {
 	return &Handler{store: store, db: db}
 }
 
-// WithSignIn says which ways in the app config offers (spec 21): sign-up
-// (and password reset) by SMS code, and Google sign-in.
-func (h *Handler) WithSignIn(signup, google bool) *Handler {
-	h.signup, h.google = signup, google
+// WithSignIn says which ways in the app config offers.
+func (h *Handler) WithSignIn(s SignIn) *Handler {
+	h.signIn = s
 	return h
 }
 
@@ -72,9 +79,12 @@ type MinAppVersion struct {
 
 type AppConfig struct {
 	MinAppVersion MinAppVersion `json:"min_app_version"`
-	// Signup: people can sign up and reset their password with a code sent
-	// by SMS. Google: they can sign in with Google.
+	// Signup: people can sign up (an email code or Google, then an SMS
+	// code). Reset: they can reset their password with an SMS code. Email:
+	// sign-up can start with an email. Google: Google sign-in.
 	Signup bool `json:"signup"`
+	Reset  bool `json:"reset"`
+	Email  bool `json:"email"`
 	Google bool `json:"google"`
 }
 
@@ -86,7 +96,7 @@ func (h *Handler) appConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := AppConfig{Signup: h.signup, Google: h.google}
+	cfg := AppConfig{Signup: h.signIn.Signup, Reset: h.signIn.Reset, Email: h.signIn.Email, Google: h.signIn.Google}
 	if err := json.Unmarshal(raw, &cfg.MinAppVersion); err != nil {
 		httpx.Logger(r.Context()).Error("decode min_app_version", slog.Any("err", err))
 		httpx.WriteError(w, r, http.StatusInternalServerError, httpx.CodeInternal, "internal error")

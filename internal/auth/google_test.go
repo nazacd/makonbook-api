@@ -202,7 +202,7 @@ func TestGoogleSignUpAndSignIn(t *testing.T) {
 	}
 
 	// Sign-up with the phone and no password.
-	r = a.do("POST", "/v1/auth/signup", "", signupBody(a.ticket("+998903000003", PurposeSignup), "Malika", "Yusupova", nil, googleTicket))
+	r = a.do("POST", "/v1/auth/signup", "", signupBody(a.ticket("+998903000003", PurposeSignup, googleID(googleTicket)), googleID(googleTicket), "Malika", "Yusupova", nil))
 	if r.status != http.StatusOK || r.body["existing"] != false {
 		t.Fatalf("signup: %d %v", r.status, r.body)
 	}
@@ -232,7 +232,7 @@ func TestGoogleSignUpAndSignIn(t *testing.T) {
 	}
 
 	// A password later: then phone + password works as well (reset by SMS).
-	r = a.do("POST", "/v1/auth/reset", "", map[string]string{"ticket": a.ticket("+998903000003", PurposeReset), "password": "now a password"})
+	r = a.do("POST", "/v1/auth/reset", "", map[string]string{"ticket": a.ticket("+998903000003", PurposeReset, nil), "password": "now a password"})
 	if r.status != http.StatusOK || r.body["user"].(map[string]any)["has_password"] != true || r.body["user"].(map[string]any)["google"] != true {
 		t.Errorf("first password: %d %v", r.status, r.body)
 	}
@@ -245,18 +245,18 @@ func TestGoogleOnAnExistingAccount(t *testing.T) {
 	// Two tabs started with the same new Google account.
 	first := a.trade(a.roundTrip("/", a.claims("g-2")).Get("ticket")).body["google_ticket"].(string)
 	second := a.trade(a.roundTrip("/", a.claims("g-2")).Get("ticket")).body["google_ticket"].(string)
-	if r := a.do("POST", "/v1/auth/signup", "", signupBody(a.ticket("+998903000004", PurposeSignup), "A", "B", nil, first)); r.status != http.StatusOK {
+	if r := a.do("POST", "/v1/auth/signup", "", signupBody(a.ticket("+998903000004", PurposeSignup, googleID(first)), googleID(first), "A", "B", nil)); r.status != http.StatusOK {
 		t.Fatalf("first signup: %d %v", r.status, r.body)
 	}
 	// The other links the same Google account to student 1: taken.
-	ticket := a.ticket("+998902001234", PurposeSignup)
-	if r := a.do("POST", "/v1/auth/signup", "", signupBody(ticket, "Aziz", "Karimov", nil, second)); r.status != http.StatusConflict || r.code() != CodeGoogleTaken {
+	ticket := a.ticket("+998902001234", PurposeSignup, googleID(second))
+	if r := a.do("POST", "/v1/auth/signup", "", signupBody(ticket, googleID(second), "Aziz", "Karimov", nil)); r.status != http.StatusConflict || r.code() != CodeGoogleTaken {
 		t.Fatalf("taken: %d %v", r.status, r.body)
 	}
 
-	// Their own Google account; the phone ticket wasn't spent by the 409.
+	// Their own Google account (and with it, the phone again).
 	own := a.trade(a.roundTrip("/", a.claims("g-3")).Get("ticket")).body["google_ticket"].(string)
-	r := a.do("POST", "/v1/auth/signup", "", signupBody(ticket, "Aziz", "Karimov", nil, own))
+	r := a.do("POST", "/v1/auth/signup", "", signupBody(a.ticket("+998902001234", PurposeSignup, googleID(own)), googleID(own), nil, nil, nil))
 	if r.status != http.StatusOK || r.body["existing"] != true {
 		t.Fatalf("link to student 1: %d %v", r.status, r.body)
 	}

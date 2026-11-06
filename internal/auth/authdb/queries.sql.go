@@ -11,6 +11,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearEmail = `-- name: ClearEmail :exec
+UPDATE credentials SET email = NULL WHERE email = $1
+`
+
+func (q *Queries) ClearEmail(ctx context.Context, email pgtype.Text) error {
+	_, err := q.db.Exec(ctx, clearEmail, email)
+	return err
+}
+
+const countEmailCodeTry = `-- name: CountEmailCodeTry :one
+UPDATE email_codes SET tries = tries + 1
+WHERE id = $1 AND tries < 5 AND used_at IS NULL
+RETURNING tries
+`
+
+func (q *Queries) CountEmailCodeTry(ctx context.Context, id int64) (int16, error) {
+	row := q.db.QueryRow(ctx, countEmailCodeTry, id)
+	var tries int16
+	err := row.Scan(&tries)
+	return tries, err
+}
+
 const countPhoneCodeTry = `-- name: CountPhoneCodeTry :one
 UPDATE phone_codes SET tries = tries + 1
 WHERE id = $1 AND tries < 5 AND used_at IS NULL
@@ -66,6 +88,18 @@ func (q *Queries) DeleteGoogleLink(ctx context.Context, sub string) error {
 	return err
 }
 
+const deleteOldEmailCodes = `-- name: DeleteOldEmailCodes :execrows
+DELETE FROM email_codes WHERE created_at < $1::timestamptz
+`
+
+func (q *Queries) DeleteOldEmailCodes(ctx context.Context, before pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOldEmailCodes, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteOldPhoneCodes = `-- name: DeleteOldPhoneCodes :execrows
 DELETE FROM phone_codes WHERE created_at < $1::timestamptz
 `
@@ -90,8 +124,56 @@ func (q *Queries) DeleteOldTickets(ctx context.Context, before pgtype.Timestampt
 	return result.RowsAffected(), nil
 }
 
+const emailCodesSince = `-- name: EmailCodesSince :many
+SELECT created_at FROM email_codes
+WHERE email = $1 AND created_at > $2::timestamptz
+ORDER BY created_at
+`
+
+type EmailCodesSinceParams struct {
+	Email string
+	Since pgtype.Timestamptz
+}
+
+func (q *Queries) EmailCodesSince(ctx context.Context, arg EmailCodesSinceParams) ([]pgtype.Timestamptz, error) {
+	rows, err := q.db.Query(ctx, emailCodesSince, arg.Email, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.Timestamptz
+	for rows.Next() {
+		var created_at pgtype.Timestamptz
+		if err := rows.Scan(&created_at); err != nil {
+			return nil, err
+		}
+		items = append(items, created_at)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const emailOwner = `-- name: EmailOwner :one
+SELECT person_kind, person_id FROM credentials WHERE email = $1
+`
+
+type EmailOwnerRow struct {
+	PersonKind string
+	PersonID   int32
+}
+
+// Who has an email (active or not: the caller checks).
+func (q *Queries) EmailOwner(ctx context.Context, email pgtype.Text) (EmailOwnerRow, error) {
+	row := q.db.QueryRow(ctx, emailOwner, email)
+	var i EmailOwnerRow
+	err := row.Scan(&i.PersonKind, &i.PersonID)
+	return i, err
+}
+
 const getCredential = `-- name: GetCredential :one
-SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until
+SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email
 FROM credentials
 WHERE person_kind = $1 AND person_id = $2
 `
@@ -112,12 +194,13 @@ func (q *Queries) GetCredential(ctx context.Context, arg GetCredentialParams) (C
 		&i.PasswordChangedAt,
 		&i.FailedAttempts,
 		&i.LockedUntil,
+		&i.Email,
 	)
 	return i, err
 }
 
 const getCredentialByUsername = `-- name: GetCredentialByUsername :one
-SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until
+SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email
 FROM credentials
 WHERE username = $1
 `
@@ -133,6 +216,7 @@ func (q *Queries) GetCredentialByUsername(ctx context.Context, username pgtype.T
 		&i.PasswordChangedAt,
 		&i.FailedAttempts,
 		&i.LockedUntil,
+		&i.Email,
 	)
 	return i, err
 }
@@ -207,6 +291,32 @@ func (q *Queries) HasGoogleLink(ctx context.Context, arg HasGoogleLinkParams) (b
 	return exists, err
 }
 
+const insertEmailCode = `-- name: InsertEmailCode :exec
+INSERT INTO email_codes (email, salt, code_hash, ip, created_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+`
+
+type InsertEmailCodeParams struct {
+	Email     string
+	Salt      []byte
+	CodeHash  []byte
+	Ip        string
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) InsertEmailCode(ctx context.Context, arg InsertEmailCodeParams) error {
+	_, err := q.db.Exec(ctx, insertEmailCode,
+		arg.Email,
+		arg.Salt,
+		arg.CodeHash,
+		arg.Ip,
+		arg.CreatedAt,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
 const insertGoogleLink = `-- name: InsertGoogleLink :exec
 INSERT INTO google_links (sub, person_kind, person_id, email)
 VALUES ($1, $2, $3, $4)
@@ -258,8 +368,8 @@ func (q *Queries) InsertPhoneCode(ctx context.Context, arg InsertPhoneCodeParams
 }
 
 const insertTicket = `-- name: InsertTicket :exec
-INSERT INTO auth_tickets (token_hash, purpose, phone, google_sub, email, first_name, last_name, created_at, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO auth_tickets (token_hash, purpose, phone, google_sub, email, first_name, last_name, identity, created_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 `
 
 type InsertTicketParams struct {
@@ -270,6 +380,7 @@ type InsertTicketParams struct {
 	Email     pgtype.Text
 	FirstName pgtype.Text
 	LastName  pgtype.Text
+	Identity  []byte
 	CreatedAt pgtype.Timestamptz
 	ExpiresAt pgtype.Timestamptz
 }
@@ -283,10 +394,42 @@ func (q *Queries) InsertTicket(ctx context.Context, arg InsertTicketParams) erro
 		arg.Email,
 		arg.FirstName,
 		arg.LastName,
+		arg.Identity,
 		arg.CreatedAt,
 		arg.ExpiresAt,
 	)
 	return err
+}
+
+const latestEmailCode = `-- name: LatestEmailCode :one
+SELECT id, salt, code_hash, tries, created_at, expires_at, used_at
+FROM email_codes WHERE email = $1
+ORDER BY id DESC LIMIT 1
+`
+
+type LatestEmailCodeRow struct {
+	ID        int64
+	Salt      []byte
+	CodeHash  []byte
+	Tries     int16
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+	UsedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) LatestEmailCode(ctx context.Context, email string) (LatestEmailCodeRow, error) {
+	row := q.db.QueryRow(ctx, latestEmailCode, email)
+	var i LatestEmailCodeRow
+	err := row.Scan(
+		&i.ID,
+		&i.Salt,
+		&i.CodeHash,
+		&i.Tries,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.UsedAt,
+	)
+	return i, err
 }
 
 const latestPhoneCode = `-- name: LatestPhoneCode :one
@@ -326,6 +469,17 @@ func (q *Queries) LatestPhoneCode(ctx context.Context, arg LatestPhoneCodeParams
 		&i.UsedAt,
 	)
 	return i, err
+}
+
+const lockEmail = `-- name: LockEmail :exec
+
+SELECT pg_advisory_xact_lock(hashtextextended('email_codes:' || $1::text, 0))
+`
+
+// Emails ------------------------------------------------------------------------
+func (q *Queries) LockEmail(ctx context.Context, email string) error {
+	_, err := q.db.Exec(ctx, lockEmail, email)
+	return err
 }
 
 const lockPhone = `-- name: LockPhone :exec
@@ -421,8 +575,39 @@ func (q *Queries) NetworkCodesSince(ctx context.Context, arg NetworkCodesSincePa
 	return items, nil
 }
 
+const networkEmailCodesSince = `-- name: NetworkEmailCodesSince :many
+SELECT created_at FROM email_codes
+WHERE ip = $1 AND created_at > $2::timestamptz
+ORDER BY created_at
+`
+
+type NetworkEmailCodesSinceParams struct {
+	Ip    string
+	Since pgtype.Timestamptz
+}
+
+func (q *Queries) NetworkEmailCodesSince(ctx context.Context, arg NetworkEmailCodesSinceParams) ([]pgtype.Timestamptz, error) {
+	rows, err := q.db.Query(ctx, networkEmailCodesSince, arg.Ip, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.Timestamptz
+	for rows.Next() {
+		var created_at pgtype.Timestamptz
+		if err := rows.Scan(&created_at); err != nil {
+			return nil, err
+		}
+		items = append(items, created_at)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const peekTicket = `-- name: PeekTicket :one
-SELECT phone, google_sub, email, first_name, last_name
+SELECT phone, google_sub, email, first_name, last_name, identity, revealed_phone
 FROM auth_tickets
 WHERE token_hash = $1 AND purpose = $2 AND used_at IS NULL AND expires_at > $3::timestamptz
 `
@@ -434,11 +619,13 @@ type PeekTicketParams struct {
 }
 
 type PeekTicketRow struct {
-	Phone     pgtype.Text
-	GoogleSub pgtype.Text
-	Email     pgtype.Text
-	FirstName pgtype.Text
-	LastName  pgtype.Text
+	Phone         pgtype.Text
+	GoogleSub     pgtype.Text
+	Email         pgtype.Text
+	FirstName     pgtype.Text
+	LastName      pgtype.Text
+	Identity      []byte
+	RevealedPhone pgtype.Text
 }
 
 // A ticket that can still be used, without using it (to check a request
@@ -452,6 +639,8 @@ func (q *Queries) PeekTicket(ctx context.Context, arg PeekTicketParams) (PeekTic
 		&i.Email,
 		&i.FirstName,
 		&i.LastName,
+		&i.Identity,
+		&i.RevealedPhone,
 	)
 	return i, err
 }
@@ -557,6 +746,28 @@ func (q *Queries) ResetPasswordToDefault(ctx context.Context, arg ResetPasswordT
 	return result.RowsAffected(), nil
 }
 
+const revealPhone = `-- name: RevealPhone :execrows
+UPDATE auth_tickets SET revealed_phone = $1::text
+WHERE token_hash = $2 AND purpose = $3 AND used_at IS NULL
+  AND (revealed_phone IS NULL OR revealed_phone = $1::text)
+`
+
+type RevealPhoneParams struct {
+	Phone     string
+	TokenHash []byte
+	Purpose   string
+}
+
+// An identity ticket shows the owner of one phone at most (spec 21.3): it
+// records that phone, and refuses another.
+func (q *Queries) RevealPhone(ctx context.Context, arg RevealPhoneParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revealPhone, arg.Phone, arg.TokenHash, arg.Purpose)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeAllSessions = `-- name: RevokeAllSessions :execrows
 UPDATE auth_sessions SET revoked_at = now()
 WHERE person_kind = $1 AND person_id = $2 AND revoked_at IS NULL
@@ -601,6 +812,24 @@ WHERE id = $1 AND revoked_at IS NULL
 
 func (q *Queries) RevokeSession(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, revokeSession, id)
+	return err
+}
+
+const setEmail = `-- name: SetEmail :exec
+INSERT INTO credentials (person_kind, person_id, email)
+VALUES ($1, $2, $3)
+ON CONFLICT (person_kind, person_id) DO UPDATE SET email = EXCLUDED.email
+`
+
+type SetEmailParams struct {
+	PersonKind string
+	PersonID   int32
+	Email      pgtype.Text
+}
+
+// A person's email (one each: a new one replaces theirs).
+func (q *Queries) SetEmail(ctx context.Context, arg SetEmailParams) error {
+	_, err := q.db.Exec(ctx, setEmail, arg.PersonKind, arg.PersonID, arg.Email)
 	return err
 }
 
@@ -689,6 +918,24 @@ func (q *Queries) UnlinkGooglePerson(ctx context.Context, arg UnlinkGooglePerson
 	return err
 }
 
+const useEmailCode = `-- name: UseEmailCode :execrows
+UPDATE email_codes SET used_at = $1::timestamptz
+WHERE id = $2 AND used_at IS NULL
+`
+
+type UseEmailCodeParams struct {
+	Now pgtype.Timestamptz
+	ID  int64
+}
+
+func (q *Queries) UseEmailCode(ctx context.Context, arg UseEmailCodeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, useEmailCode, arg.Now, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const usePhoneCode = `-- name: UsePhoneCode :execrows
 UPDATE phone_codes SET used_at = $1::timestamptz
 WHERE id = $2 AND used_at IS NULL
@@ -710,7 +957,7 @@ func (q *Queries) UsePhoneCode(ctx context.Context, arg UsePhoneCodeParams) (int
 const useTicket = `-- name: UseTicket :one
 UPDATE auth_tickets SET used_at = $1::timestamptz
 WHERE token_hash = $2 AND purpose = $3 AND used_at IS NULL AND expires_at > $1::timestamptz
-RETURNING phone, google_sub, email, first_name, last_name
+RETURNING phone, google_sub, email, first_name, last_name, identity, revealed_phone
 `
 
 type UseTicketParams struct {
@@ -720,11 +967,13 @@ type UseTicketParams struct {
 }
 
 type UseTicketRow struct {
-	Phone     pgtype.Text
-	GoogleSub pgtype.Text
-	Email     pgtype.Text
-	FirstName pgtype.Text
-	LastName  pgtype.Text
+	Phone         pgtype.Text
+	GoogleSub     pgtype.Text
+	Email         pgtype.Text
+	FirstName     pgtype.Text
+	LastName      pgtype.Text
+	Identity      []byte
+	RevealedPhone pgtype.Text
 }
 
 func (q *Queries) UseTicket(ctx context.Context, arg UseTicketParams) (UseTicketRow, error) {
@@ -736,6 +985,8 @@ func (q *Queries) UseTicket(ctx context.Context, arg UseTicketParams) (UseTicket
 		&i.Email,
 		&i.FirstName,
 		&i.LastName,
+		&i.Identity,
+		&i.RevealedPhone,
 	)
 	return i, err
 }

@@ -50,6 +50,7 @@ const (
 const (
 	ticketGoogle       = "google"        // back from Google, for /v1/auth/google/ticket
 	ticketGoogleSignup = "google_signup" // a Google account waiting for a phone, for sign-up
+	ticketEmail        = "email"         // a proved email waiting for a phone, for sign-up
 )
 
 var (
@@ -60,6 +61,7 @@ var (
 	ErrInvalidTicket = errors.New("this step took too long or was already done; start again")
 	ErrNoAccount     = errors.New("nobody signs in with this phone number")
 	ErrPhoneTaken    = errors.New("this phone number already has an account; sign in, or reset the password")
+	ErrIdentitySpent = errors.New("this email or Google account was already used with another phone number; start again")
 	ErrGoogleTaken   = errors.New("this Google account is linked to another account")
 	errNeedPassword  = errors.New("choose a password (8 to 128 characters)")
 )
@@ -101,8 +103,12 @@ func (s *Service) WithSMS(sender sms.Sender, text string, log *slog.Logger) *Ser
 	return s
 }
 
-// SignupEnabled: codes can be sent, so people can sign up and reset passwords.
-func (s *Service) SignupEnabled() bool { return s.sms != nil }
+// SignupEnabled: people can sign up: codes go by SMS, and there is a way to
+// start (an email code or Google).
+func (s *Service) SignupEnabled() bool { return s.sms != nil && (s.mail != nil || s.google != nil) }
+
+// ResetEnabled: people can reset their password with an SMS code.
+func (s *Service) ResetEnabled() bool { return s.sms != nil }
 
 // uzbekPhone normalises a number as the rest of the API does (spec 5) and
 // accepts Uzbek numbers only: codes go by SMS through an Uzbek gateway.
@@ -196,19 +202,27 @@ func (s *Service) StartPhone(ctx context.Context, raw, purpose, ip string) error
 // codeWait is how long the phone (and, given ip, the network) must wait for
 // another code; 0 when one can be sent now.
 func (s *Service) codeWait(ctx context.Context, q *authdb.Queries, phone, ip string, now time.Time) (time.Duration, error) {
-	var wait time.Duration
+	var network []pgtype.Timestamptz
 	if ip != "" {
-		net, err := q.NetworkCodesSince(ctx, authdb.NetworkCodesSinceParams{Ip: ip, Since: timestamp(now.Add(-time.Hour))})
-		if err != nil {
+		var err error
+		if network, err = q.NetworkCodesSince(ctx, authdb.NetworkCodesSinceParams{Ip: ip, Since: timestamp(now.Add(-time.Hour))}); err != nil {
 			return 0, fmt.Errorf("network codes: %w", err)
-		}
-		if len(net) >= CodesPerNetwork {
-			wait = max(wait, net[len(net)-CodesPerNetwork].Time.Add(time.Hour).Sub(now))
 		}
 	}
 	day, err := q.PhoneCodesSince(ctx, authdb.PhoneCodesSinceParams{Phone: phone, Since: timestamp(now.Add(-24 * time.Hour))})
 	if err != nil {
 		return 0, fmt.Errorf("phone codes: %w", err)
+	}
+	return waitFor(day, network, now), nil
+}
+
+// waitFor applies the limits to the codes a phone or address had in the
+// last day and a network in the last hour (oldest first): one a minute and
+// CodesPerDay a day for the first, CodesPerNetwork an hour for the second.
+func waitFor(day, network []pgtype.Timestamptz, now time.Time) time.Duration {
+	var wait time.Duration
+	if len(network) >= CodesPerNetwork {
+		wait = max(wait, network[len(network)-CodesPerNetwork].Time.Add(time.Hour).Sub(now))
 	}
 	if n := len(day); n > 0 {
 		wait = max(wait, day[n-1].Time.Add(ResendAfter).Sub(now))
@@ -219,7 +233,56 @@ func (s *Service) codeWait(ctx context.Context, q *authdb.Queries, phone, ip str
 	if wait > 0 && wait < time.Second {
 		wait = time.Second
 	}
-	return max(wait, 0), nil
+	return max(wait, 0)
+}
+
+// sentCode is a code as stored (phone_codes or email_codes).
+type sentCode struct {
+	id              int64
+	salt, hash      []byte
+	tries           int16
+	expires, usedAt pgtype.Timestamptz
+	countTry        func(ctx context.Context, id int64) (int16, error)
+	use             func(ctx context.Context, id int64) (int64, error)
+	waitForAnother  func() (time.Duration, error)
+}
+
+// check compares code with a sent code, counting the try, and uses the code
+// when it is right.
+func (c sentCode) check(ctx context.Context, code string, now time.Time) error {
+	if c.usedAt.Valid || !c.expires.Time.After(now) {
+		return ErrCodeExpired
+	}
+	spent := func() error {
+		wait, err := c.waitForAnother()
+		if err != nil {
+			return err
+		}
+		return &WrongCodeError{TriesLeft: 0, RetryAfter: wait}
+	}
+	if c.tries >= CodeTries {
+		return spent()
+	}
+	tries, err := c.countTry(ctx, c.id)
+	if errors.Is(err, pgx.ErrNoRows) { // used up or used meanwhile
+		return spent()
+	}
+	if err != nil {
+		return fmt.Errorf("count try: %w", err)
+	}
+	code = strings.Join(strings.Fields(code), "")
+	if c.hash == nil || subtle.ConstantTimeCompare(codeHash(c.salt, code), c.hash) != 1 {
+		if left := CodeTries - int(tries); left > 0 {
+			return &WrongCodeError{TriesLeft: left}
+		}
+		return spent()
+	}
+	if n, err := c.use(ctx, c.id); err != nil {
+		return fmt.Errorf("use code: %w", err)
+	} else if n == 0 {
+		return ErrCodeExpired
+	}
+	return nil
 }
 
 // PhoneOwner is who already signs in with a phone, as sign-up shows it once
@@ -255,120 +318,158 @@ func shortName(first, last string) string {
 	return strings.TrimSpace(first + " " + string(unicode.ToUpper(r)) + ".")
 }
 
-// VerifyPhone checks a code sent by StartPhone and answers a ticket: proof,
-// for 15 minutes and once, that this phone was verified for this purpose.
-// For a sign-up it also says who already signs in with the phone (nil:
-// nobody); for a reset, owner is always nil.
-func (s *Service) VerifyPhone(ctx context.Context, raw, code, purpose string) (ticket string, owner *PhoneOwner, err error) {
-	ticket, phone, err := s.verifyPhone(ctx, raw, code, purpose)
-	if err != nil || purpose != PurposeSignup {
-		return ticket, nil, err
-	}
-	p, found, err := phoneOwner(ctx, s.people, phone)
+// Identity is what a sign-up starts with (spec 21.3): a proved email
+// (EmailTicket, from VerifyEmail) or a Google account (GoogleTicket, from
+// GoogleTicket's needs_phone); exactly one.
+type Identity struct {
+	EmailTicket  *string `json:"email_ticket"`
+	GoogleTicket *string `json:"google_ticket"`
+}
+
+// identityTicket is the identity's ticket and its purpose; ErrInvalidTicket
+// unless exactly one is given.
+func (id Identity) ticket() (ticket, purpose string, err error) {
+	email := id.EmailTicket != nil && *id.EmailTicket != ""
+	google := id.GoogleTicket != nil && *id.GoogleTicket != ""
 	switch {
-	case err != nil:
-		return "", nil, err
-	case !found:
-		return ticket, nil, nil
-	case p.Registered:
-		return ticket, &PhoneOwner{Status: StatusRegistered}, nil
+	case email && !google:
+		return *id.EmailTicket, ticketEmail, nil
+	case google && !email:
+		return *id.GoogleTicket, ticketGoogleSignup, nil
 	default:
-		return ticket, &PhoneOwner{Status: StatusEnrolled, Kind: p.Kind, Name: shortName(p.FirstName, p.LastName)}, nil
+		return "", "", ErrInvalidTicket
 	}
 }
 
-func (s *Service) verifyPhone(ctx context.Context, raw, code, purpose string) (ticket, phone string, err error) {
+// VerifyPhone checks a code sent by StartPhone and answers a ticket: proof,
+// for 15 minutes and once, that this phone was verified for this purpose.
+// A sign-up needs an identity, and the ticket is good only with it; the
+// answer then also says who already signs in with the phone (nil: nobody).
+// An identity shows the owner of one phone at most: another phone with an
+// owner is ErrIdentitySpent (a phone nobody has doesn't count). For a reset,
+// identity is ignored and owner is nil.
+func (s *Service) VerifyPhone(ctx context.Context, raw, code, purpose string, identity Identity) (ticket string, owner *PhoneOwner, err error) {
 	if s.sms == nil {
-		return "", "", ErrSMSOff
+		return "", nil, ErrSMSOff
 	}
 	phone, ok := uzbekPhone(raw)
 	if !ok {
-		return "", "", ErrInvalidPhone
+		return "", nil, ErrInvalidPhone
 	}
 	now := s.now()
+	var idHash []byte
+	var idPurpose string
+	if purpose == PurposeSignup {
+		idTicket, p, err := identity.ticket()
+		if err != nil {
+			return "", nil, err
+		}
+		idHash, idPurpose = hashToken(idTicket), p
+		it, err := s.q.PeekTicket(ctx, authdb.PeekTicketParams{TokenHash: idHash, Purpose: idPurpose, Now: timestamp(now)})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil, ErrInvalidTicket
+		}
+		if err != nil {
+			return "", nil, err
+		}
+		if it.RevealedPhone.Valid && it.RevealedPhone.String != phone {
+			return "", nil, ErrIdentitySpent
+		}
+	}
+
 	row, err := s.q.LatestPhoneCode(ctx, authdb.LatestPhoneCodeParams{Phone: phone, Purpose: purpose})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", ErrCodeExpired
+		return "", nil, ErrCodeExpired
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("latest code: %w", err)
+		return "", nil, fmt.Errorf("latest code: %w", err)
 	}
-	if row.UsedAt.Valid || !row.ExpiresAt.Time.After(now) {
-		return "", "", ErrCodeExpired
+	c := sentCode{id: row.ID, salt: row.Salt, hash: row.CodeHash, tries: row.Tries, expires: row.ExpiresAt, usedAt: row.UsedAt,
+		countTry: s.q.CountPhoneCodeTry,
+		use: func(ctx context.Context, id int64) (int64, error) {
+			return s.q.UsePhoneCode(ctx, authdb.UsePhoneCodeParams{ID: id, Now: timestamp(now)})
+		},
+		waitForAnother: func() (time.Duration, error) { return s.codeWait(ctx, s.q, phone, "", now) },
 	}
-	spent := func() error {
-		wait, err := s.codeWait(ctx, s.q, phone, "", now)
-		if err != nil {
-			return err
+	if err := c.check(ctx, code, now); err != nil {
+		return "", nil, err
+	}
+
+	if purpose == PurposeSignup {
+		p, found, err := phoneOwner(ctx, s.people, phone)
+		switch {
+		case err != nil:
+			return "", nil, err
+		case !found:
+		case p.Registered:
+			owner = &PhoneOwner{Status: StatusRegistered}
+		default:
+			owner = &PhoneOwner{Status: StatusEnrolled, Kind: p.Kind, Name: shortName(p.FirstName, p.LastName)}
 		}
-		return &WrongCodeError{TriesLeft: 0, RetryAfter: wait}
+		if owner != nil {
+			n, err := s.q.RevealPhone(ctx, authdb.RevealPhoneParams{Phone: phone, TokenHash: idHash, Purpose: idPurpose})
+			if err != nil {
+				return "", nil, fmt.Errorf("reveal phone: %w", err)
+			}
+			if n == 0 { // another phone was revealed meanwhile, or the identity was used
+				return "", nil, ErrIdentitySpent
+			}
+		}
 	}
-	if row.Tries >= CodeTries {
-		return "", "", spent()
-	}
-	tries, err := s.q.CountPhoneCodeTry(ctx, row.ID)
-	if errors.Is(err, pgx.ErrNoRows) { // used up or used meanwhile
-		return "", "", spent()
-	}
+	ticket, err = s.newTicket(ctx, s.q, ticketData{purpose: purpose, phone: phone, identity: idHash}, PhoneTicketTTL)
 	if err != nil {
-		return "", "", fmt.Errorf("count try: %w", err)
+		return "", nil, err
 	}
-	code = strings.Join(strings.Fields(code), "")
-	if row.CodeHash == nil || subtle.ConstantTimeCompare(codeHash(row.Salt, code), row.CodeHash) != 1 {
-		if left := CodeTries - int(tries); left > 0 {
-			return "", "", &WrongCodeError{TriesLeft: left}
-		}
-		return "", "", spent()
-	}
-	if n, err := s.q.UsePhoneCode(ctx, authdb.UsePhoneCodeParams{ID: row.ID, Now: timestamp(now)}); err != nil {
-		return "", "", fmt.Errorf("use code: %w", err)
-	} else if n == 0 {
-		return "", "", ErrCodeExpired
-	}
-	ticket, err = s.newTicket(ctx, s.q, ticketData{purpose: purpose, phone: phone}, PhoneTicketTTL)
-	return ticket, phone, err
+	return ticket, owner, nil
 }
 
-// SignupInput is a sign-up: a verified phone (Ticket), the person's names
-// (needed only for a new account) and password, and optionally a Google
-// account (GoogleTicket) instead of, or as well as, the password.
+// SignupInput is a sign-up: a verified phone (Ticket), verified together with
+// the identity (an email or a Google account), the person's names (needed
+// only for a new account) and password (needed with an email).
 type SignupInput struct {
-	Ticket       string  `json:"ticket"`
-	FirstName    *string `json:"first_name"`
-	LastName     *string `json:"last_name"`
-	Password     *string `json:"password"`
-	GoogleTicket *string `json:"google_ticket"`
-	DeviceID     string  `json:"device_id"`
+	Ticket string `json:"ticket"`
+	Identity
+	FirstName *string `json:"first_name"`
+	LastName  *string `json:"last_name"`
+	Password  *string `json:"password"`
+	DeviceID  string  `json:"device_id"`
 }
 
-// Signup creates a registered student with the verified phone and signs them
-// in. A phone an enrolled person (a student or teacher in HolliHop) signs in
-// with signs into that account instead (the client asked them first; see
-// VerifyPhone): the password, if given, replaces theirs (ending their other
-// sessions), the Google account, if given, is linked to it, and the names are
-// ignored. existing says which. A phone a registered student already signs
-// in with is ErrPhoneTaken: they sign in, or reset their password.
+// Signup creates a registered student with the verified phone and the
+// identity, and signs them in. A phone an enrolled person (a student or
+// teacher in HolliHop) signs in with signs into that account instead (the
+// client asked them first; see VerifyPhone): the password, if given, replaces
+// theirs (ending their other sessions), the email is added if nobody active
+// has it, the Google account is linked, and the names are ignored. existing
+// says which. A phone a registered student already signs in with is
+// ErrPhoneTaken: they sign in, or reset their password.
 func (s *Service) Signup(ctx context.Context, in SignupInput) (res LoginResult, existing bool, err error) {
 	now := s.now()
+	idTicket, idPurpose, err := in.ticket()
+	if err != nil {
+		return LoginResult{}, false, err
+	}
 	pt, err := s.q.PeekTicket(ctx, authdb.PeekTicketParams{TokenHash: hashToken(in.Ticket), Purpose: PurposeSignup, Now: timestamp(now)})
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && subtle.ConstantTimeCompare(pt.Identity, hashToken(idTicket)) != 1) {
+		return LoginResult{}, false, ErrInvalidTicket // unknown, or verified with another identity
+	}
+	if err != nil {
+		return LoginResult{}, false, err
+	}
+	phone := pt.Phone.String
+	it, err := s.q.PeekTicket(ctx, authdb.PeekTicketParams{TokenHash: hashToken(idTicket), Purpose: idPurpose, Now: timestamp(now)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LoginResult{}, false, ErrInvalidTicket
 	}
 	if err != nil {
 		return LoginResult{}, false, err
 	}
-	phone := pt.Phone.String
-
+	var email string
 	var google *GoogleAccount
-	if in.GoogleTicket != nil && *in.GoogleTicket != "" {
-		gt, err := s.q.PeekTicket(ctx, authdb.PeekTicketParams{TokenHash: hashToken(*in.GoogleTicket), Purpose: ticketGoogleSignup, Now: timestamp(now)})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return LoginResult{}, false, ErrInvalidTicket
-		}
-		if err != nil {
-			return LoginResult{}, false, err
-		}
-		google = &GoogleAccount{Sub: gt.GoogleSub.String, Email: gt.Email.String}
+	if idPurpose == ticketEmail {
+		email = it.Email.String
+	} else {
+		google = &GoogleAccount{Sub: it.GoogleSub.String, Email: it.Email.String}
 	}
 
 	if owner, found, err := phoneOwner(ctx, s.people, phone); err != nil {
@@ -392,7 +493,7 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (res LoginResult, 
 
 	// Two sign-ups with one number at once: the second finds the first's.
 	for attempt := 0; ; attempt++ {
-		res, existing, err = s.signup(ctx, in, phone, hash, google)
+		res, existing, err = s.signup(ctx, in, idTicket, idPurpose, phone, hash, email, google)
 		var pgErr *pgconn.PgError
 		if attempt == 0 && errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			continue
@@ -401,7 +502,7 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (res LoginResult, 
 	}
 }
 
-func (s *Service) signup(ctx context.Context, in SignupInput, phone, hash string, google *GoogleAccount) (LoginResult, bool, error) {
+func (s *Service) signup(ctx context.Context, in SignupInput, idTicket, idPurpose, phone, hash, email string, google *GoogleAccount) (LoginResult, bool, error) {
 	now := s.now()
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -412,10 +513,8 @@ func (s *Service) signup(ctx context.Context, in SignupInput, phone, hash string
 	if _, err := s.useTicket(ctx, q, in.Ticket, PurposeSignup, now); err != nil {
 		return LoginResult{}, false, err
 	}
-	if google != nil {
-		if _, err := s.useTicket(ctx, q, *in.GoogleTicket, ticketGoogleSignup, now); err != nil {
-			return LoginResult{}, false, err
-		}
+	if _, err := s.useTicket(ctx, q, idTicket, idPurpose, now); err != nil {
+		return LoginResult{}, false, err
 	}
 
 	dir := people.NewDirectory(tx)
@@ -457,6 +556,12 @@ func (s *Service) signup(ctx context.Context, in SignupInput, phone, hash string
 			return LoginResult{}, false, fmt.Errorf("get credential: %w", err)
 		}
 		_, custom = ownPassword(c.PasswordHash, c.PasswordChangedAt, p)
+	}
+	if email != "" {
+		// A new account must get it; an enrolled one gets it if it's free.
+		if err := linkEmail(ctx, q, dir, p, email); err != nil && (!existing || !errors.Is(err, ErrEmailTaken)) {
+			return LoginResult{}, false, err
+		}
 	}
 	if google != nil {
 		if err := s.linkGoogle(ctx, q, dir, p, *google); err != nil {
@@ -622,9 +727,11 @@ func (s *Service) linkGoogle(ctx context.Context, q *authdb.Queries, dir *people
 
 // ticketData is what a ticket proves.
 type ticketData struct {
-	purpose string
-	phone   string         // signup, reset
-	google  *GoogleAccount // google, google_signup
+	purpose  string
+	phone    string         // signup, reset
+	email    string         // email
+	identity []byte         // signup: the identity ticket's hash
+	google   *GoogleAccount // google, google_signup
 }
 
 // newTicket stores a single-use ticket and returns it.
@@ -638,6 +745,10 @@ func (s *Service) newTicket(ctx context.Context, q *authdb.Queries, t ticketData
 	if t.phone != "" {
 		p.Phone = pgtype.Text{String: t.phone, Valid: true}
 	}
+	if t.email != "" {
+		p.Email = pgtype.Text{String: t.email, Valid: true}
+	}
+	p.Identity = t.identity
 	if g := t.google; g != nil {
 		p.GoogleSub = pgtype.Text{String: g.Sub, Valid: true}
 		p.Email = pgtype.Text{String: g.Email, Valid: true}
@@ -676,7 +787,11 @@ func CleanUp(ctx context.Context, db authdb.DBTX, now time.Time) (int64, error) 
 		return 0, err
 	}
 	tickets, err := q.DeleteOldTickets(ctx, timestamp(now.Add(-24*time.Hour)))
-	return codes + tickets, err
+	if err != nil {
+		return 0, err
+	}
+	emails, err := q.DeleteOldEmailCodes(ctx, timestamp(now.Add(-48*time.Hour)))
+	return codes + tickets + emails, err
 }
 
 // newCode is 6 random digits.

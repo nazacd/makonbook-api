@@ -137,6 +137,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/email/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a 6-digit code to an email, to start a sign-up
+         * @description Sign-up starts with an email (or Google), then the phone. The code is
+         *     good for 10 minutes and 5 tries; only the address's latest code
+         *     counts. Limits: per address one code a minute and 5 a day, per
+         *     network 20 an hour (`429 rate_limited`, `Retry-After`). The address
+         *     is trimmed and lower-cased.
+         */
+        post: operations["startEmailCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/email/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check the email code; answers the identity to verify a phone with
+         * @description The `email_ticket` (single-use, 30 minutes) goes to
+         *     `/v1/auth/phone/verify` (purpose `signup`) and then
+         *     `/v1/auth/signup`. An address an active account already has is
+         *     `409 email_taken` (the code proved it, so saying so is fine): sign in
+         *     or reset the password instead.
+         */
+        post: operations["verifyEmailCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/phone/start": {
         parameters: {
             query?: never;
@@ -176,6 +224,16 @@ export interface paths {
          *     code was sent for: `/v1/auth/signup` takes a `signup` ticket,
          *     `/v1/auth/reset` a `reset` one.
          *
+         *     For `signup` the request needs exactly one identity: `email_ticket`
+         *     (from `/v1/auth/email/verify`) or `google_ticket` (from
+         *     `/v1/auth/google/ticket`, `needs_phone`); otherwise `422
+         *     invalid_ticket` (checked before the code, which is then not tried).
+         *     The phone ticket is good for sign-up with that identity only. An
+         *     identity shows the owner of one phone at most: once a verify has
+         *     shown a non-null `account`, verifying another phone with it is `409
+         *     identity_spent` (the same phone again is fine; phones nobody has
+         *     don't count).
+         *
          *     For `signup` the answer also says who already signs in with the
          *     number (`account`): null (nobody: sign-up makes an account),
          *     `{"status": "registered"}` (someone signed up with it: sign-up is
@@ -203,18 +261,22 @@ export interface paths {
         put?: never;
         /**
          * Create a student account, or sign into the SAT MAKON account the phone has
-         * @description Needs a `signup` ticket from `/v1/auth/phone/verify`, whose `account`
-         *     says which case this is:
+         * @description Needs a `signup` ticket from `/v1/auth/phone/verify` and the identity
+         *     it was verified with (exactly one of `email_ticket`, `google_ticket`;
+         *     otherwise `422 invalid_ticket`). The verify's `account` says which case
+         *     this is:
          *     - an **enrolled** person (a student or teacher in HolliHop) signs in
          *       with that phone: no account is made; this signs into theirs
          *       (`existing: true`; the client asked "Is this you?" first), sets the
          *       password if one is given (their other sessions end, as after a
-         *       password change) and links the Google account if one is given. The
-         *       names are ignored and may be null.
+         *       password change), adds the email if no other active account has it
+         *       (else leaves it out), or links the Google account. The names are
+         *       ignored and may be null.
          *     - a **registered** student (signed up before) does: `409 phone_taken`;
-         *       nothing changes (no session, no Google link, same password).
-         *     - nobody does: a registered student is made with these names (required
-         *       then) and signed in.
+         *       nothing changes (no session, no email or Google link, same password).
+         *     - nobody does: a registered student is made with the phone, the email
+         *       or Google account, these names (required then) and the password,
+         *       and signed in.
          *     Nothing is spent when a request is turned down.
          */
         post: operations["signup"];
@@ -2169,7 +2231,7 @@ export interface components {
             name: string;
         };
         LoginRequest: {
-            /** @description Phone number in any common format (`+998901234567`, `90 123 45 67`) or username. */
+            /** @description Phone number in any common format (`+998901234567`, `90 123 45 67`), username, or email (anything with `@`). */
             login: string;
             password: string;
             /** @description Random id the app generates once per install. */
@@ -2209,6 +2271,8 @@ export interface components {
             status?: "enrolled" | "registered";
             /** @description The login phone */
             phone?: string | null;
+            /** @description Their email (lower case), from sign-up; they can sign in with it */
+            email?: string | null;
             /** @description A Google account is linked */
             google?: boolean;
             /** @description Their own password (false while on the default one, or signed up with Google only) */
@@ -2368,8 +2432,12 @@ export interface components {
             status: "ok";
         };
         AppConfig: {
-            /** @description Sign-up and password reset by SMS code are available */
+            /** @description Sign-up is available (an email code or Google, then an SMS code) */
             signup?: boolean;
+            /** @description Password reset by SMS code is available */
+            reset?: boolean;
+            /** @description Sign-up can start with an email code */
+            email?: boolean;
             /** @description Google sign-in is available */
             google?: boolean;
             min_app_version: {
@@ -2385,7 +2453,7 @@ export interface components {
                  * @description Stable machine-readable code.
                  * @enum {string}
                  */
-                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "phone_taken" | "google_unavailable" | "enrolled_only";
+                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "phone_taken" | "identity_spent" | "invalid_email" | "email_taken" | "email_unavailable" | "google_unavailable" | "enrolled_only";
                 /** @description Human-readable explanation; may change. */
                 message: string;
                 /** @description For a rejected form (`invalid_question`): what is wrong, per field (e.g. `stem`, `choices.B`). */
@@ -2673,6 +2741,144 @@ export interface operations {
             401: components["responses"]["Error"];
         };
     };
+    startEmailCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @example malika@example.com */
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Sent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example 60 */
+                        resend_in: number;
+                        /** @example 600 */
+                        expires_in: number;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            /** @description `invalid_email` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `email_unavailable`: email isn't configured, or sending failed (try again in a minute) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    verifyEmailCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    email: string;
+                    /** @example 123456 */
+                    code: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Verified */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        email_ticket: string;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            /** @description `email_taken` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `code_expired` */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_code` (tries left in the message) or `invalid_email` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `too_many_tries` (`Retry-After`) */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `email_unavailable` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
     startPhoneCode: {
         parameters: {
             query?: never;
@@ -2760,6 +2966,10 @@ export interface operations {
                     code: string;
                     /** @enum {string} */
                     purpose: "signup" | "reset";
+                    /** @description `signup`: the identity, if it is an email */
+                    email_ticket?: string | null;
+                    /** @description `signup`: the identity, if it is a Google account */
+                    google_ticket?: string | null;
                 };
             };
         };
@@ -2791,6 +3001,15 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
+            /** @description `identity_spent`: this identity already showed another phone's owner; start again */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description `code_expired`: no code to check (expired, already used, never sent, or replaced by a newer one): ask for a new one */
             410: {
                 headers: {
@@ -2800,7 +3019,7 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
-            /** @description `invalid_code` (the message says how many tries are left) or `invalid_phone` */
+            /** @description `invalid_code` (the message says how many tries are left), `invalid_phone`, or `invalid_ticket` (a sign-up without exactly one valid identity) */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -2842,14 +3061,16 @@ export interface operations {
                 "application/json": {
                     /** @description A `signup` ticket */
                     ticket: string;
+                    /** @description From `/v1/auth/email/verify`; the email becomes theirs (to sign in with) */
+                    email_ticket?: string | null;
                     /** @description 1–60 characters after trimming; needed only for a new account */
                     first_name: string | null;
                     /** @description 1–60 characters after trimming; needed only for a new account */
                     last_name: string | null;
-                    /** @description The rules of `/v1/auth/password`; null only with a `google_ticket` */
+                    /** @description The rules of `/v1/auth/password`; required with an email, may be null with Google */
                     password: string | null;
                     /** @description From `/v1/auth/google/ticket` (`needs_phone`), to sign in with Google from then on */
-                    google_ticket: string | null;
+                    google_ticket?: string | null;
                     device_id?: string;
                 };
             };
@@ -2868,7 +3089,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
-            /** @description `phone_taken`: a registered student already signs in with this phone; `google_taken`: that Google account is linked to someone else */
+            /** @description `phone_taken`: a registered student already signs in with this phone; `email_taken`: a new account's email was taken meanwhile; `google_taken`: that Google account is linked to someone else */
             409: {
                 headers: {
                     [name: string]: unknown;

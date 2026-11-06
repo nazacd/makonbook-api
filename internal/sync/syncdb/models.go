@@ -91,16 +91,18 @@ type AuthSession struct {
 }
 
 type AuthTicket struct {
-	TokenHash []byte
-	Purpose   string
-	Phone     pgtype.Text
-	GoogleSub pgtype.Text
-	Email     pgtype.Text
-	FirstName pgtype.Text
-	LastName  pgtype.Text
-	CreatedAt pgtype.Timestamptz
-	ExpiresAt pgtype.Timestamptz
-	UsedAt    pgtype.Timestamptz
+	TokenHash     []byte
+	Purpose       string
+	Phone         pgtype.Text
+	GoogleSub     pgtype.Text
+	Email         pgtype.Text
+	FirstName     pgtype.Text
+	LastName      pgtype.Text
+	CreatedAt     pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+	UsedAt        pgtype.Timestamptz
+	Identity      []byte
+	RevealedPhone pgtype.Text
 }
 
 type Credential struct {
@@ -111,6 +113,7 @@ type Credential struct {
 	PasswordChangedAt pgtype.Timestamptz
 	FailedAttempts    int32
 	LockedUntil       pgtype.Timestamptz
+	Email             pgtype.Text
 }
 
 type DataQualityIssue struct {
@@ -122,6 +125,18 @@ type DataQualityIssue struct {
 	FirstSeenAt pgtype.Timestamptz
 	LastSeenAt  pgtype.Timestamptz
 	ResolvedAt  pgtype.Timestamptz
+}
+
+type EmailCode struct {
+	ID        int64
+	Email     string
+	Salt      []byte
+	CodeHash  []byte
+	Ip        string
+	Tries     int16
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+	UsedAt    pgtype.Timestamptz
 }
 
 type Enrollment struct {

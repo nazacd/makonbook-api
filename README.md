@@ -67,6 +67,10 @@ All configuration comes from environment variables (see `.env.example`).
 | `ESKIZ_EMAIL`, `ESKIZ_PASSWORD` | — | With `SMS_PROVIDER=eskiz`: the Eskiz.uz account. The password is a secret |
 | `ESKIZ_FROM` | `4546` | Eskiz sender name |
 | `SMS_TEXT` | `SATMAKON: your code is {code}` | The SMS; must contain `{code}` and match a template Eskiz approved |
+| `SMTP_HOST` | — (off) | Email codes, sign-up's first step (spec 21): the mail server, or `log` (development) |
+| `SMTP_PORT` | `587` | 587 (STARTTLS) or 465 (TLS) |
+| `SMTP_USERNAME`, `SMTP_PASSWORD` | — | If the server wants a login. The password is a secret |
+| `MAIL_FROM` | — | Required with a mail server, e.g. `SATMAKON <no-reply@makonbook.uz>` |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | — (off) | Google sign-in; set both. The secret is a secret |
 | `WEB_ORIGIN` | — | The web app's origin (`https://sat.makonbook.uz`), required with Google: the redirect URI is `${WEB_ORIGIN}/v1/auth/google/callback` |
 | `TEST_DATABASE_URL` | — | Tests only; database tests are skipped without it |
@@ -134,8 +138,9 @@ starts again from the default password. Details: spec section 7.
 
 ## Accounts in one paragraph
 
-Anyone can sign up on the web as a student: a 6-digit code by SMS (Eskiz.uz)
-proves an Uzbek phone, or Google proves who they are and then the phone. A
+Anyone can sign up on the web as a student: first an email, proved by a
+6-digit code sent to it, or Google; then an Uzbek phone, proved by a code by
+SMS (Eskiz.uz). They can sign in with the phone or the email afterwards. A
 SAT MAKON student's or teacher's phone signs into their account instead (once
 they confirm it is them); a phone someone already signed up with is refused. These
 "registered" students are rows of `students` with `source = 'self'` and ids

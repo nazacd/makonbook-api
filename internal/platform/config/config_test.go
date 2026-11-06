@@ -114,3 +114,29 @@ func TestAccounts(t *testing.T) {
 		}
 	}
 }
+
+func TestMail(t *testing.T) {
+	cfg, err := Load(env(map[string]string{"DATABASE_URL": "x"}))
+	if err != nil || cfg.SMTPHost != "" || cfg.SMTPPort != 587 {
+		t.Errorf("defaults: %+v %v", cfg, err)
+	}
+	cfg, err = Load(env(map[string]string{"DATABASE_URL": "x", "APP_ENV": "production", "SMTP_HOST": "smtp.gmail.com", "SMTP_PORT": "465",
+		"SMTP_USERNAME": "no-reply@makonbook.uz", "SMTP_PASSWORD": "p", "MAIL_FROM": "SATMAKON <no-reply@makonbook.uz>"}))
+	if err != nil || cfg.SMTPPort != 465 || cfg.MailFrom != "SATMAKON <no-reply@makonbook.uz>" {
+		t.Errorf("set: %+v %v", cfg, err)
+	}
+	if cfg, err := Load(env(map[string]string{"DATABASE_URL": "x", "SMTP_HOST": "LOG"})); err != nil || cfg.SMTPHost != "log" {
+		t.Errorf("log: %+v %v", cfg, err)
+	}
+	for _, bad := range []map[string]string{
+		{"SMTP_HOST": "log", "APP_ENV": "production"},
+		{"SMTP_HOST": "smtp.gmail.com"},
+		{"SMTP_HOST": "smtp.gmail.com:587", "MAIL_FROM": "a@b.uz"},
+		{"SMTP_PORT": "x"},
+	} {
+		bad["DATABASE_URL"] = "x"
+		if _, err := Load(env(bad)); err == nil {
+			t.Errorf("%v: no error", bad)
+		}
+	}
+}

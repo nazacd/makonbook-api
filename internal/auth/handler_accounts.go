@@ -25,10 +25,16 @@ const (
 	CodeNoAccount         = "no_account"
 	CodeGoogleTaken       = "google_taken"
 	CodePhoneTaken        = "phone_taken"
+	CodeIdentitySpent     = "identity_spent"
+	CodeInvalidEmail      = "invalid_email"
+	CodeEmailTaken        = "email_taken"
+	CodeEmailUnavailable  = "email_unavailable"
 	CodeGoogleUnavailable = "google_unavailable"
 )
 
 func (h *Handler) registerAccounts(mux *http.ServeMux) {
+	mux.HandleFunc("POST /v1/auth/email/start", h.emailStart)
+	mux.HandleFunc("POST /v1/auth/email/verify", h.emailVerify)
 	mux.HandleFunc("POST /v1/auth/phone/start", h.phoneStart)
 	mux.HandleFunc("POST /v1/auth/phone/verify", h.phoneVerify)
 	mux.HandleFunc("POST /v1/auth/signup", h.signup)
@@ -43,6 +49,7 @@ type phoneRequest struct {
 	Phone   string `json:"phone"`
 	Code    string `json:"code"`
 	Purpose string `json:"purpose"`
+	Identity
 }
 
 func (h *Handler) phoneRequest(w http.ResponseWriter, r *http.Request) (phoneRequest, bool) {
@@ -89,7 +96,74 @@ func (h *Handler) phoneVerify(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ticket, owner, err := h.svc.VerifyPhone(r.Context(), req.Phone, req.Code, req.Purpose)
+	ticket, owner, err := h.svc.VerifyPhone(r.Context(), req.Phone, req.Code, req.Purpose, req.Identity)
+	switch {
+	case h.codeError(w, r, err):
+	case h.accountsError(w, r, "verify code", err):
+	case req.Purpose == PurposeSignup:
+		httpx.WriteJSON(w, r, http.StatusOK, verifySignupResponse{Ticket: ticket, Account: owner})
+	default:
+		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"ticket": ticket})
+	}
+}
+
+type emailRequest struct {
+	Email string `json:"email"`
+	Code  string `json:"code"`
+}
+
+func (h *Handler) emailRequest(w http.ResponseWriter, r *http.Request) (emailRequest, bool) {
+	var req emailRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return req, false
+	}
+	if len(req.Code) > 20 {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "code too long")
+		return req, false
+	}
+	if len(req.Email) > 320 {
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidEmail, ErrInvalidEmail.Error())
+		return req, false
+	}
+	return req, true
+}
+
+func (h *Handler) emailStart(w http.ResponseWriter, r *http.Request) {
+	req, ok := h.emailRequest(w, r)
+	if !ok {
+		return
+	}
+	err := h.svc.StartEmail(r.Context(), req.Email, httpx.ClientIP(r, h.trustProxy))
+	var limited *RateLimitedError
+	switch {
+	case errors.As(err, &limited):
+		retryAfter(w, limited.RetryAfter)
+		httpx.WriteError(w, r, http.StatusTooManyRequests, httpx.CodeRateLimited, limited.Error())
+	case h.accountsError(w, r, "send email code", err):
+	default:
+		httpx.WriteJSON(w, r, http.StatusOK, map[string]int{
+			"resend_in": int(ResendAfter.Seconds()), "expires_in": int(CodeTTL.Seconds()),
+		})
+	}
+}
+
+func (h *Handler) emailVerify(w http.ResponseWriter, r *http.Request) {
+	req, ok := h.emailRequest(w, r)
+	if !ok {
+		return
+	}
+	ticket, err := h.svc.VerifyEmail(r.Context(), req.Email, req.Code)
+	switch {
+	case h.codeError(w, r, err):
+	case h.accountsError(w, r, "verify email code", err):
+	default:
+		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"email_ticket": ticket})
+	}
+}
+
+// codeError answers a wrong, spent or expired code; false (and nothing
+// written) for anything else.
+func (h *Handler) codeError(w http.ResponseWriter, r *http.Request, err error) bool {
 	var wrong *WrongCodeError
 	switch {
 	case errors.As(err, &wrong) && wrong.TriesLeft == 0:
@@ -99,12 +173,10 @@ func (h *Handler) phoneVerify(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidCode, wrong.Error())
 	case errors.Is(err, ErrCodeExpired):
 		httpx.WriteError(w, r, http.StatusGone, CodeCodeExpired, err.Error())
-	case h.accountsError(w, r, "verify code", err):
-	case req.Purpose == PurposeSignup:
-		httpx.WriteJSON(w, r, http.StatusOK, verifySignupResponse{Ticket: ticket, Account: owner})
 	default:
-		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"ticket": ticket})
+		return false
 	}
+	return true
 }
 
 // verifySignupResponse: the ticket, and who already signs in with the phone
@@ -305,6 +377,17 @@ func (h *Handler) accountsError(w http.ResponseWriter, r *http.Request, what str
 		httpx.WriteError(w, r, http.StatusConflict, CodeGoogleTaken, err.Error())
 	case errors.Is(err, ErrPhoneTaken):
 		httpx.WriteError(w, r, http.StatusConflict, CodePhoneTaken, err.Error())
+	case errors.Is(err, ErrIdentitySpent):
+		httpx.WriteError(w, r, http.StatusConflict, CodeIdentitySpent, err.Error())
+	case errors.Is(err, ErrEmailTaken):
+		httpx.WriteError(w, r, http.StatusConflict, CodeEmailTaken, err.Error())
+	case errors.Is(err, ErrInvalidEmail):
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidEmail, err.Error())
+	case errors.Is(err, ErrMailOff):
+		httpx.WriteError(w, r, http.StatusServiceUnavailable, CodeEmailUnavailable, err.Error())
+	case errors.Is(err, ErrMailFailed):
+		httpx.Logger(r.Context()).Error(what, slog.Any("err", err))
+		httpx.WriteError(w, r, http.StatusServiceUnavailable, CodeEmailUnavailable, ErrMailFailed.Error())
 	default:
 		h.internal(w, r, what, err)
 	}

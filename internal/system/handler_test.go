@@ -82,14 +82,14 @@ func TestAppConfigFromDatabase(t *testing.T) {
 // What the web offers on its sign-in page.
 func TestAppConfigSignIn(t *testing.T) {
 	store := fakeStore{value: []byte(`{"android":"1.0.0","ios":"1.0.0"}`)}
-	for _, c := range [][2]bool{{true, false}, {false, true}, {true, true}} {
-		rec := serve(t, system.NewHandler(store, fakePinger{}).WithSignIn(c[0], c[1]), "/v1/app/config")
+	for _, c := range []system.SignIn{{Signup: true, Reset: true, Email: true}, {Google: true}, {Signup: true, Reset: true, Email: true, Google: true}} {
+		rec := serve(t, system.NewHandler(store, fakePinger{}).WithSignIn(c), "/v1/app/config")
 		var got map[string]any
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 			t.Fatal(err)
 		}
-		if got["signup"] != c[0] || got["google"] != c[1] {
-			t.Errorf("%v: %s", c, rec.Body)
+		if got["signup"] != c.Signup || got["reset"] != c.Reset || got["email"] != c.Email || got["google"] != c.Google {
+			t.Errorf("%+v: %s", c, rec.Body)
 		}
 	}
 }

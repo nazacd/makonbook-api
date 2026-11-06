@@ -1,10 +1,10 @@
 -- name: GetCredential :one
-SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until
+SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email
 FROM credentials
 WHERE person_kind = @person_kind AND person_id = @person_id;
 
 -- name: GetCredentialByUsername :one
-SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until
+SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email
 FROM credentials
 WHERE username = @username;
 
@@ -138,20 +138,20 @@ UPDATE phone_codes SET used_at = @now::timestamptz
 WHERE id = @id AND used_at IS NULL;
 
 -- name: InsertTicket :exec
-INSERT INTO auth_tickets (token_hash, purpose, phone, google_sub, email, first_name, last_name, created_at, expires_at)
-VALUES (@token_hash, @purpose, @phone, @google_sub, @email, @first_name, @last_name, @created_at, @expires_at);
+INSERT INTO auth_tickets (token_hash, purpose, phone, google_sub, email, first_name, last_name, identity, created_at, expires_at)
+VALUES (@token_hash, @purpose, @phone, @google_sub, @email, @first_name, @last_name, @identity, @created_at, @expires_at);
 
 -- A ticket that can still be used, without using it (to check a request
 -- before changing anything).
 -- name: PeekTicket :one
-SELECT phone, google_sub, email, first_name, last_name
+SELECT phone, google_sub, email, first_name, last_name, identity, revealed_phone
 FROM auth_tickets
 WHERE token_hash = @token_hash AND purpose = @purpose AND used_at IS NULL AND expires_at > @now::timestamptz;
 
 -- name: UseTicket :one
 UPDATE auth_tickets SET used_at = @now::timestamptz
 WHERE token_hash = @token_hash AND purpose = @purpose AND used_at IS NULL AND expires_at > @now::timestamptz
-RETURNING phone, google_sub, email, first_name, last_name;
+RETURNING phone, google_sub, email, first_name, last_name, identity, revealed_phone;
 
 -- name: DeleteOldPhoneCodes :execrows
 DELETE FROM phone_codes WHERE created_at < @before::timestamptz;
@@ -178,3 +178,59 @@ VALUES (@sub, @person_kind, @person_id, @email);
 
 -- name: SetGoogleEmail :exec
 UPDATE google_links SET email = @email WHERE sub = @sub AND email <> @email;
+
+-- An identity ticket shows the owner of one phone at most (spec 21.3): it
+-- records that phone, and refuses another.
+-- name: RevealPhone :execrows
+UPDATE auth_tickets SET revealed_phone = @phone::text
+WHERE token_hash = @token_hash AND purpose = @purpose AND used_at IS NULL
+  AND (revealed_phone IS NULL OR revealed_phone = @phone::text);
+
+-- Emails ------------------------------------------------------------------------
+
+-- name: LockEmail :exec
+SELECT pg_advisory_xact_lock(hashtextextended('email_codes:' || @email::text, 0));
+
+-- name: EmailCodesSince :many
+SELECT created_at FROM email_codes
+WHERE email = @email AND created_at > @since::timestamptz
+ORDER BY created_at;
+
+-- name: NetworkEmailCodesSince :many
+SELECT created_at FROM email_codes
+WHERE ip = @ip AND created_at > @since::timestamptz
+ORDER BY created_at;
+
+-- name: InsertEmailCode :exec
+INSERT INTO email_codes (email, salt, code_hash, ip, created_at, expires_at)
+VALUES (@email, @salt, @code_hash, @ip, @created_at, @expires_at);
+
+-- name: LatestEmailCode :one
+SELECT id, salt, code_hash, tries, created_at, expires_at, used_at
+FROM email_codes WHERE email = @email
+ORDER BY id DESC LIMIT 1;
+
+-- name: CountEmailCodeTry :one
+UPDATE email_codes SET tries = tries + 1
+WHERE id = @id AND tries < 5 AND used_at IS NULL
+RETURNING tries;
+
+-- name: UseEmailCode :execrows
+UPDATE email_codes SET used_at = @now::timestamptz
+WHERE id = @id AND used_at IS NULL;
+
+-- name: DeleteOldEmailCodes :execrows
+DELETE FROM email_codes WHERE created_at < @before::timestamptz;
+
+-- Who has an email (active or not: the caller checks).
+-- name: EmailOwner :one
+SELECT person_kind, person_id FROM credentials WHERE email = @email;
+
+-- name: ClearEmail :exec
+UPDATE credentials SET email = NULL WHERE email = @email;
+
+-- A person's email (one each: a new one replaces theirs).
+-- name: SetEmail :exec
+INSERT INTO credentials (person_kind, person_id, email)
+VALUES (@person_kind, @person_id, @email)
+ON CONFLICT (person_kind, person_id) DO UPDATE SET email = EXCLUDED.email;
