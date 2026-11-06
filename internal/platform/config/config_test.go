@@ -140,3 +140,21 @@ func TestMail(t *testing.T) {
 		}
 	}
 }
+
+func TestTelegramLogin(t *testing.T) {
+	cfg, err := Load(env(map[string]string{"DATABASE_URL": "x", "TELEGRAM_LOGIN_BOT_TOKEN": "123456:AAbb", "TELEGRAM_LOGIN_BOT_USERNAME": "@SatMakonBot",
+		"TELEGRAM_LOGIN_WEBHOOK_SECRET": "a-long-enough-secret_1"}))
+	if err != nil || cfg.TelegramLoginUsername != "SatMakonBot" {
+		t.Errorf("set: %+v %v", cfg, err)
+	}
+	for _, bad := range []map[string]string{
+		{"TELEGRAM_LOGIN_BOT_TOKEN": "nonsense", "TELEGRAM_LOGIN_BOT_USERNAME": "b", "TELEGRAM_LOGIN_WEBHOOK_SECRET": "a-long-enough-secret_1"},
+		{"TELEGRAM_LOGIN_BOT_TOKEN": "1:a", "TELEGRAM_LOGIN_WEBHOOK_SECRET": "a-long-enough-secret_1"},
+		{"TELEGRAM_LOGIN_BOT_TOKEN": "1:a", "TELEGRAM_LOGIN_BOT_USERNAME": "b", "TELEGRAM_LOGIN_WEBHOOK_SECRET": "short"},
+	} {
+		bad["DATABASE_URL"] = "x"
+		if _, err := Load(env(bad)); err == nil {
+			t.Errorf("%v: no error", bad)
+		}
+	}
+}

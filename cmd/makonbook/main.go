@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -65,6 +66,9 @@ commands:
   reset-password student|teacher <id>
                             back to the default password (last 4 digits of the phone),
                             unlock the account and log out everywhere
+  telegram webhook <public API URL>
+                            register the Telegram sign-in bot's webhook
+                            (TELEGRAM_LOGIN_*), e.g. https://api.makonbook.uz
 ` + adminUsage + practiceUsage + vocabUsage + demoUsage
 
 var errUsage = errors.New("invalid usage")
@@ -128,6 +132,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return runPractice(ctx, cfg, args, stdout)
 	case "review-bot":
 		return reviewBot(ctx, cfg, log)
+	case "telegram":
+		return telegramWebhook(ctx, cfg, arg, stdout)
 	case "reset-password":
 		id, _ := strconv.ParseInt(arg, 10, 32) // validated in validArgs
 		return resetPassword(ctx, cfg, sub, int32(id), stdout)
@@ -155,6 +161,9 @@ func validArgs(args []string) bool {
 		return validVocabArgs(args)
 	case len(args) >= 1 && args[0] == "demo":
 		return validDemoArgs(args)
+	case len(args) == 3 && args[0] == "telegram" && args[1] == "webhook":
+		u, err := url.Parse(args[2])
+		return err == nil && u.Scheme == "https" && u.Host != ""
 	case (len(args) == 2 || len(args) == 3) && args[0] == "sync":
 		modeOK := args[1] == string(hhsync.ModeFull) || args[1] == string(hhsync.ModeIncremental)
 		return modeOK && (len(args) == 2 || args[2] == "--allow-mass-change")
@@ -240,6 +249,9 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 		deps.Mail = mail.Log{Logger: log}
 	default:
 		deps.Mail = &mail.SMTP{Host: cfg.SMTPHost, Port: cfg.SMTPPort, Username: cfg.SMTPUsername, Password: cfg.SMTPPassword, From: cfg.MailFrom}
+	}
+	if t := telegramConfig(cfg); t != nil {
+		deps.Telegram = t
 	}
 	if cfg.GoogleClientID != "" {
 		deps.Google = &auth.GoogleConfig{ClientID: cfg.GoogleClientID, ClientSecret: cfg.GoogleClientSecret, WebOrigin: cfg.WebOrigin}
@@ -446,4 +458,32 @@ func runMigrate(ctx context.Context, cfg config.Config, cmd string, stdout io.Wr
 	default:
 		return migrate.Status(ctx, pool, stdout)
 	}
+}
+
+// telegramConfig is the Telegram sign-in bot's settings, or nil when off.
+func telegramConfig(cfg config.Config) *auth.TelegramConfig {
+	if cfg.TelegramLoginToken == "" {
+		return nil
+	}
+	return &auth.TelegramConfig{Token: cfg.TelegramLoginToken, Username: cfg.TelegramLoginUsername,
+		WebhookSecret: cfg.TelegramLoginWebhookSecret}
+}
+
+// telegramWebhook registers the sign-in bot's webhook with Telegram (spec 21).
+func telegramWebhook(ctx context.Context, cfg config.Config, publicURL string, stdout io.Writer) error {
+	t := telegramConfig(cfg)
+	if t == nil {
+		return errors.New("TELEGRAM_LOGIN_BOT_TOKEN isn't set")
+	}
+	pool, err := openDB(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	hook, err := auth.NewService(pool, people.NewDirectory(pool), auth.NewHasher()).WithTelegram(*t).SetTelegramWebhook(ctx, publicURL)
+	if err != nil {
+		return fmt.Errorf("setWebhook: %w", err)
+	}
+	fmt.Fprintf(stdout, "Telegram sends @%s's updates to %s\n", t.Username, hook)
+	return nil
 }

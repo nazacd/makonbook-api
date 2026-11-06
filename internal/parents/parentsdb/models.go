@@ -91,18 +91,20 @@ type AuthSession struct {
 }
 
 type AuthTicket struct {
-	TokenHash     []byte
-	Purpose       string
-	Phone         pgtype.Text
-	GoogleSub     pgtype.Text
-	Email         pgtype.Text
-	FirstName     pgtype.Text
-	LastName      pgtype.Text
-	CreatedAt     pgtype.Timestamptz
-	ExpiresAt     pgtype.Timestamptz
-	UsedAt        pgtype.Timestamptz
-	Identity      []byte
-	RevealedPhone pgtype.Text
+	TokenHash        []byte
+	Purpose          string
+	Phone            pgtype.Text
+	GoogleSub        pgtype.Text
+	Email            pgtype.Text
+	FirstName        pgtype.Text
+	LastName         pgtype.Text
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	UsedAt           pgtype.Timestamptz
+	Identity         []byte
+	RevealedPhone    pgtype.Text
+	TelegramID       pgtype.Int8
+	TelegramUsername pgtype.Text
 }
 
 type Credential struct {
@@ -503,6 +505,28 @@ type Teacher struct {
 	ActivatedAt     pgtype.Timestamptz
 	FirstNameCustom pgtype.Text
 	LastNameCustom  pgtype.Text
+}
+
+type TelegramLink struct {
+	TelegramID int64
+	PersonKind string
+	PersonID   int32
+	Username   pgtype.Text
+	CreatedAt  pgtype.Timestamptz
+}
+
+type TelegramPhoneCheck struct {
+	NonceHash       []byte
+	Purpose         string
+	Identity        []byte
+	IdentityPurpose pgtype.Text
+	Ip              string
+	TelegramUserID  pgtype.Int8
+	Phone           pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+	ExpiresAt       pgtype.Timestamptz
+	VerifiedAt      pgtype.Timestamptz
+	UsedAt          pgtype.Timestamptz
 }
 
 type VocabDeck struct {

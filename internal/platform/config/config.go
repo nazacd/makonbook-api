@@ -105,6 +105,10 @@ type Config struct {
 	// MailFrom, e.g. "SATMAKON <no-reply@makonbook.uz>".
 	SMTPHost, SMTPUsername, SMTPPassword, MailFrom string
 	SMTPPort                                       int
+	// The Telegram sign-in bot (its own, not the alerts' or the review
+	// bot's): its token (a secret; empty: no Telegram), username without @,
+	// and the webhook secret Telegram sends with every update (a secret).
+	TelegramLoginToken, TelegramLoginUsername, TelegramLoginWebhookSecret string
 }
 
 // DefaultSMSText is the SMS with a sign-up or reset code ({code}).
@@ -282,6 +286,21 @@ func (c *Config) loadAccounts(getenv func(string) string) (errs []error) {
 		}
 		if a, err := mail.ParseAddress(c.MailFrom); err != nil || !strings.Contains(a.Address, "@") {
 			errs = append(errs, fmt.Errorf("MAIL_FROM must be an address like \"SATMAKON <no-reply@makonbook.uz>\", got %q", c.MailFrom))
+		}
+	}
+
+	c.TelegramLoginToken = strings.TrimSpace(getenv("TELEGRAM_LOGIN_BOT_TOKEN"))
+	c.TelegramLoginUsername = strings.TrimPrefix(strings.TrimSpace(getenv("TELEGRAM_LOGIN_BOT_USERNAME")), "@")
+	c.TelegramLoginWebhookSecret = strings.TrimSpace(getenv("TELEGRAM_LOGIN_WEBHOOK_SECRET"))
+	if c.TelegramLoginToken != "" {
+		if id, _, ok := strings.Cut(c.TelegramLoginToken, ":"); !ok || strings.Trim(id, "0123456789") != "" || id == "" {
+			errs = append(errs, errors.New("TELEGRAM_LOGIN_BOT_TOKEN must be a bot token like 123456789:AA…"))
+		}
+		if c.TelegramLoginUsername == "" || strings.ContainsAny(c.TelegramLoginUsername, " /:") {
+			errs = append(errs, errors.New("TELEGRAM_LOGIN_BOT_USERNAME is required with TELEGRAM_LOGIN_BOT_TOKEN (the bot's username, without @)"))
+		}
+		if w := c.TelegramLoginWebhookSecret; len(w) < 16 || len(w) > 256 || strings.Trim(w, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != "" {
+			errs = append(errs, errors.New("TELEGRAM_LOGIN_WEBHOOK_SECRET is required with TELEGRAM_LOGIN_BOT_TOKEN: 16 to 256 characters of A-Z a-z 0-9 _ -"))
 		}
 	}
 

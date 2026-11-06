@@ -51,6 +51,8 @@ const (
 	ticketGoogle       = "google"        // back from Google, for /v1/auth/google/ticket
 	ticketGoogleSignup = "google_signup" // a Google account waiting for a phone, for sign-up
 	ticketEmail        = "email"         // a proved email waiting for a phone, for sign-up
+	// ticketTelegramSignup: a Telegram account waiting for a phone, for sign-up.
+	ticketTelegramSignup = "telegram_signup"
 )
 
 var (
@@ -103,12 +105,15 @@ func (s *Service) WithSMS(sender sms.Sender, text string, log *slog.Logger) *Ser
 	return s
 }
 
-// SignupEnabled: people can sign up: codes go by SMS, and there is a way to
-// start (an email code or Google).
-func (s *Service) SignupEnabled() bool { return s.sms != nil && (s.mail != nil || s.google != nil) }
+// SignupEnabled: people can sign up: there is a way to start (an email code,
+// Google or Telegram) and to prove the phone (an SMS code or the Telegram bot).
+func (s *Service) SignupEnabled() bool {
+	return (s.sms != nil || s.telegram != nil) && (s.mail != nil || s.google != nil || s.telegram != nil)
+}
 
-// ResetEnabled: people can reset their password with an SMS code.
-func (s *Service) ResetEnabled() bool { return s.sms != nil }
+// ResetEnabled: people can reset their password (the phone proved by SMS or
+// the Telegram bot).
+func (s *Service) ResetEnabled() bool { return s.sms != nil || s.telegram != nil }
 
 // uzbekPhone normalises a number as the rest of the API does (spec 5) and
 // accepts Uzbek numbers only: codes go by SMS through an Uzbek gateway.
@@ -319,26 +324,53 @@ func shortName(first, last string) string {
 }
 
 // Identity is what a sign-up starts with (spec 21.3): a proved email
-// (EmailTicket, from VerifyEmail) or a Google account (GoogleTicket, from
-// GoogleTicket's needs_phone); exactly one.
+// (EmailTicket, from VerifyEmail), a Google account (GoogleTicket, from
+// GoogleTicket's needs_phone) or a Telegram account (TelegramTicket, from
+// TelegramSignIn's needs_phone); exactly one.
 type Identity struct {
-	EmailTicket  *string `json:"email_ticket"`
-	GoogleTicket *string `json:"google_ticket"`
+	EmailTicket    *string `json:"email_ticket"`
+	GoogleTicket   *string `json:"google_ticket"`
+	TelegramTicket *string `json:"telegram_ticket"`
 }
 
-// identityTicket is the identity's ticket and its purpose; ErrInvalidTicket
-// unless exactly one is given.
+// ticket is the identity's ticket and its purpose; ErrInvalidTicket unless
+// exactly one is given.
 func (id Identity) ticket() (ticket, purpose string, err error) {
-	email := id.EmailTicket != nil && *id.EmailTicket != ""
-	google := id.GoogleTicket != nil && *id.GoogleTicket != ""
-	switch {
-	case email && !google:
-		return *id.EmailTicket, ticketEmail, nil
-	case google && !email:
-		return *id.GoogleTicket, ticketGoogleSignup, nil
-	default:
+	n := 0
+	for _, c := range []struct {
+		t       *string
+		purpose string
+	}{{id.EmailTicket, ticketEmail}, {id.GoogleTicket, ticketGoogleSignup}, {id.TelegramTicket, ticketTelegramSignup}} {
+		if c.t != nil && *c.t != "" {
+			ticket, purpose = *c.t, c.purpose
+			n++
+		}
+	}
+	if n != 1 {
 		return "", "", ErrInvalidTicket
 	}
+	return ticket, purpose, nil
+}
+
+// identityFor checks a sign-up's identity: given, live, and (when phone is
+// known) not spent on another phone. It answers the ticket's hash and purpose.
+func (s *Service) identityFor(ctx context.Context, identity Identity, phone string, now time.Time) ([]byte, string, error) {
+	idTicket, purpose, err := identity.ticket()
+	if err != nil {
+		return nil, "", err
+	}
+	hash := hashToken(idTicket)
+	it, err := s.q.PeekTicket(ctx, authdb.PeekTicketParams{TokenHash: hash, Purpose: purpose, Now: timestamp(now)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, "", ErrInvalidTicket
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	if phone != "" && it.RevealedPhone.Valid && it.RevealedPhone.String != phone {
+		return nil, "", ErrIdentitySpent
+	}
+	return hash, purpose, nil
 }
 
 // VerifyPhone checks a code sent by StartPhone and answers a ticket: proof,
@@ -360,20 +392,8 @@ func (s *Service) VerifyPhone(ctx context.Context, raw, code, purpose string, id
 	var idHash []byte
 	var idPurpose string
 	if purpose == PurposeSignup {
-		idTicket, p, err := identity.ticket()
-		if err != nil {
+		if idHash, idPurpose, err = s.identityFor(ctx, identity, phone, now); err != nil {
 			return "", nil, err
-		}
-		idHash, idPurpose = hashToken(idTicket), p
-		it, err := s.q.PeekTicket(ctx, authdb.PeekTicketParams{TokenHash: idHash, Purpose: idPurpose, Now: timestamp(now)})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", nil, ErrInvalidTicket
-		}
-		if err != nil {
-			return "", nil, err
-		}
-		if it.RevealedPhone.Valid && it.RevealedPhone.String != phone {
-			return "", nil, ErrIdentitySpent
 		}
 	}
 
@@ -394,7 +414,14 @@ func (s *Service) VerifyPhone(ctx context.Context, raw, code, purpose string, id
 	if err := c.check(ctx, code, now); err != nil {
 		return "", nil, err
 	}
+	return s.phoneProved(ctx, phone, purpose, idHash, idPurpose)
+}
 
+// phoneProved answers the ticket for a phone just proved (by an SMS code or
+// the Telegram bot): for a sign-up, bound to the identity, with whose the
+// phone is, which spends the identity on this phone.
+func (s *Service) phoneProved(ctx context.Context, phone, purpose string, idHash []byte, idPurpose string) (string, *PhoneOwner, error) {
+	var owner *PhoneOwner
 	if purpose == PurposeSignup {
 		p, found, err := phoneOwner(ctx, s.people, phone)
 		switch {
@@ -416,7 +443,7 @@ func (s *Service) VerifyPhone(ctx context.Context, raw, code, purpose string, id
 			}
 		}
 	}
-	ticket, err = s.newTicket(ctx, s.q, ticketData{purpose: purpose, phone: phone, identity: idHash}, PhoneTicketTTL)
+	ticket, err := s.newTicket(ctx, s.q, ticketData{purpose: purpose, phone: phone, identity: idHash}, PhoneTicketTTL)
 	if err != nil {
 		return "", nil, err
 	}
@@ -466,10 +493,14 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (res LoginResult, 
 	}
 	var email string
 	var google *GoogleAccount
-	if idPurpose == ticketEmail {
+	var tg *TelegramAccount
+	switch idPurpose {
+	case ticketEmail:
 		email = it.Email.String
-	} else {
+	case ticketGoogleSignup:
 		google = &GoogleAccount{Sub: it.GoogleSub.String, Email: it.Email.String}
+	default:
+		tg = &TelegramAccount{ID: it.TelegramID.Int64, Username: it.TelegramUsername.String}
 	}
 
 	if owner, found, err := phoneOwner(ctx, s.people, phone); err != nil {
@@ -479,7 +510,7 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (res LoginResult, 
 	}
 	var hash string
 	if in.Password == nil {
-		if google == nil {
+		if email != "" {
 			return LoginResult{}, false, &ValidationError{Field: "password", Err: errNeedPassword}
 		}
 	} else {
@@ -493,7 +524,7 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (res LoginResult, 
 
 	// Two sign-ups with one number at once: the second finds the first's.
 	for attempt := 0; ; attempt++ {
-		res, existing, err = s.signup(ctx, in, idTicket, idPurpose, phone, hash, email, google)
+		res, existing, err = s.signup(ctx, in, idTicket, idPurpose, phone, hash, email, google, tg)
 		var pgErr *pgconn.PgError
 		if attempt == 0 && errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			continue
@@ -502,7 +533,7 @@ func (s *Service) Signup(ctx context.Context, in SignupInput) (res LoginResult, 
 	}
 }
 
-func (s *Service) signup(ctx context.Context, in SignupInput, idTicket, idPurpose, phone, hash, email string, google *GoogleAccount) (LoginResult, bool, error) {
+func (s *Service) signup(ctx context.Context, in SignupInput, idTicket, idPurpose, phone, hash, email string, google *GoogleAccount, tg *TelegramAccount) (LoginResult, bool, error) {
 	now := s.now()
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -565,6 +596,11 @@ func (s *Service) signup(ctx context.Context, in SignupInput, idTicket, idPurpos
 	}
 	if google != nil {
 		if err := s.linkGoogle(ctx, q, dir, p, *google); err != nil {
+			return LoginResult{}, false, err
+		}
+	}
+	if tg != nil {
+		if err := linkTelegram(ctx, q, dir, p, *tg); err != nil {
 			return LoginResult{}, false, err
 		}
 	}
@@ -728,10 +764,11 @@ func (s *Service) linkGoogle(ctx context.Context, q *authdb.Queries, dir *people
 // ticketData is what a ticket proves.
 type ticketData struct {
 	purpose  string
-	phone    string         // signup, reset
-	email    string         // email
-	identity []byte         // signup: the identity ticket's hash
-	google   *GoogleAccount // google, google_signup
+	phone    string           // signup, reset
+	email    string           // email
+	identity []byte           // signup: the identity ticket's hash
+	telegram *TelegramAccount // telegram_signup
+	google   *GoogleAccount   // google, google_signup
 }
 
 // newTicket stores a single-use ticket and returns it.
@@ -749,6 +786,12 @@ func (s *Service) newTicket(ctx context.Context, q *authdb.Queries, t ticketData
 		p.Email = pgtype.Text{String: t.email, Valid: true}
 	}
 	p.Identity = t.identity
+	if tg := t.telegram; tg != nil {
+		p.TelegramID = pgtype.Int8{Int64: tg.ID, Valid: true}
+		p.TelegramUsername = pgtype.Text{String: tg.Username, Valid: tg.Username != ""}
+		p.FirstName = pgtype.Text{String: tg.FirstName, Valid: true}
+		p.LastName = pgtype.Text{String: tg.LastName, Valid: true}
+	}
 	if g := t.google; g != nil {
 		p.GoogleSub = pgtype.Text{String: g.Sub, Valid: true}
 		p.Email = pgtype.Text{String: g.Email, Valid: true}
@@ -791,7 +834,11 @@ func CleanUp(ctx context.Context, db authdb.DBTX, now time.Time) (int64, error) 
 		return 0, err
 	}
 	emails, err := q.DeleteOldEmailCodes(ctx, timestamp(now.Add(-48*time.Hour)))
-	return codes + tickets + emails, err
+	if err != nil {
+		return 0, err
+	}
+	checks, err := q.DeleteOldTelegramChecks(ctx, timestamp(now.Add(-48*time.Hour)))
+	return codes + tickets + emails + checks, err
 }
 
 // newCode is 6 random digits.

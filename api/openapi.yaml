@@ -280,6 +280,201 @@ paths:
           description: "`email_unavailable`"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/auth/telegram:
+    post:
+      summary: Sign in with Telegram (Login Widget data)
+      description: |
+        The web sends people to oauth.telegram.org (the sign-in bot,
+        `/v1/app/config` `telegram`) and gets `#tgAuthResult` back: its fields
+        go here as `auth`, as received. The server checks Telegram's hash
+        (HMAC-SHA256 of the other fields, sorted, `key=value` lines, keyed
+        with SHA-256 of the bot's token) and that `auth_date` is within 24
+        hours. A Telegram account linked to someone active signs them in;
+        otherwise the answer carries a `telegram_ticket` (30 minutes), an
+        identity for the phone step and sign-up, like Google's.
+      operationId: telegramSignIn
+      tags: [accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [auth]
+              properties:
+                auth:
+                  type: object
+                  required: [id, first_name, auth_date, hash]
+                  properties:
+                    id: { type: integer }
+                    first_name: { type: string }
+                    last_name: { type: string }
+                    username: { type: string }
+                    photo_url: { type: string }
+                    auth_date: { type: integer }
+                    hash: { type: string }
+                device_id: { type: string, maxLength: 100 }
+      responses:
+        "200":
+          description: Signed in, or a phone is needed to finish signing up
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [status, token, expires_at, user]
+                    properties:
+                      status: { type: string, enum: [signed_in] }
+                      token: { type: string }
+                      expires_at: { type: string, format: date-time }
+                      user: { $ref: "#/components/schemas/Profile" }
+                  - type: object
+                    required: [status, telegram_ticket, first_name, last_name]
+                    properties:
+                      status: { type: string, enum: [needs_phone] }
+                      telegram_ticket: { type: string }
+                      first_name: { type: string }
+                      last_name: { type: string, description: May be empty }
+        "400": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`invalid_telegram`: the hash doesn't match, or the data is older than 24 hours"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "503":
+          description: "`telegram_unavailable`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/auth/phone/telegram/start:
+    post:
+      summary: Prove a phone through the Telegram bot instead of an SMS code
+      description: |
+        Answers a nonce and a t.me link to the sign-in bot (10 minutes). The
+        person opens it, taps *Share my number*, and the bot accepts their own
+        contact if it is an Uzbek (+998) number. Then
+        `/v1/auth/phone/telegram/check` gives the phone ticket. For `signup`
+        exactly one identity is required, as for `/v1/auth/phone/verify`.
+        20 checks an hour per network.
+      operationId: startTelegramPhone
+      tags: [accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [purpose]
+              properties:
+                purpose: { type: string, enum: [signup, reset] }
+                email_ticket: { type: [string, "null"] }
+                google_ticket: { type: [string, "null"] }
+                telegram_ticket: { type: [string, "null"] }
+      responses:
+        "200":
+          description: Open the link
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [nonce, link, expires_in]
+                properties:
+                  nonce: { type: string }
+                  link: { type: string, example: "https://t.me/SatMakonBot?start=…" }
+                  expires_in: { type: integer, example: 600 }
+        "400": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`invalid_ticket` (signup without exactly one valid identity)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429":
+          description: "`rate_limited`"
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "503":
+          description: "`telegram_unavailable`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/auth/phone/telegram/check:
+    post:
+      summary: Whether the bot has the phone yet; once it has, the phone ticket (once)
+      description: |
+        Poll every few seconds. `verified` carries the same phone ticket as
+        `/v1/auth/phone/verify` (for the purpose, bound to the identity for
+        `signup`) and, for `signup` only, `account` (whose the number is,
+        which spends the identity as an SMS verify does). For `reset` it
+        answers the same whether or not anyone signs in with the number
+        (`/v1/auth/reset` then says `no_account`). After it answered
+        `verified`, or after 10 minutes: `410 code_expired`.
+      operationId: checkTelegramPhone
+      tags: [accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nonce]
+              properties:
+                nonce: { type: string }
+      responses:
+        "200":
+          description: Pending, or verified
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [status]
+                    properties:
+                      status: { type: string, enum: [pending] }
+                  - type: object
+                    required: [status, phone, ticket]
+                    properties:
+                      status: { type: string, enum: [verified] }
+                      phone: { type: string, example: "+998901234567" }
+                      ticket: { type: string }
+                      account:
+                        description: "`signup` only: as in `/v1/auth/phone/verify`"
+                        oneOf:
+                          - type: "null"
+                          - type: object
+                            required: [status]
+                            properties:
+                              status: { type: string, enum: [registered, enrolled] }
+                              kind: { type: string, enum: [student, teacher] }
+                              name: { type: string }
+        "409":
+          description: "`identity_spent`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "410":
+          description: "`code_expired`: expired, unknown, or already traded"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_ticket`: the identity expired or was used meanwhile"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "503":
+          description: "`telegram_unavailable`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/telegram/webhook:
+    post:
+      summary: The sign-in bot's updates (Telegram only)
+      description: |
+        Registered with `makonbook telegram webhook <public API URL>`.
+        Requests without the `X-Telegram-Bot-Api-Secret-Token` header set to
+        `TELEGRAM_LOGIN_WEBHOOK_SECRET` are refused.
+      operationId: telegramWebhook
+      tags: [accounts]
+      parameters:
+        - { name: X-Telegram-Bot-Api-Secret-Token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: "A Telegram Update" }
+      responses:
+        "200": { description: Taken }
+        "403": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
   /v1/auth/phone/start:
     post:
       summary: Send a 6-digit code by SMS, to sign up or reset a password
@@ -334,8 +529,9 @@ paths:
         `/v1/auth/reset` a `reset` one.
 
         For `signup` the request needs exactly one identity: `email_ticket`
-        (from `/v1/auth/email/verify`) or `google_ticket` (from
-        `/v1/auth/google/ticket`, `needs_phone`); otherwise `422
+        (from `/v1/auth/email/verify`), `google_ticket` (from
+        `/v1/auth/google/ticket`, `needs_phone`) or `telegram_ticket` (from
+        `/v1/auth/telegram`, `needs_phone`); otherwise `422
         invalid_ticket` (checked before the code, which is then not tried).
         The phone ticket is good for sign-up with that identity only. An
         identity shows the owner of one phone at most: once a verify has
@@ -366,6 +562,7 @@ paths:
                 purpose: { type: string, enum: [signup, reset] }
                 email_ticket: { type: [string, "null"], description: "`signup`: the identity, if it is an email" }
                 google_ticket: { type: [string, "null"], description: "`signup`: the identity, if it is a Google account" }
+                telegram_ticket: { type: [string, "null"], description: "`signup`: the identity, if it is a Telegram account" }
       responses:
         "200":
           description: Verified
@@ -414,7 +611,8 @@ paths:
       summary: Create a student account, or sign into the SAT MAKON account the phone has
       description: |
         Needs a `signup` ticket from `/v1/auth/phone/verify` and the identity
-        it was verified with (exactly one of `email_ticket`, `google_ticket`;
+        it was verified with (exactly one of `email_ticket`, `google_ticket`,
+        `telegram_ticket`;
         otherwise `422 invalid_ticket`). The verify's `account` says which case
         this is:
         - an **enrolled** person (a student or teacher in HolliHop) signs in
@@ -422,7 +620,7 @@ paths:
           (`existing: true`; the client asked "Is this you?" first), sets the
           password if one is given (their other sessions end, as after a
           password change), adds the email if no other active account has it
-          (else leaves it out), or links the Google account. The names are
+          (else leaves it out), or links the Google or Telegram account. The names are
           ignored and may be null.
         - a **registered** student (signed up before) does: `409 phone_taken`;
           nothing changes (no session, no email or Google link, same password).
@@ -448,10 +646,13 @@ paths:
                 last_name: { type: [string, "null"], description: "1–60 characters after trimming; needed only for a new account" }
                 password:
                   type: [string, "null"]
-                  description: The rules of `/v1/auth/password`; required with an email, may be null with Google
+                  description: The rules of `/v1/auth/password`; required with an email, may be null with Google or Telegram
                 google_ticket:
                   type: [string, "null"]
                   description: From `/v1/auth/google/ticket` (`needs_phone`), to sign in with Google from then on
+                telegram_ticket:
+                  type: [string, "null"]
+                  description: From `/v1/auth/telegram` (`needs_phone`), to sign in with Telegram from then on
                 device_id: { type: string, maxLength: 100 }
       responses:
         "200":
@@ -467,7 +668,7 @@ paths:
                       existing: { type: boolean, description: The phone already had an account }
         "400": { $ref: "#/components/responses/Error" }
         "409":
-          description: "`phone_taken`: a registered student already signs in with this phone; `email_taken`: a new account's email was taken meanwhile; `google_taken`: that Google account is linked to someone else"
+          description: "`phone_taken`: a registered student already signs in with this phone; `email_taken`: a new account's email was taken meanwhile; `google_taken` / `telegram_taken`: that Google or Telegram account is linked to someone else"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "422":
           description: "`invalid_ticket` (a ticket is unknown, used, expired or for another purpose), `weak_password`, `invalid_profile` (a new account's names)"
@@ -3036,6 +3237,7 @@ components:
         phone: { type: [string, "null"], description: The login phone, E.164 }
         email: { type: [string, "null"], description: "Their email (lower case), from sign-up; they can sign in with it" }
         google: { type: boolean, description: A Google account is linked }
+        telegram: { type: boolean, description: A Telegram account is linked }
         has_password: { type: boolean, description: "Their own password (false while on the default one, or signed up with Google only)" }
         groups:
           type: array
@@ -3174,10 +3376,19 @@ components:
       type: object
       required: [min_app_version]
       properties:
-        signup: { type: boolean, description: "Sign-up is available (an email code or Google, then an SMS code)" }
-        reset: { type: boolean, description: Password reset by SMS code is available }
+        signup: { type: boolean, description: "Sign-up is available (an email code, Google or Telegram, then the phone by SMS code or the Telegram bot)" }
+        reset: { type: boolean, description: "Password reset is available (the phone by SMS code or the Telegram bot)" }
         email: { type: boolean, description: Sign-up can start with an email code }
         google: { type: boolean, description: Google sign-in is available }
+        telegram:
+          description: The Telegram sign-in bot (Login Widget, phone checks); null when off
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [bot_id, bot_username]
+              properties:
+                bot_id: { type: integer, description: "The bot token's number (public)" }
+                bot_username: { type: string, example: SatMakonBot }
         min_app_version:
           type: object
           required: [android, ios]
@@ -3248,6 +3459,9 @@ components:
                 - invalid_email
                 - email_taken
                 - email_unavailable
+                - invalid_telegram
+                - telegram_taken
+                - telegram_unavailable
                 - google_unavailable
                 - enrolled_only
             message:

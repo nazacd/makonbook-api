@@ -64,6 +64,8 @@ type Deps struct {
 	Google  *auth.GoogleConfig
 	// Mail sends the email codes sign-up can start with; nil: no email.
 	Mail mail.Sender
+	// Telegram turns on Telegram sign-in and phone checks; nil leaves it off.
+	Telegram *auth.TelegramConfig
 }
 
 // Handler builds the complete HTTP handler: every feature's routes behind the
@@ -83,10 +85,16 @@ func Handler(d Deps) http.Handler {
 	if d.Mail != nil {
 		authSvc.WithMail(d.Mail)
 	}
-
-	system.NewHandler(systemdb.New(d.Pool), d.Pool).WithSignIn(system.SignIn{
+	if d.Telegram != nil {
+		authSvc.WithTelegram(*d.Telegram)
+	}
+	signIn := system.SignIn{
 		Signup: authSvc.SignupEnabled(), Reset: authSvc.ResetEnabled(), Email: authSvc.MailEnabled(), Google: authSvc.GoogleEnabled(),
-	}).Register(mux)
+	}
+	if id, username, ok := authSvc.TelegramBot(); ok {
+		signIn.Telegram = &system.TelegramBot{BotID: id, BotUsername: username}
+	}
+	system.NewHandler(systemdb.New(d.Pool), d.Pool).WithSignIn(signIn).Register(mux)
 	authHandler := auth.NewHandler(authSvc, d.Location, d.TrustProxy)
 	authHandler.Register(mux)
 	lessonsSvc := lessons.NewService(d.Pool, d.Location)

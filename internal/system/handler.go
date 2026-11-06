@@ -34,6 +34,15 @@ type SignIn struct {
 	Reset  bool // password reset by SMS code
 	Email  bool // sign-up can start with an email code
 	Google bool // Google sign-in
+	// Telegram: the sign-in bot, for the Login Widget; nil when off.
+	Telegram *TelegramBot
+}
+
+// TelegramBot is the public face of the sign-in bot: its id (the token's
+// number) and username.
+type TelegramBot struct {
+	BotID       int64  `json:"bot_id"`
+	BotUsername string `json:"bot_username"`
 }
 
 func NewHandler(store Store, db Pinger) *Handler {
@@ -86,6 +95,8 @@ type AppConfig struct {
 	Reset  bool `json:"reset"`
 	Email  bool `json:"email"`
 	Google bool `json:"google"`
+	// Telegram: the sign-in bot, or null when Telegram is off.
+	Telegram *TelegramBot `json:"telegram"`
 }
 
 func (h *Handler) appConfig(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +107,7 @@ func (h *Handler) appConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := AppConfig{Signup: h.signIn.Signup, Reset: h.signIn.Reset, Email: h.signIn.Email, Google: h.signIn.Google}
+	cfg := AppConfig{Signup: h.signIn.Signup, Reset: h.signIn.Reset, Email: h.signIn.Email, Google: h.signIn.Google, Telegram: h.signIn.Telegram}
 	if err := json.Unmarshal(raw, &cfg.MinAppVersion); err != nil {
 		httpx.Logger(r.Context()).Error("decode min_app_version", slog.Any("err", err))
 		httpx.WriteError(w, r, http.StatusInternalServerError, httpx.CodeInternal, "internal error")

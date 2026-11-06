@@ -83,6 +83,10 @@ func TestEnrolmentLinksTheSelfRegisteredAccount(t *testing.T) {
 		VALUES ('g-77', 'student', $1, 'dili@gmail.com')`, self); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `INSERT INTO telegram_links (telegram_id, person_kind, person_id, username)
+		VALUES (7777, 'student', $1, 'dili')`, self); err != nil {
+		t.Fatal(err)
+	}
 	src.students = append(src.students, hollihop.Student{ID: 900, ClientID: 77, FirstName: "Dilnoza", LastName: "Karimova",
 		Mobile: "93 555 00 01", StatusID: people.StatusStudying, OfficesAndCompanies: []hollihop.Office{{ID: 3, Name: "NOVZA"}}})
 	src.enrollments = append(src.enrollments, hollihop.EdUnitStudent{EdUnitID: 100, StudentClientID: 77, Weekdays: 21, Status: "Normal"})
@@ -112,6 +116,7 @@ func TestEnrolmentLinksTheSelfRegisteredAccount(t *testing.T) {
 		"SELECT count(*) FROM parked_questions WHERE student_client_id = 77",
 		"SELECT count(*) FROM credentials WHERE person_kind = 'student' AND person_id = 77 AND username = 'self1000001'",
 		"SELECT count(*) FROM google_links WHERE person_kind = 'student' AND person_id = 77",
+		"SELECT count(*) FROM telegram_links WHERE person_kind = 'student' AND person_id = 77",
 		"SELECT count(*) FROM enrollments WHERE student_client_id = 77",
 	} {
 		if n := count(t, pool, sql); n != 1 {

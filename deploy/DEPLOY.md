@@ -522,6 +522,27 @@ The edge nginx block of sat.makonbook.uz (in makonbook-web's `deploy/`) sends
 `/v1/` to this API, so the callback is on the web's own origin. To turn Google
 off, empty the two `GOOGLE_*` settings.
 
+**Telegram (sign-in bot).** A third way to start a sign-up (and to sign in),
+and a free way to prove the phone instead of an SMS code. It is a bot of its
+own, not the alerts' bot (`TELEGRAM_BOT_TOKEN`) or the review bot.
+
+1. In Telegram, @BotFather → `/newbot`: name **SATMAKON**, a username such as
+   `SatMakonBot`. Copy the token.
+2. Still in @BotFather: `/setdomain` → the bot → `sat.makonbook.uz` (the Login
+   Widget works only on that domain). Optionally `/setuserpic` and
+   `/setdescription`.
+3. In `.env`: `TELEGRAM_LOGIN_BOT_TOKEN=<token>`,
+   `TELEGRAM_LOGIN_BOT_USERNAME=SatMakonBot` (without @),
+   `TELEGRAM_LOGIN_WEBHOOK_SECRET=<random>` (e.g. `openssl rand -hex 32`; both
+   are secrets). `docker compose up -d`.
+4. Register the webhook (once, and again if the token, the secret or the host
+   changes): `docker compose run --rm api telegram webhook https://api.makonbook.uz`.
+   Telegram then posts to `https://api.makonbook.uz/v1/telegram/webhook`
+   (the API's public host, through the edge nginx; the secret header keeps
+   others out).
+5. Try it: on the web, start a sign-up, choose *Verify with Telegram*, open
+   the bot and share your number.
+
 **Who signed up.** Self-registered students are rows of `students` with
 `source = 'self'` (ids −1000001 and down). When the office adds one of them in
 HolliHop with the same phone, the next sync makes their account the HolliHop
