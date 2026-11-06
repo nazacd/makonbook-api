@@ -137,6 +137,275 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/email/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a 6-digit code to an email, to start a sign-up
+         * @description Sign-up starts with an email (or Google), then the phone. The code is
+         *     good for 10 minutes and 5 tries; only the address's latest code
+         *     counts. Limits: per address one code a minute and 5 a day, per
+         *     network 20 an hour (`429 rate_limited`, `Retry-After`). The address
+         *     is trimmed and lower-cased.
+         */
+        post: operations["startEmailCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/email/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check the email code; answers the identity to verify a phone with
+         * @description The `email_ticket` (single-use, 30 minutes) goes to
+         *     `/v1/auth/phone/verify` (purpose `signup`) and then
+         *     `/v1/auth/signup`. An address an active account already has is
+         *     `409 email_taken` (the code proved it, so saying so is fine): sign in
+         *     or reset the password instead.
+         */
+        post: operations["verifyEmailCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/phone/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a 6-digit code by SMS, to sign up or reset a password
+         * @description The code is good for 10 minutes and 5 tries; only the phone's latest
+         *     code for the purpose counts. Limits: per phone one code a minute and 5
+         *     a day, per network 20 an hour (`429 rate_limited`, `Retry-After` in
+         *     seconds). For `reset` the answer is the same whether or not anyone
+         *     signs in with the number; the code is sent only if someone does.
+         */
+        post: operations["startPhoneCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/phone/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check the SMS code; answers a ticket proving the phone
+         * @description The ticket is single-use and good for 15 minutes, for the purpose the
+         *     code was sent for: `/v1/auth/signup` takes a `signup` ticket,
+         *     `/v1/auth/reset` a `reset` one.
+         *
+         *     For `signup` the request needs exactly one identity: `email_ticket`
+         *     (from `/v1/auth/email/verify`) or `google_ticket` (from
+         *     `/v1/auth/google/ticket`, `needs_phone`); otherwise `422
+         *     invalid_ticket` (checked before the code, which is then not tried).
+         *     The phone ticket is good for sign-up with that identity only. An
+         *     identity shows the owner of one phone at most: once a verify has
+         *     shown a non-null `account`, verifying another phone with it is `409
+         *     identity_spent` (the same phone again is fine; phones nobody has
+         *     don't count).
+         *
+         *     For `signup` the answer also says who already signs in with the
+         *     number (`account`): null (nobody: sign-up makes an account),
+         *     `{"status": "registered"}` (someone signed up with it: sign-up is
+         *     refused, `409 phone_taken`; offer sign-in and *Forgot your
+         *     password?*), or `{"status": "enrolled", "kind", "name"}` (a SAT MAKON
+         *     student or teacher: ask "Is this you?" with `name`, e.g. "Diyora A.",
+         *     and on yes sign up, which signs into that account). A `reset` answer
+         *     has `ticket` only.
+         */
+        post: operations["verifyPhoneCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/signup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a student account, or sign into the SAT MAKON account the phone has
+         * @description Needs a `signup` ticket from `/v1/auth/phone/verify` and the identity
+         *     it was verified with (exactly one of `email_ticket`, `google_ticket`;
+         *     otherwise `422 invalid_ticket`). The verify's `account` says which case
+         *     this is:
+         *     - an **enrolled** person (a student or teacher in HolliHop) signs in
+         *       with that phone: no account is made; this signs into theirs
+         *       (`existing: true`; the client asked "Is this you?" first), sets the
+         *       password if one is given (their other sessions end, as after a
+         *       password change), adds the email if no other active account has it
+         *       (else leaves it out), or links the Google account. The names are
+         *       ignored and may be null.
+         *     - a **registered** student (signed up before) does: `409 phone_taken`;
+         *       nothing changes (no session, no email or Google link, same password).
+         *     - nobody does: a registered student is made with the phone, the email
+         *       or Google account, these names (required then) and the password,
+         *       and signed in.
+         *     Nothing is spent when a request is turned down.
+         */
+        post: operations["signup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set a new password with a reset ticket, and sign in
+         * @description For whoever signs in with the phone the `reset` ticket proves: sets
+         *     the password, unlocks the account and ends every other session. It is
+         *     also how someone who signed up with Google sets a first password.
+         */
+        post: operations["resetPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/google/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Go to Google to sign in (a browser navigation, not a fetch)
+         * @description Redirects to Google (scopes `openid email profile`, PKCE), with the
+         *     sign-in's state in a short-lived HttpOnly cookie for the callback.
+         *     Google sends the browser back to `/v1/auth/google/callback` on the
+         *     web's origin (`WEB_ORIGIN`), which redirects to the web's
+         *     `/auth/google` page.
+         */
+        get: operations["googleStart"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/google/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where Google sends the browser back (not called by the web)
+         * @description Checks the state against the cookie, trades the code at Google and
+         *     reads the ID token (issuer, audience, expiry, a verified email). Then
+         *     redirects to `WEB_ORIGIN/auth/google#ticket=<ticket>&return=<path>` —
+         *     the ticket is single-use and good for 10 minutes, for
+         *     `/v1/auth/google/ticket` — or `#error=google_denied` (cancelled at
+         *     Google) or `#error=google_failed` (anything else).
+         */
+        get: operations["googleCallback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/google/ticket": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Finish Google sign-in with the callback's ticket
+         * @description A Google account linked to someone active signs them in
+         *     (`signed_in`, as a login; `must_change_password` is true for a
+         *     HolliHop person still on the default password). Otherwise
+         *     (`needs_phone`) the answer carries a `google_ticket` (single-use, 30
+         *     minutes) for `/v1/auth/signup`, once a phone is verified, and what
+         *     Google says about the person, to fill in the form.
+         */
+        post: operations["googleTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Change your own name
+         * @description The names the person sees for themselves from then on (in `/v1/me`
+         *     and every sign-in); the HolliHop sync never changes them. Teachers,
+         *     admins and parents keep seeing the names in HolliHop. null clears one,
+         *     back to HolliHop's — only for people in HolliHop: a registered student
+         *     needs both.
+         */
+        put: operations["saveProfile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me": {
         parameters: {
             query?: never;
@@ -324,6 +593,10 @@ export interface paths {
          *     version. A locked test has `version: null` and shows how far its
          *     review has come (`approved` of `questions`). A published test stays
          *     open at its last version while an edited question is reviewed again.
+         *     A registered student (`status: registered`) sees the tests not open
+         *     to all (all but DAY1–DAY10) locked too, with `enrolled_only: true`
+         *     (and `bytes`, `published_at` null); for everyone else the field is
+         *     left out.
          */
         get: operations["practiceTests"];
         put?: never;
@@ -1464,8 +1737,11 @@ export interface components {
             last_name: string;
             /** @description As typed in HolliHop */
             phone: string;
-            /** @enum {string} */
-            kind: "phone_missing" | "phone_invalid" | "phone_duplicate";
+            /**
+             * @description self_account_conflict: the number is a self-registered account's, which the sync merges only with a new HolliHop student
+             * @enum {string}
+             */
+            kind: "phone_missing" | "phone_invalid" | "phone_duplicate" | "self_account_conflict";
             detail: string;
             /** Format: date-time */
             since: string;
@@ -1611,6 +1887,8 @@ export interface components {
             bytes: number | null;
             /** Format: date-time */
             published_at: string | null;
+            /** @description Registered students only: for SAT MAKON's students, locked for this person (version null). Left out otherwise */
+            enrolled_only?: boolean;
         };
         /**
          * @description A published version of a test (format 1). Sections come in Bluebook
@@ -1953,7 +2231,7 @@ export interface components {
             name: string;
         };
         LoginRequest: {
-            /** @description Phone number in any common format (`+998901234567`, `90 123 45 67`) or username. */
+            /** @description Phone number in any common format (`+998901234567`, `90 123 45 67`), username, or email (anything with `@`). */
             login: string;
             password: string;
             /** @description Random id the app generates once per install. */
@@ -1981,10 +2259,24 @@ export interface components {
             kind: "student" | "teacher";
             /** @description HolliHop client id (students) or teacher id */
             id: number;
+            /** @description Their own (PUT /v1/me/profile), else HolliHop's */
             first_name: string;
             last_name: string;
             username: string | null;
             must_change_password: boolean;
+            /**
+             * @description registered: signed up themselves, not (yet) a SAT MAKON student (no classes; some practice tests). Teachers: enrolled
+             * @enum {string}
+             */
+            status?: "enrolled" | "registered";
+            /** @description The login phone */
+            phone?: string | null;
+            /** @description Their email (lower case), from sign-up; they can sign in with it */
+            email?: string | null;
+            /** @description A Google account is linked */
+            google?: boolean;
+            /** @description Their own password (false while on the default one, or signed up with Google only) */
+            has_password?: boolean;
             /** @description Current and upcoming groups (enrolled in, or teaching). */
             groups: components["schemas"]["Group"][];
         };
@@ -2140,6 +2432,14 @@ export interface components {
             status: "ok";
         };
         AppConfig: {
+            /** @description Sign-up is available (an email code or Google, then an SMS code) */
+            signup?: boolean;
+            /** @description Password reset by SMS code is available */
+            reset?: boolean;
+            /** @description Sign-up can start with an email code */
+            email?: boolean;
+            /** @description Google sign-in is available */
+            google?: boolean;
             min_app_version: {
                 /** @example 1.0.0 */
                 android: string;
@@ -2153,7 +2453,7 @@ export interface components {
                  * @description Stable machine-readable code.
                  * @enum {string}
                  */
-                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals";
+                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "phone_taken" | "identity_spent" | "invalid_email" | "email_taken" | "email_unavailable" | "google_unavailable" | "enrolled_only";
                 /** @description Human-readable explanation; may change. */
                 message: string;
                 /** @description For a rejected form (`invalid_question`): what is wrong, per field (e.g. `stem`, `choices.B`). */
@@ -2439,6 +2739,577 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Error"];
+        };
+    };
+    startEmailCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @example malika@example.com */
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Sent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example 60 */
+                        resend_in: number;
+                        /** @example 600 */
+                        expires_in: number;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            /** @description `invalid_email` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `email_unavailable`: email isn't configured, or sending failed (try again in a minute) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    verifyEmailCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    email: string;
+                    /** @example 123456 */
+                    code: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Verified */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        email_ticket: string;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            /** @description `email_taken` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `code_expired` */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_code` (tries left in the message) or `invalid_email` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `too_many_tries` (`Retry-After`) */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `email_unavailable` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    startPhoneCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description An Uzbek number in any common format (`+998901234567`, `90 123 45 67`) */
+                    phone: string;
+                    /** @enum {string} */
+                    purpose: "signup" | "reset";
+                };
+            };
+        };
+        responses: {
+            /** @description Sent (for a reset, also when no account has the number) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /**
+                         * @description Seconds until another code can be asked for
+                         * @example 60
+                         */
+                        resend_in: number;
+                        /**
+                         * @description Seconds the code is good for
+                         * @example 600
+                         */
+                        expires_in: number;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            /** @description `invalid_phone`: not a valid Uzbek (+998) number */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited`: too many codes for this phone or from this network */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `sms_unavailable`: SMS isn't configured, or the gateway failed (try again in a minute) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    verifyPhoneCode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    phone: string;
+                    /**
+                     * @description Spaces are ignored
+                     * @example 123456
+                     */
+                    code: string;
+                    /** @enum {string} */
+                    purpose: "signup" | "reset";
+                    /** @description `signup`: the identity, if it is an email */
+                    email_ticket?: string | null;
+                    /** @description `signup`: the identity, if it is a Google account */
+                    google_ticket?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Verified */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ticket: string;
+                        /** @description `signup` only (always present then): who signs in with this number; null for nobody */
+                        account?: null | {
+                            /** @enum {string} */
+                            status: "registered";
+                        } | {
+                            /** @enum {string} */
+                            status: "enrolled";
+                            /** @enum {string} */
+                            kind: "student" | "teacher";
+                            /**
+                             * @description First name and the last name's initial (their own name if they set one)
+                             * @example Diyora A.
+                             */
+                            name: string;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            /** @description `identity_spent`: this identity already showed another phone's owner; start again */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `code_expired`: no code to check (expired, already used, never sent, or replaced by a newer one): ask for a new one */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_code` (the message says how many tries are left), `invalid_phone`, or `invalid_ticket` (a sign-up without exactly one valid identity) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `too_many_tries`: 5 wrong codes; ask for a new one (`Retry-After`: when that is possible) */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `sms_unavailable` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    signup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description A `signup` ticket */
+                    ticket: string;
+                    /** @description From `/v1/auth/email/verify`; the email becomes theirs (to sign in with) */
+                    email_ticket?: string | null;
+                    /** @description 1–60 characters after trimming; needed only for a new account */
+                    first_name: string | null;
+                    /** @description 1–60 characters after trimming; needed only for a new account */
+                    last_name: string | null;
+                    /** @description The rules of `/v1/auth/password`; required with an email, may be null with Google */
+                    password: string | null;
+                    /** @description From `/v1/auth/google/ticket` (`needs_phone`), to sign in with Google from then on */
+                    google_ticket?: string | null;
+                    device_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Signed in */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginResponse"] & {
+                        /** @description The phone already had an account */
+                        existing: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            /** @description `phone_taken`: a registered student already signs in with this phone; `email_taken`: a new account's email was taken meanwhile; `google_taken`: that Google account is linked to someone else */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_ticket` (a ticket is unknown, used, expired or for another purpose), `weak_password`, `invalid_profile` (a new account's names) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    resetPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description A `reset` ticket */
+                    ticket: string;
+                    password: string;
+                    device_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Signed in */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginResponse"];
+                };
+            };
+            400: components["responses"]["Error"];
+            /** @description `no_account`: nobody signs in with this phone */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_ticket`, `weak_password` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    googleStart: {
+        parameters: {
+            query?: {
+                /** @description A path on the web's origin to go back to afterwards (anything else becomes `/`) */
+                return?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description To Google */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `google_unavailable`: Google sign-in isn't configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    googleCallback: {
+        parameters: {
+            query?: {
+                code?: string;
+                state?: string;
+                error?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description To the web's /auth/google page */
+            302: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `google_unavailable` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    googleTicket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    ticket: string;
+                    device_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Signed in, or a phone is needed to finish signing up */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "signed_in";
+                        token: string;
+                        /** Format: date-time */
+                        expires_at: string;
+                        user: components["schemas"]["Profile"];
+                    } | {
+                        /** @enum {string} */
+                        status: "needs_phone";
+                        google_ticket: string;
+                        /** @description Google's given name (may be empty) */
+                        first_name: string;
+                        /** @description Google's family name (may be empty) */
+                        last_name: string;
+                        email: string;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            /** @description `invalid_ticket` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    saveProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description 1–60 characters after trimming */
+                    first_name: string | null;
+                    /** @description 1–60 characters after trimming */
+                    last_name: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Profile"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            /** @description `invalid_profile` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     getMe: {
@@ -2792,6 +3663,15 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+            /** @description `enrolled_only`: a registered student and a test for SAT MAKON's students */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             /** @description `not_found`: no such test, or not published (yet), or no such version */
             404: {
                 headers: {
@@ -2885,7 +3765,7 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
-            /** @description `forbidden`: not a student */
+            /** @description `forbidden`: not a student; `enrolled_only`: a registered student and a test for SAT MAKON's students */
             403: {
                 headers: {
                     [name: string]: unknown;

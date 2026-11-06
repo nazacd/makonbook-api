@@ -1,7 +1,10 @@
 -- Writes below are used only by the HolliHop sync (people.Apply). Upserts
 -- skip rows whose values didn't change, so updated_at means "last changed".
--- Negative ids are the store reviewers' demo account (internal/demo), which
--- isn't in HolliHop: the sync never removes, deactivates or rewrites them.
+-- Negative ids aren't in HolliHop, and the sync never removes, deactivates or
+-- rewrites them: -1 … -999999 is the store reviewers' demo account
+-- (internal/demo), -1000001 and below are self-registered students
+-- (source 'self', spec 21), until linkSelfAccounts re-keys one.
+-- The sync never writes the name overrides (first/last_name_custom).
 
 -- name: UpsertOffices :batchexec
 INSERT INTO offices (id, name, utc_offset)
@@ -70,8 +73,10 @@ RETURNING id;
 -- name: ListStudentClientIDs :many
 SELECT client_id FROM students;
 
+-- Self-registered students don't count: the mass-change guard is about
+-- HolliHop's students.
 -- name: CountActiveStudents :one
-SELECT count(*) FROM students WHERE deactivated_at IS NULL;
+SELECT count(*) FROM students WHERE deactivated_at IS NULL AND source = 'hollihop';
 
 -- name: UpsertStudents :batchexec
 INSERT INTO students (client_id, hh_student_id, first_name, last_name, phone_raw, hh_status_id, office_ids)
@@ -104,8 +109,35 @@ RETURNING client_id;
 -- name: ReactivateStudents :many
 UPDATE students
 SET deactivated_at = NULL, activated_at = now(), updated_at = now()
-WHERE deactivated_at IS NOT NULL AND hh_status_id = @studying_status::int
+WHERE deactivated_at IS NOT NULL AND hh_status_id = @studying_status::int AND source = 'hollihop'
 RETURNING client_id;
+
+-- Self-registered accounts and their verified phones: a new HolliHop student
+-- with one of these numbers is the same person (linkSelfAccounts); anyone
+-- else in HolliHop with one is a conflict for admins.
+-- name: SelfStudentPhones :many
+SELECT client_id, login_phone::text AS login_phone, first_name, last_name
+FROM students
+WHERE source = 'self' AND login_phone IS NOT NULL AND deactivated_at IS NULL;
+
+-- A HolliHop student stored a moment ago in this run, removed again because
+-- a self-registered account takes their id (RekeySelfStudent). Nothing points
+-- to them yet: enrollments come later in the run.
+-- name: DeleteNewStudent :one
+DELETE FROM students WHERE client_id = @client_id AND source = 'hollihop'
+RETURNING hh_student_id, first_name, last_name, phone_raw, hh_status_id, office_ids;
+
+-- Enrolment: the self-registered account becomes the HolliHop student.
+-- Every foreign key cascades the new id; the password, username, Google
+-- link and sessions are moved by their owners (auth.MoveStudent). Its
+-- activated_at stays, so its password and sessions stay valid, and so do the
+-- name overrides.
+-- name: RekeySelfStudent :execrows
+UPDATE students
+SET client_id = @client_id, hh_student_id = @hh_student_id, first_name = @first_name, last_name = @last_name,
+    phone_raw = @phone_raw, hh_status_id = @hh_status_id, office_ids = @office_ids, source = 'hollihop',
+    updated_at = now()
+WHERE client_id = @self_id AND source = 'self';
 
 -- name: DeleteEnrollments :exec
 DELETE FROM enrollments WHERE student_client_id > 0;
@@ -169,20 +201,44 @@ WHERE i.resolved_at IS NULL
 
 -- Reads for other features (see directory.go). -------------------------------
 
+-- Names are as the person sees their own: their override, else HolliHop's.
 -- name: FindByLoginPhone :many
-SELECT 'student'::text AS kind, client_id AS id, first_name, last_name, login_phone, deactivated_at, activated_at
+SELECT 'student'::text AS kind, client_id AS id, coalesce(first_name_custom, first_name)::text AS first_name,
+       coalesce(last_name_custom, last_name)::text AS last_name, login_phone, deactivated_at, activated_at, source
 FROM students WHERE login_phone = @phone::text
 UNION ALL
-SELECT 'teacher'::text, id, first_name, last_name, login_phone, deactivated_at, activated_at
+SELECT 'teacher'::text, id, coalesce(first_name_custom, first_name)::text, coalesce(last_name_custom, last_name)::text,
+       login_phone, deactivated_at, activated_at, 'hollihop'::text
 FROM teachers WHERE login_phone = @phone::text;
 
 -- name: GetStudent :one
-SELECT client_id, first_name, last_name, login_phone, deactivated_at, activated_at
+SELECT client_id, coalesce(first_name_custom, first_name)::text AS first_name,
+       coalesce(last_name_custom, last_name)::text AS last_name, login_phone, deactivated_at, activated_at, source
 FROM students WHERE client_id = @client_id;
 
 -- name: GetTeacher :one
-SELECT id, first_name, last_name, login_phone, deactivated_at, activated_at
+SELECT id, coalesce(first_name_custom, first_name)::text AS first_name,
+       coalesce(last_name_custom, last_name)::text AS last_name, login_phone, deactivated_at, activated_at
 FROM teachers WHERE id = @id;
+
+-- Accounts (spec 21) ------------------------------------------------------------
+
+-- A student who signed up themselves with a verified phone: not in HolliHop,
+-- no branch, no groups. hh_student_id repeats the id (HolliHop never has it).
+-- name: InsertSelfStudent :one
+WITH n AS (SELECT nextval('self_student_ids')::int AS id)
+INSERT INTO students (client_id, hh_student_id, first_name, last_name, phone_raw, login_phone, hh_status_id, office_ids, source)
+SELECT n.id, n.id, @first_name, @last_name, @phone::text, @phone::text, NULL, '{}', 'self' FROM n
+RETURNING client_id;
+
+-- Name overrides: NULL clears one (back to HolliHop's name).
+-- name: SetStudentNames :execrows
+UPDATE students SET first_name_custom = @first_name, last_name_custom = @last_name
+WHERE client_id = @client_id;
+
+-- name: SetTeacherNames :execrows
+UPDATE teachers SET first_name_custom = @first_name, last_name_custom = @last_name
+WHERE id = @id;
 
 -- Groups a student is enrolled in now or later.
 -- name: StudentGroups :many

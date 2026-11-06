@@ -12,7 +12,7 @@ import (
 )
 
 const deleteAttempts = `-- name: DeleteAttempts :exec
-DELETE FROM practice_attempts WHERE student_client_id < 0
+DELETE FROM practice_attempts WHERE student_client_id BETWEEN -999999 AND -1
 `
 
 func (q *Queries) DeleteAttempts(ctx context.Context) error {
@@ -31,7 +31,7 @@ func (q *Queries) DeleteAttendance(ctx context.Context) error {
 
 const deleteCredentials = `-- name: DeleteCredentials :exec
 
-DELETE FROM credentials WHERE person_id < 0
+DELETE FROM credentials WHERE person_id BETWEEN -999999 AND -1
 `
 
 // Removing the account: everything under the negative ids. Parent codes,
@@ -43,7 +43,7 @@ func (q *Queries) DeleteCredentials(ctx context.Context) error {
 }
 
 const deleteEnrollments = `-- name: DeleteEnrollments :exec
-DELETE FROM enrollments WHERE student_client_id < 0
+DELETE FROM enrollments WHERE student_client_id BETWEEN -999999 AND -1
 `
 
 func (q *Queries) DeleteEnrollments(ctx context.Context) error {
@@ -110,7 +110,7 @@ func (q *Queries) DeleteScheduleItems(ctx context.Context) error {
 }
 
 const deleteSeededAttempts = `-- name: DeleteSeededAttempts :exec
-DELETE FROM practice_attempts WHERE student_client_id < 0 AND id = ANY ($1::uuid[])
+DELETE FROM practice_attempts WHERE student_client_id BETWEEN -999999 AND -1 AND id = ANY ($1::uuid[])
 `
 
 // The results Setup makes (fixed ids), made again each time.
@@ -120,7 +120,7 @@ func (q *Queries) DeleteSeededAttempts(ctx context.Context, ids []pgtype.UUID) e
 }
 
 const deleteSessions = `-- name: DeleteSessions :exec
-DELETE FROM auth_sessions WHERE person_id < 0
+DELETE FROM auth_sessions WHERE person_id BETWEEN -999999 AND -1
 `
 
 func (q *Queries) DeleteSessions(ctx context.Context) error {
@@ -129,7 +129,7 @@ func (q *Queries) DeleteSessions(ctx context.Context) error {
 }
 
 const deleteStudents = `-- name: DeleteStudents :exec
-DELETE FROM students WHERE client_id < 0
+DELETE FROM students WHERE client_id BETWEEN -999999 AND -1
 `
 
 func (q *Queries) DeleteStudents(ctx context.Context) error {
@@ -147,7 +147,7 @@ func (q *Queries) DeleteTeachers(ctx context.Context) error {
 }
 
 const deleteVocabReviews = `-- name: DeleteVocabReviews :exec
-DELETE FROM vocab_reviews WHERE student_client_id < 0
+DELETE FROM vocab_reviews WHERE student_client_id BETWEEN -999999 AND -1
 `
 
 func (q *Queries) DeleteVocabReviews(ctx context.Context) error {
@@ -305,7 +305,9 @@ type UpsertOfficeParams struct {
 
 // The store reviewers' demo account (internal/demo). It lives in the HolliHop
 // mirror tables under negative ids, which the sync leaves alone, so the app
-// shows it like any student. Nothing else writes these rows.
+// shows it like any student. Nothing else writes these rows. People's ids are
+// -1 … -999999: further down are self-registered students (spec 21),
+// which are real people and never the demo's.
 func (q *Queries) UpsertOffice(ctx context.Context, arg UpsertOfficeParams) error {
 	_, err := q.db.Exec(ctx, upsertOffice, arg.ID, arg.Name)
 	return err

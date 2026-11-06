@@ -8,8 +8,10 @@
 //     all day" class, so a reviewer can take attendance at any hour; the
 //     classes have fictional classmates with practice results of their own.
 //
-// It lives in the HolliHop mirror tables under negative ids, so every screen
-// shows it like the real thing, and stays apart from the school's data:
+// It lives in the HolliHop mirror tables under negative ids (-1 … -999999;
+// further down are self-registered students, real people, which it never
+// touches), so every screen shows it like the real thing, and stays apart
+// from the school's data:
 //   - the sync leaves negative ids alone (people, lesson days, attendance);
 //   - admins' lists and reports leave out negative ids (lessons, groups to
 //     fix, corrections, parent codes, the branch list), and attendance taken

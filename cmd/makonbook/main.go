@@ -41,10 +41,12 @@ import (
 	"github.com/nazacd/makonbook-api/internal/platform/config"
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
 	"github.com/nazacd/makonbook-api/internal/platform/logging"
+	"github.com/nazacd/makonbook-api/internal/platform/mail"
 	"github.com/nazacd/makonbook-api/internal/platform/migrate"
 	"github.com/nazacd/makonbook-api/internal/platform/postgres"
 	"github.com/nazacd/makonbook-api/internal/platform/r2"
 	"github.com/nazacd/makonbook-api/internal/platform/render"
+	"github.com/nazacd/makonbook-api/internal/platform/sms"
 	hhsync "github.com/nazacd/makonbook-api/internal/sync"
 )
 
@@ -220,6 +222,29 @@ func serve(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	} else {
 		log.Warn("TELEGRAM_BOT_TOKEN not set: parents' reports are only in the admin panel and the log")
 	}
+	// Accounts (spec 21): sign-up and reset by SMS code, Google sign-in.
+	switch cfg.SMSProvider {
+	case "log":
+		deps.SMS = sms.Log{Logger: log}
+	case "eskiz":
+		deps.SMS = &sms.Eskiz{Email: cfg.EskizEmail, Password: cfg.EskizPassword, From: cfg.EskizFrom}
+	}
+	deps.SMSText = cfg.SMSText
+	if deps.SMS == nil {
+		log.Info("SMS_PROVIDER not set: no sign-up or password reset by SMS")
+	}
+	switch cfg.SMTPHost {
+	case "":
+		log.Info("SMTP_HOST not set: sign-up can't start with an email")
+	case "log":
+		deps.Mail = mail.Log{Logger: log}
+	default:
+		deps.Mail = &mail.SMTP{Host: cfg.SMTPHost, Port: cfg.SMTPPort, Username: cfg.SMTPUsername, Password: cfg.SMTPPassword, From: cfg.MailFrom}
+	}
+	if cfg.GoogleClientID != "" {
+		deps.Google = &auth.GoogleConfig{ClientID: cfg.GoogleClientID, ClientSecret: cfg.GoogleClientSecret, WebOrigin: cfg.WebOrigin}
+	}
+
 	handler := app.Handler(deps)
 	return httpx.Serve(ctx, ln, handler, log, cfg.ShutdownTimeout)
 }
@@ -270,6 +295,21 @@ func worker(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 				log.Error("parents: codes", "err", err)
 			} else if n > 0 {
 				log.Info("parents: codes given", "students", n)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Hour):
+			}
+		}
+	}()
+	// Old sign-up codes and tickets go (spec 21).
+	go func() {
+		for {
+			if n, err := auth.CleanUp(ctx, pool, time.Now()); err != nil && ctx.Err() == nil {
+				log.Error("accounts: clean up", "err", err)
+			} else if n > 0 {
+				log.Info("accounts: old codes and tickets deleted", "rows", n)
 			}
 			select {
 			case <-ctx.Done():
@@ -349,7 +389,10 @@ func resetPassword(ctx context.Context, cfg config.Config, kind string, id int32
 		return err
 	}
 	fmt.Fprintf(stdout, "Password of %s %d (%s %s) reset to the default.\n", kind, id, p.LastName, p.FirstName)
-	if p.LoginPhone == "" {
+	switch {
+	case p.Registered:
+		fmt.Fprintln(stdout, "Note: they signed up themselves, so there is no default password: they choose a new one with \"Forgot your password?\" (a code by SMS), or sign in with Google.")
+	case p.LoginPhone == "":
 		fmt.Fprintln(stdout, "Note: they have no valid login phone, so the default password can't be used until their number is fixed in HolliHop.")
 	}
 	if !p.Active {

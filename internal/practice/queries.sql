@@ -4,7 +4,7 @@
 SELECT * FROM practice_tests WHERE code = @code;
 
 -- name: CreateTest :one
-INSERT INTO practice_tests (code, title) VALUES (@code, @title) RETURNING *;
+INSERT INTO practice_tests (code, title, open_to_all) VALUES (@code, @title, @open_to_all) RETURNING *;
 
 -- Questions of a test that people have already worked on: approved or
 -- changed by a person. A test with any of these can't be reloaded.
@@ -236,7 +236,7 @@ ON CONFLICT (file) DO NOTHING;
 
 -- For students: every test, its progress, and its latest published version.
 -- name: Catalog :many
-SELECT t.code, t.title,
+SELECT t.code, t.title, t.open_to_all,
        count(*)::int AS questions,
        count(*) FILTER (WHERE q.status = 'approved')::int AS approved,
        count(*) FILTER (WHERE tq.subject = 'english')::int AS english,
@@ -249,6 +249,10 @@ LEFT JOIN LATERAL (SELECT pv.version, pv.bytes, pv.published_at FROM practice_te
                    WHERE pv.test_id = t.id ORDER BY pv.version DESC LIMIT 1) v ON true
 GROUP BY t.id, v.version, v.bytes, v.published_at
 ORDER BY length(t.code), t.code;
+
+-- Whether registered students (spec 21) may take a test.
+-- name: TestOpenToAll :one
+SELECT open_to_all FROM practice_tests WHERE code = @code;
 
 -- A published version of a test; version 0 is the latest.
 -- name: TestVersion :one
@@ -302,8 +306,8 @@ WHERE e.group_id = @group_id AND st.deactivated_at IS NULL
 ORDER BY st.last_name, st.first_name;
 
 -- Question statistics (spec 9.6) ----------------------------------------------
--- Not the demo account's attempts (negative ids, internal/demo): its
--- results are made up.
+-- Not the demo account's attempts (ids -1 … -999999, internal/demo): its
+-- results are made up. Self-registered students' (further down) count.
 
 -- Each question place of each version students took, with how many attempts
 -- took its section and the question's key (to grade the answers below).
@@ -312,7 +316,7 @@ WITH taken AS (
     SELECT a.test_id, a.test_version, s.subject::text AS subject, count(*)::int AS attempts
     FROM practice_attempts a
     CROSS JOIN LATERAL unnest(a.sections) AS s(subject)
-    WHERE a.student_client_id > 0
+    WHERE a.student_client_id NOT BETWEEN -999999 AND -1
     GROUP BY a.test_id, a.test_version, s.subject
 )
 SELECT t.test_id, t.test_version, t.subject,
@@ -335,7 +339,7 @@ SELECT a.test_id, a.test_version, (x.value->>'subject')::text AS subject,
        (x.value->>'answer')::text AS answer, count(*)::int AS answers
 FROM practice_attempts a
 CROSS JOIN LATERAL jsonb_array_elements(a.answers) AS x(value)
-WHERE a.student_client_id > 0 AND x.value->>'answer' IS NOT NULL
+WHERE a.student_client_id NOT BETWEEN -999999 AND -1 AND x.value->>'answer' IS NOT NULL
 GROUP BY a.test_id, a.test_version, x.value->>'subject', x.value->>'module', x.value->>'position', x.value->>'answer';
 
 -- "Ask later" (spec 9.6) -------------------------------------------------------

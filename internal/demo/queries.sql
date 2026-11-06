@@ -1,6 +1,8 @@
 -- The store reviewers' demo account (internal/demo). It lives in the HolliHop
 -- mirror tables under negative ids, which the sync leaves alone, so the app
--- shows it like any student. Nothing else writes these rows.
+-- shows it like any student. Nothing else writes these rows. People's ids are
+-- -1 … -999999: further down are self-registered students (spec 21),
+-- which are real people and never the demo's.
 
 -- name: UpsertOffice :exec
 INSERT INTO offices (id, name, utc_offset) VALUES (@id, @name, '+05:00')
@@ -37,7 +39,7 @@ SET first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name, hh_status_
     office_ids = EXCLUDED.office_ids, deactivated_at = NULL, login_phone = NULL, updated_at = now();
 
 -- name: DeleteEnrollments :exec
-DELETE FROM enrollments WHERE student_client_id < 0;
+DELETE FROM enrollments WHERE student_client_id BETWEEN -999999 AND -1;
 
 -- name: InsertEnrollment :exec
 INSERT INTO enrollments (group_id, student_client_id, begin_date, end_date, weekdays)
@@ -77,29 +79,29 @@ SET username = EXCLUDED.username, password_hash = EXCLUDED.password_hash,
 
 -- The results Setup makes (fixed ids), made again each time.
 -- name: DeleteSeededAttempts :exec
-DELETE FROM practice_attempts WHERE student_client_id < 0 AND id = ANY (@ids::uuid[]);
+DELETE FROM practice_attempts WHERE student_client_id BETWEEN -999999 AND -1 AND id = ANY (@ids::uuid[]);
 
 -- Removing the account: everything under the negative ids. Parent codes,
 -- sessions and reports, attendance records and enrollments go with the
 -- student (ON DELETE CASCADE); schedule items with the groups.
 
 -- name: DeleteCredentials :exec
-DELETE FROM credentials WHERE person_id < 0;
+DELETE FROM credentials WHERE person_id BETWEEN -999999 AND -1;
 
 -- name: DeleteSessions :exec
-DELETE FROM auth_sessions WHERE person_id < 0;
+DELETE FROM auth_sessions WHERE person_id BETWEEN -999999 AND -1;
 
 -- name: DeleteAttendance :exec
 DELETE FROM attendance_sessions WHERE group_id < 0;
 
 -- name: DeleteAttempts :exec
-DELETE FROM practice_attempts WHERE student_client_id < 0;
+DELETE FROM practice_attempts WHERE student_client_id BETWEEN -999999 AND -1;
 
 -- name: DeleteVocabReviews :exec
-DELETE FROM vocab_reviews WHERE student_client_id < 0;
+DELETE FROM vocab_reviews WHERE student_client_id BETWEEN -999999 AND -1;
 
 -- name: DeleteStudents :exec
-DELETE FROM students WHERE client_id < 0;
+DELETE FROM students WHERE client_id BETWEEN -999999 AND -1;
 
 -- name: DeleteGroups :exec
 DELETE FROM groups WHERE id < 0;

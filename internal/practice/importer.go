@@ -356,7 +356,7 @@ func (im Importer) Import(ctx context.Context, t Test, replace bool) (Summary, e
 			sum.Replaced = true
 		}
 
-		test, err := q.CreateTest(ctx, practicedb.CreateTestParams{Code: t.Code, Title: t.Code})
+		test, err := q.CreateTest(ctx, practicedb.CreateTestParams{Code: t.Code, Title: t.Code, OpenToAll: OpenToAll(t.Code)})
 		if err != nil {
 			return err
 		}

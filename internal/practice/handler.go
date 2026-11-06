@@ -21,6 +21,7 @@ const (
 	CodeInvalidReport  = "invalid_report"
 	CodeReportTaken    = "report_id_taken"
 	CodeInvalidGoals   = "invalid_goals"
+	CodeEnrolledOnly   = "enrolled_only"
 )
 
 // Handler is the apps' practice API: the catalog, packages, attempts.
@@ -57,7 +58,29 @@ func (h *Handler) catalog(w http.ResponseWriter, r *http.Request) {
 		h.internal(w, r, "catalog", err)
 		return
 	}
+	if p, _ := auth.PrincipalFrom(r.Context()); p.Registered {
+		tests = ForRegistered(tests)
+	}
 	httpx.WriteJSON(w, r, http.StatusOK, map[string]any{"tests": tests})
+}
+
+// enrolledOnly answers 403 enrolled_only, and true, when a registered
+// student asks for a test that isn't open to all (spec 21). An unknown test
+// goes on, to the caller's own answer.
+func (h *Handler) enrolledOnly(w http.ResponseWriter, r *http.Request, code string) bool {
+	if p, _ := auth.PrincipalFrom(r.Context()); !p.Registered {
+		return false
+	}
+	open, err := h.svc.TestOpenToAll(r.Context(), code)
+	switch {
+	case errors.Is(err, ErrNotFound) || (err == nil && open):
+		return false
+	case err != nil:
+		h.internal(w, r, "open to all", err)
+	default:
+		httpx.WriteError(w, r, http.StatusForbidden, CodeEnrolledOnly, "this test is for SAT MAKON's students")
+	}
+	return true
 }
 
 func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +91,9 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "version must be a positive number")
 			return
 		}
+	}
+	if h.enrolledOnly(w, r, r.PathValue("code")) {
+		return
 	}
 	d, err := h.svc.Download(r.Context(), r.PathValue("code"), int32(version))
 	switch {
@@ -97,6 +123,9 @@ func (h *Handler) questionStats(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) saveAttempt(w http.ResponseWriter, r *http.Request, student int32) {
 	var in AttemptInput
 	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	if h.enrolledOnly(w, r, in.Test) {
 		return
 	}
 	a, err := h.svc.SaveAttempt(r.Context(), student, in)

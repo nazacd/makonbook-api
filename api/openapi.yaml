@@ -18,6 +18,17 @@ info:
     session is gone (logout, password changed elsewhere, person no longer
     active): send the user back to the login screen.
 
+    Accounts (spec 21): besides HolliHop's students and teachers, anyone can
+    sign up as a student (`status: registered`): first an email, proved by a
+    code sent to it (`/v1/auth/email/*`), or Google (`/v1/auth/google/*`);
+    then an Uzbek phone number, proved by a code sent by SMS
+    (`/v1/auth/phone/*` with that identity); then `/v1/auth/signup`. Verifying the code says whose the number already
+    is: a SAT MAKON student's or teacher's (sign-up then signs into that
+    account), or a registered student's (sign-up is refused). `/v1/app/config` says which of these the server
+    offers. Registered students see the practice tests marked open to all
+    (DAY1–DAY10); the others are `enrolled_only` until they enrol at SAT
+    MAKON, when their account becomes the HolliHop student's.
+
     Admin panel (`/v1/admin/*`): admins sign in with their HolliHop login and
     password, which HolliHop checks; MakonBook stores neither. The session is
     an HttpOnly `mb_admin` cookie (SameSite=Strict, 12 h). Every admin request
@@ -174,6 +185,455 @@ paths:
       responses:
         "204": { description: Logged out }
         "401": { $ref: "#/components/responses/Error" }
+
+  /v1/auth/email/start:
+    post:
+      summary: Send a 6-digit code to an email, to start a sign-up
+      description: |
+        Sign-up starts with an email (or Google), then the phone. The code is
+        good for 10 minutes and 5 tries; only the address's latest code
+        counts. Limits: per address one code a minute and 5 a day, per
+        network 20 an hour (`429 rate_limited`, `Retry-After`). The address
+        is trimmed and lower-cased.
+      operationId: startEmailCode
+      tags: [accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, maxLength: 254, example: malika@example.com }
+      responses:
+        "200":
+          description: Sent
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [resend_in, expires_in]
+                properties:
+                  resend_in: { type: integer, example: 60 }
+                  expires_in: { type: integer, example: 600 }
+        "400": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`invalid_email`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429":
+          description: "`rate_limited`"
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "503":
+          description: "`email_unavailable`: email isn't configured, or sending failed (try again in a minute)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/auth/email/verify:
+    post:
+      summary: Check the email code; answers the identity to verify a phone with
+      description: |
+        The `email_ticket` (single-use, 30 minutes) goes to
+        `/v1/auth/phone/verify` (purpose `signup`) and then
+        `/v1/auth/signup`. An address an active account already has is
+        `409 email_taken` (the code proved it, so saying so is fine): sign in
+        or reset the password instead.
+      operationId: verifyEmailCode
+      tags: [accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string }
+                code: { type: string, example: "123456" }
+      responses:
+        "200":
+          description: Verified
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [email_ticket]
+                properties:
+                  email_ticket: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`email_taken`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "410":
+          description: "`code_expired`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_code` (tries left in the message) or `invalid_email`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429":
+          description: "`too_many_tries` (`Retry-After`)"
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "503":
+          description: "`email_unavailable`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/auth/phone/start:
+    post:
+      summary: Send a 6-digit code by SMS, to sign up or reset a password
+      description: |
+        The code is good for 10 minutes and 5 tries; only the phone's latest
+        code for the purpose counts. Limits: per phone one code a minute and 5
+        a day, per network 20 an hour (`429 rate_limited`, `Retry-After` in
+        seconds). For `reset` the answer is the same whether or not anyone
+        signs in with the number; the code is sent only if someone does.
+      operationId: startPhoneCode
+      tags: [accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, purpose]
+              properties:
+                phone: { type: string, description: "An Uzbek number in any common format (`+998901234567`, `90 123 45 67`)", maxLength: 50 }
+                purpose: { type: string, enum: [signup, reset] }
+      responses:
+        "200":
+          description: Sent (for a reset, also when no account has the number)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [resend_in, expires_in]
+                properties:
+                  resend_in: { type: integer, example: 60, description: Seconds until another code can be asked for }
+                  expires_in: { type: integer, example: 600, description: Seconds the code is good for }
+        "400": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`invalid_phone`: not a valid Uzbek (+998) number"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429":
+          description: "`rate_limited`: too many codes for this phone or from this network"
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "503":
+          description: "`sms_unavailable`: SMS isn't configured, or the gateway failed (try again in a minute)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/auth/phone/verify:
+    post:
+      summary: Check the SMS code; answers a ticket proving the phone
+      description: |
+        The ticket is single-use and good for 15 minutes, for the purpose the
+        code was sent for: `/v1/auth/signup` takes a `signup` ticket,
+        `/v1/auth/reset` a `reset` one.
+
+        For `signup` the request needs exactly one identity: `email_ticket`
+        (from `/v1/auth/email/verify`) or `google_ticket` (from
+        `/v1/auth/google/ticket`, `needs_phone`); otherwise `422
+        invalid_ticket` (checked before the code, which is then not tried).
+        The phone ticket is good for sign-up with that identity only. An
+        identity shows the owner of one phone at most: once a verify has
+        shown a non-null `account`, verifying another phone with it is `409
+        identity_spent` (the same phone again is fine; phones nobody has
+        don't count).
+
+        For `signup` the answer also says who already signs in with the
+        number (`account`): null (nobody: sign-up makes an account),
+        `{"status": "registered"}` (someone signed up with it: sign-up is
+        refused, `409 phone_taken`; offer sign-in and *Forgot your
+        password?*), or `{"status": "enrolled", "kind", "name"}` (a SAT MAKON
+        student or teacher: ask "Is this you?" with `name`, e.g. "Diyora A.",
+        and on yes sign up, which signs into that account). A `reset` answer
+        has `ticket` only.
+      operationId: verifyPhoneCode
+      tags: [accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, code, purpose]
+              properties:
+                phone: { type: string, maxLength: 50 }
+                code: { type: string, example: "123456", description: Spaces are ignored }
+                purpose: { type: string, enum: [signup, reset] }
+                email_ticket: { type: [string, "null"], description: "`signup`: the identity, if it is an email" }
+                google_ticket: { type: [string, "null"], description: "`signup`: the identity, if it is a Google account" }
+      responses:
+        "200":
+          description: Verified
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ticket]
+                properties:
+                  ticket: { type: string }
+                  account:
+                    description: "`signup` only (always present then): who signs in with this number; null for nobody"
+                    oneOf:
+                      - type: "null"
+                      - type: object
+                        required: [status]
+                        properties:
+                          status: { type: string, enum: [registered] }
+                      - type: object
+                        required: [status, kind, name]
+                        properties:
+                          status: { type: string, enum: [enrolled] }
+                          kind: { type: string, enum: [student, teacher] }
+                          name: { type: string, example: Diyora A., description: "First name and the last name's initial (their own name if they set one)" }
+        "400": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`identity_spent`: this identity already showed another phone's owner; start again"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "410":
+          description: "`code_expired`: no code to check (expired, already used, never sent, or replaced by a newer one): ask for a new one"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_code` (the message says how many tries are left), `invalid_phone`, or `invalid_ticket` (a sign-up without exactly one valid identity)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429":
+          description: "`too_many_tries`: 5 wrong codes; ask for a new one (`Retry-After`: when that is possible)"
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "503":
+          description: "`sms_unavailable`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/auth/signup:
+    post:
+      summary: Create a student account, or sign into the SAT MAKON account the phone has
+      description: |
+        Needs a `signup` ticket from `/v1/auth/phone/verify` and the identity
+        it was verified with (exactly one of `email_ticket`, `google_ticket`;
+        otherwise `422 invalid_ticket`). The verify's `account` says which case
+        this is:
+        - an **enrolled** person (a student or teacher in HolliHop) signs in
+          with that phone: no account is made; this signs into theirs
+          (`existing: true`; the client asked "Is this you?" first), sets the
+          password if one is given (their other sessions end, as after a
+          password change), adds the email if no other active account has it
+          (else leaves it out), or links the Google account. The names are
+          ignored and may be null.
+        - a **registered** student (signed up before) does: `409 phone_taken`;
+          nothing changes (no session, no email or Google link, same password).
+        - nobody does: a registered student is made with the phone, the email
+          or Google account, these names (required then) and the password,
+          and signed in.
+        Nothing is spent when a request is turned down.
+      operationId: signup
+      tags: [accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticket, first_name, last_name, password]
+              properties:
+                ticket: { type: string, description: A `signup` ticket, verified with the identity below }
+                email_ticket:
+                  type: [string, "null"]
+                  description: From `/v1/auth/email/verify`; the email becomes theirs (to sign in with)
+                first_name: { type: [string, "null"], description: "1–60 characters after trimming; needed only for a new account" }
+                last_name: { type: [string, "null"], description: "1–60 characters after trimming; needed only for a new account" }
+                password:
+                  type: [string, "null"]
+                  description: The rules of `/v1/auth/password`; required with an email, may be null with Google
+                google_ticket:
+                  type: [string, "null"]
+                  description: From `/v1/auth/google/ticket` (`needs_phone`), to sign in with Google from then on
+                device_id: { type: string, maxLength: 100 }
+      responses:
+        "200":
+          description: Signed in
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/LoginResponse"
+                  - type: object
+                    required: [existing]
+                    properties:
+                      existing: { type: boolean, description: The phone already had an account }
+        "400": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`phone_taken`: a registered student already signs in with this phone; `email_taken`: a new account's email was taken meanwhile; `google_taken`: that Google account is linked to someone else"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_ticket` (a ticket is unknown, used, expired or for another purpose), `weak_password`, `invalid_profile` (a new account's names)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/auth/reset:
+    post:
+      summary: Set a new password with a reset ticket, and sign in
+      description: |
+        For whoever signs in with the phone the `reset` ticket proves: sets
+        the password, unlocks the account and ends every other session. It is
+        also how someone who signed up with Google sets a first password.
+      operationId: resetPassword
+      tags: [accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticket, password]
+              properties:
+                ticket: { type: string, description: A `reset` ticket }
+                password: { type: string, minLength: 8, maxLength: 128 }
+                device_id: { type: string, maxLength: 100 }
+      responses:
+        "200":
+          description: Signed in
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "400": { $ref: "#/components/responses/Error" }
+        "404":
+          description: "`no_account`: nobody signs in with this phone"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_ticket`, `weak_password`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/auth/google/start:
+    get:
+      summary: Go to Google to sign in (a browser navigation, not a fetch)
+      description: |
+        Redirects to Google (scopes `openid email profile`, PKCE), with the
+        sign-in's state in a short-lived HttpOnly cookie for the callback.
+        Google sends the browser back to `/v1/auth/google/callback` on the
+        web's origin (`WEB_ORIGIN`), which redirects to the web's
+        `/auth/google` page.
+      operationId: googleStart
+      tags: [accounts]
+      parameters:
+        - name: return
+          in: query
+          description: A path on the web's origin to go back to afterwards (anything else becomes `/`)
+          schema: { type: string, example: /practice }
+      responses:
+        "302": { description: To Google }
+        "503":
+          description: "`google_unavailable`: Google sign-in isn't configured"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/auth/google/callback:
+    get:
+      summary: Where Google sends the browser back (not called by the web)
+      description: |
+        Checks the state against the cookie, trades the code at Google and
+        reads the ID token (issuer, audience, expiry, a verified email). Then
+        redirects to `WEB_ORIGIN/auth/google#ticket=<ticket>&return=<path>` —
+        the ticket is single-use and good for 10 minutes, for
+        `/v1/auth/google/ticket` — or `#error=google_denied` (cancelled at
+        Google) or `#error=google_failed` (anything else).
+      operationId: googleCallback
+      tags: [accounts]
+      parameters:
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+        - { name: error, in: query, schema: { type: string } }
+      responses:
+        "302": { description: To the web's /auth/google page }
+        "503":
+          description: "`google_unavailable`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/auth/google/ticket:
+    post:
+      summary: Finish Google sign-in with the callback's ticket
+      description: |
+        A Google account linked to someone active signs them in
+        (`signed_in`, as a login; `must_change_password` is true for a
+        HolliHop person still on the default password). Otherwise
+        (`needs_phone`) the answer carries a `google_ticket` (single-use, 30
+        minutes) for `/v1/auth/signup`, once a phone is verified, and what
+        Google says about the person, to fill in the form.
+      operationId: googleTicket
+      tags: [accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticket]
+              properties:
+                ticket: { type: string }
+                device_id: { type: string, maxLength: 100 }
+      responses:
+        "200":
+          description: Signed in, or a phone is needed to finish signing up
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [status, token, expires_at, user]
+                    properties:
+                      status: { type: string, enum: [signed_in] }
+                      token: { type: string }
+                      expires_at: { type: string, format: date-time }
+                      user: { $ref: "#/components/schemas/Profile" }
+                  - type: object
+                    required: [status, google_ticket, first_name, last_name, email]
+                    properties:
+                      status: { type: string, enum: [needs_phone] }
+                      google_ticket: { type: string }
+                      first_name: { type: string, description: "Google's given name (may be empty)" }
+                      last_name: { type: string, description: "Google's family name (may be empty)" }
+                      email: { type: string }
+        "400": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`invalid_ticket`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/me/profile:
+    put:
+      summary: Change your own name
+      description: |
+        The names the person sees for themselves from then on (in `/v1/me`
+        and every sign-in); the HolliHop sync never changes them. Teachers,
+        admins and parents keep seeing the names in HolliHop. null clears one,
+        back to HolliHop's — only for people in HolliHop: a registered student
+        needs both.
+      operationId: saveProfile
+      tags: [accounts]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [first_name, last_name]
+              properties:
+                first_name: { type: [string, "null"], description: 1–60 characters after trimming }
+                last_name: { type: [string, "null"], description: 1–60 characters after trimming }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`invalid_profile`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
   /v1/me:
     get:
@@ -429,6 +889,10 @@ paths:
         version. A locked test has `version: null` and shows how far its
         review has come (`approved` of `questions`). A published test stays
         open at its last version while an edited question is reviewed again.
+        A registered student (`status: registered`) sees the tests not open
+        to all (all but DAY1–DAY10) locked too, with `enrolled_only: true`
+        (and `bytes`, `published_at` null); for everyone else the field is
+        left out.
       operationId: practiceTests
       tags: [practice]
       security: [{ bearer: [] }]
@@ -479,6 +943,9 @@ paths:
                   expires_at: { type: string, format: date-time }
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`enrolled_only`: a registered student and a test for SAT MAKON's students"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "404":
           description: "`not_found`: no such test, or not published (yet), or no such version"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
@@ -562,7 +1029,7 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
         "403":
-          description: "`forbidden`: not a student"
+          description: "`forbidden`: not a student; `enrolled_only`: a registered student and a test for SAT MAKON's students"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "409":
           description: "`attempt_id_taken`: another student sent an attempt with this id"
@@ -2046,7 +2513,10 @@ components:
         first_name: { type: string }
         last_name: { type: string }
         phone: { type: string, description: As typed in HolliHop }
-        kind: { type: string, enum: [phone_missing, phone_invalid, phone_duplicate] }
+        kind:
+          type: string
+          enum: [phone_missing, phone_invalid, phone_duplicate, self_account_conflict]
+          description: "self_account_conflict: the number is a self-registered account's, which the sync merges only with a new HolliHop student"
         detail: { type: string }
         since: { type: string, format: date-time }
 
@@ -2170,6 +2640,9 @@ components:
         version: { type: [integer, "null"], description: The latest published version; null while locked }
         bytes: { type: [integer, "null"], description: "The download's size: the package and its images" }
         published_at: { type: [string, "null"], format: date-time }
+        enrolled_only:
+          type: boolean
+          description: "Registered students only: for SAT MAKON's students, locked for this person (version null). Left out otherwise"
 
     PracticePackage:
       type: object
@@ -2512,7 +2985,7 @@ components:
       properties:
         login:
           type: string
-          description: Phone number in any common format (`+998901234567`, `90 123 45 67`) or username.
+          description: Phone number in any common format (`+998901234567`, `90 123 45 67`), username, or email (anything with `@`).
           maxLength: 100
         password: { type: string, maxLength: 256 }
         device_id:
@@ -2552,10 +3025,18 @@ components:
       properties:
         kind: { type: string, enum: [student, teacher] }
         id: { type: integer, description: HolliHop client id (students) or teacher id }
-        first_name: { type: string }
+        first_name: { type: string, description: "Their own (PUT /v1/me/profile), else HolliHop's" }
         last_name: { type: string }
         username: { type: [string, "null"] }
         must_change_password: { type: boolean }
+        status:
+          type: string
+          enum: [enrolled, registered]
+          description: "registered: signed up themselves, not (yet) a SAT MAKON student (no classes; some practice tests). Teachers: enrolled"
+        phone: { type: [string, "null"], description: The login phone, E.164 }
+        email: { type: [string, "null"], description: "Their email (lower case), from sign-up; they can sign in with it" }
+        google: { type: boolean, description: A Google account is linked }
+        has_password: { type: boolean, description: "Their own password (false while on the default one, or signed up with Google only)" }
         groups:
           type: array
           description: Current and upcoming groups (enrolled in, or teaching).
@@ -2693,6 +3174,10 @@ components:
       type: object
       required: [min_app_version]
       properties:
+        signup: { type: boolean, description: "Sign-up is available (an email code or Google, then an SMS code)" }
+        reset: { type: boolean, description: Password reset by SMS code is available }
+        email: { type: boolean, description: Sign-up can start with an email code }
+        google: { type: boolean, description: Google sign-in is available }
         min_app_version:
           type: object
           required: [android, ios]
@@ -2751,6 +3236,20 @@ components:
                 - invalid_parked
                 - report_id_taken
                 - invalid_goals
+                - sms_unavailable
+                - invalid_phone
+                - too_many_tries
+                - invalid_ticket
+                - invalid_profile
+                - no_account
+                - google_taken
+                - phone_taken
+                - identity_spent
+                - invalid_email
+                - email_taken
+                - email_unavailable
+                - google_unavailable
+                - enrolled_only
             message:
               type: string
               description: Human-readable explanation; may change.

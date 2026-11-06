@@ -59,6 +59,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/auth/logout", h.RequireAllowingDefaultPassword(h.logout))
 	mux.HandleFunc("GET /v1/me", h.RequireAllowingDefaultPassword(h.me))
 	mux.HandleFunc("PUT /v1/auth/username", h.Require(h.setUsername))
+	h.registerAccounts(mux)
 }
 
 type ctxKey struct{}

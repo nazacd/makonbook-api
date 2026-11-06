@@ -3,6 +3,7 @@ package people
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -34,6 +35,17 @@ type Result struct {
 	LoginPhones    int            `json:"login_phones"`
 	Issues         map[string]int `json:"issues"` // open issues by kind
 	IssuesResolved int            `json:"issues_resolved"`
+
+	// Linked are self-registered accounts that became HolliHop students in
+	// this run (spec 21). The caller moves what other features keep under
+	// the old id without a foreign key (auth.MoveStudent).
+	Linked []Link `json:"linked,omitempty"`
+}
+
+// Link is a self-registered student re-keyed to their HolliHop ClientId.
+type Link struct {
+	SelfID   int32 `json:"self_id"`
+	ClientID int32 `json:"client_id"`
 }
 
 // Apply writes a HolliHop snapshot inside tx. It must run in a transaction:
@@ -63,14 +75,21 @@ func Apply(ctx context.Context, tx pgx.Tx, s Snapshot) (Result, error) {
 	if err := applyTeachers(ctx, q, s, &res); err != nil {
 		return res, err
 	}
-	studentIDs, err := applyStudents(ctx, q, s, &res)
+	studentIDs, fresh, err := applyStudents(ctx, q, s, &res)
 	if err != nil {
+		return res, err
+	}
+	plan, err := planLoginPhones(ctx, q)
+	if err != nil {
+		return res, err
+	}
+	if err := linkSelfAccounts(ctx, q, plan, fresh, &res); err != nil {
 		return res, err
 	}
 	if err := applyEnrollments(ctx, q, s, studentIDs, &res); err != nil {
 		return res, err
 	}
-	if err := applyLoginPhones(ctx, q, &res); err != nil {
+	if err := applyLoginPhones(ctx, q, plan, &res); err != nil {
 		return res, err
 	}
 	return res, nil
@@ -166,13 +185,15 @@ func applyTeachers(ctx context.Context, q *peopledb.Queries, s Snapshot, res *Re
 	return err
 }
 
-// applyStudents returns the client ids of every stored student afterwards.
-func applyStudents(ctx context.Context, q *peopledb.Queries, s Snapshot, res *Result) (map[int32]bool, error) {
+// applyStudents returns the client ids of every stored student afterwards,
+// and those stored for the first time in this run (fresh).
+func applyStudents(ctx context.Context, q *peopledb.Queries, s Snapshot, res *Result) (stored, fresh map[int32]bool, err error) {
 	existing, err := q.ListStudentClientIDs(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list students: %w", err)
+		return nil, nil, fmt.Errorf("list students: %w", err)
 	}
-	stored := toSet(existing)
+	stored = toSet(existing)
+	fresh = map[int32]bool{}
 
 	var rows []peopledb.UpsertStudentsParams
 	present := make([]int32, 0, len(s.Students))
@@ -190,30 +211,102 @@ func applyStudents(ctx context.Context, q *peopledb.Queries, s Snapshot, res *Re
 			HhStatusID:  pgtype.Int4{Int32: st.StatusID, Valid: st.StatusID != 0},
 			OfficeIds:   nonNil(st.OfficeIDs),
 		})
+		if !stored[st.ClientID] {
+			fresh[st.ClientID] = true
+		}
 		stored[st.ClientID] = true
 	}
 	if err := execBatch(len(rows), func() batchResults { return q.UpsertStudents(ctx, rows) }); err != nil {
-		return nil, fmt.Errorf("upsert students: %w", err)
+		return nil, nil, fmt.Errorf("upsert students: %w", err)
 	}
 	res.StudentsReceived = len(s.Students)
 
 	if s.StudentsComplete {
 		missing, err := q.MarkStudentsMissing(ctx, present)
 		if err != nil {
-			return nil, fmt.Errorf("mark missing students: %w", err)
+			return nil, nil, fmt.Errorf("mark missing students: %w", err)
 		}
 		res.StudentsMissing = int(missing)
 	}
 
 	if res.DeactivatedStudents, err = q.DeactivateStudents(ctx, StatusStudying); err != nil {
-		return nil, fmt.Errorf("deactivate students: %w", err)
+		return nil, nil, fmt.Errorf("deactivate students: %w", err)
 	}
 	if res.ReactivatedStudents, err = q.ReactivateStudents(ctx, StatusStudying); err != nil {
-		return nil, fmt.Errorf("reactivate students: %w", err)
+		return nil, nil, fmt.Errorf("reactivate students: %w", err)
 	}
 	n, err := q.CountActiveStudents(ctx)
 	res.ActiveStudents = int(n)
-	return stored, err
+	return stored, fresh, err
+}
+
+// loginPlan is who may log in with which number, and the issues of those
+// who may not (PlanLoginPhones over the active people after this run).
+type loginPlan struct {
+	login  map[PersonKey]string
+	issues []Issue
+}
+
+func planLoginPhones(ctx context.Context, q *peopledb.Queries) (loginPlan, error) {
+	rows, err := q.ListActivePhones(ctx)
+	if err != nil {
+		return loginPlan{}, fmt.Errorf("list phones: %w", err)
+	}
+	people := make([]PersonPhone, 0, len(rows))
+	for _, r := range rows {
+		people = append(people, PersonPhone{Kind: r.PersonKind, ID: r.PersonID, PhoneRaw: r.PhoneRaw, Name: r.LastName + " " + r.FirstName})
+	}
+	login, issues := PlanLoginPhones(people)
+	return loginPlan{login: login, issues: issues}, nil
+}
+
+// linkSelfAccounts handles enrolment (spec 21): a student stored for the first
+// time in this run (fresh) whose login phone is a self-registered account's
+// is that person. Instead of keeping a second account, the self-registered row
+// takes the HolliHop ClientId and data (foreign keys cascade), keeping its
+// password, username, sessions and name overrides. Only fresh students are
+// linked: one already stored has a history of their own, and merging two
+// accounts is left to people (applyLoginPhones reports it).
+func linkSelfAccounts(ctx context.Context, q *peopledb.Queries, plan loginPlan, fresh map[int32]bool, res *Result) error {
+	if len(fresh) == 0 {
+		return nil
+	}
+	self, err := q.SelfStudentPhones(ctx)
+	if err != nil {
+		return fmt.Errorf("self-registered phones: %w", err)
+	}
+	if len(self) == 0 {
+		return nil
+	}
+	byPhone := make(map[string]int32, len(self))
+	for _, r := range self {
+		byPhone[r.LoginPhone] = r.ClientID
+	}
+	var links []Link
+	for k, phone := range plan.login {
+		if selfID, ok := byPhone[phone]; ok && k.Kind == KindStudent && fresh[k.ID] {
+			links = append(links, Link{SelfID: selfID, ClientID: k.ID})
+		}
+	}
+	sort.Slice(links, func(i, j int) bool { return links[i].ClientID < links[j].ClientID })
+	for _, l := range links {
+		hh, err := q.DeleteNewStudent(ctx, l.ClientID)
+		if err != nil {
+			return fmt.Errorf("link %d: remove the new row: %w", l.ClientID, err)
+		}
+		n, err := q.RekeySelfStudent(ctx, peopledb.RekeySelfStudentParams{
+			ClientID: l.ClientID, HhStudentID: hh.HhStudentID, FirstName: hh.FirstName, LastName: hh.LastName,
+			PhoneRaw: hh.PhoneRaw, HhStatusID: hh.HhStatusID, OfficeIds: hh.OfficeIds, SelfID: l.SelfID,
+		})
+		if err != nil {
+			return fmt.Errorf("link %d to %d: %w", l.SelfID, l.ClientID, err)
+		}
+		if n != 1 {
+			return fmt.Errorf("link %d to %d: self-registered row is gone", l.SelfID, l.ClientID)
+		}
+	}
+	res.Linked = links
+	return nil
 }
 
 // applyEnrollments replaces all enrollments with the current and future ones
@@ -252,16 +345,34 @@ func applyEnrollments(ctx context.Context, q *peopledb.Queries, s Snapshot, stud
 	return nil
 }
 
-func applyLoginPhones(ctx context.Context, q *peopledb.Queries, res *Result) error {
-	rows, err := q.ListActivePhones(ctx)
+// applyLoginPhones sets the plan's login phones and records its issues. A
+// number that is still a self-registered account's (after linkSelfAccounts)
+// stays with that account: the HolliHop person gets an issue instead, since
+// one number can't sign in two accounts.
+func applyLoginPhones(ctx context.Context, q *peopledb.Queries, plan loginPlan, res *Result) error {
+	login, issues := plan.login, plan.issues
+	self, err := q.SelfStudentPhones(ctx)
 	if err != nil {
-		return fmt.Errorf("list phones: %w", err)
+		return fmt.Errorf("self-registered phones: %w", err)
 	}
-	people := make([]PersonPhone, 0, len(rows))
-	for _, r := range rows {
-		people = append(people, PersonPhone{Kind: r.PersonKind, ID: r.PersonID, PhoneRaw: r.PhoneRaw, Name: r.LastName + " " + r.FirstName})
+	if len(self) > 0 {
+		byPhone := make(map[string]peopledb.SelfStudentPhonesRow, len(self))
+		for _, r := range self {
+			byPhone[r.LoginPhone] = r
+		}
+		for k, phone := range login {
+			r, ok := byPhone[phone]
+			if !ok {
+				continue
+			}
+			delete(login, k)
+			issues = append(issues, Issue{Person: k, Kind: IssueSelfAccount, Detail: fmt.Sprintf(
+				"mobile %s is the number of a self-registered account (%s %s, id %d) that MakonBook doesn't merge with an existing person; "+
+					"if it is the same person, the accounts must be merged by hand, otherwise correct the number in HolliHop",
+				phone, r.LastName, r.FirstName, r.ClientID)})
+		}
+		sortIssues(issues)
 	}
-	login, issues := PlanLoginPhones(people)
 
 	var studentIDs, teacherIDs []int32
 	var studentPhones, teacherPhones []string

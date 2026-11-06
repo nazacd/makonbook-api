@@ -90,6 +90,21 @@ type AuthSession struct {
 	RevokedAt  pgtype.Timestamptz
 }
 
+type AuthTicket struct {
+	TokenHash     []byte
+	Purpose       string
+	Phone         pgtype.Text
+	GoogleSub     pgtype.Text
+	Email         pgtype.Text
+	FirstName     pgtype.Text
+	LastName      pgtype.Text
+	CreatedAt     pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
+	UsedAt        pgtype.Timestamptz
+	Identity      []byte
+	RevealedPhone pgtype.Text
+}
+
 type Credential struct {
 	PersonKind        string
 	PersonID          int32
@@ -98,6 +113,7 @@ type Credential struct {
 	PasswordChangedAt pgtype.Timestamptz
 	FailedAttempts    int32
 	LockedUntil       pgtype.Timestamptz
+	Email             pgtype.Text
 }
 
 type DataQualityIssue struct {
@@ -111,6 +127,18 @@ type DataQualityIssue struct {
 	ResolvedAt  pgtype.Timestamptz
 }
 
+type EmailCode struct {
+	ID        int64
+	Email     string
+	Salt      []byte
+	CodeHash  []byte
+	Ip        string
+	Tries     int16
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+	UsedAt    pgtype.Timestamptz
+}
+
 type Enrollment struct {
 	ID              int64
 	GroupID         int32
@@ -118,6 +146,14 @@ type Enrollment struct {
 	BeginDate       pgtype.Date
 	EndDate         pgtype.Date
 	Weekdays        int16
+}
+
+type GoogleLink struct {
+	Sub        string
+	PersonKind string
+	PersonID   int32
+	Email      string
+	CreatedAt  pgtype.Timestamptz
 }
 
 type Group struct {
@@ -253,6 +289,19 @@ type ParkedQuestion struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+type PhoneCode struct {
+	ID        int64
+	Phone     string
+	Purpose   string
+	Salt      []byte
+	CodeHash  []byte
+	Ip        string
+	Tries     int16
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+	UsedAt    pgtype.Timestamptz
+}
+
 type PracticeAttempt struct {
 	ID              pgtype.UUID
 	StudentClientID int32
@@ -308,6 +357,7 @@ type PracticeTest struct {
 	Code      string
 	Title     string
 	CreatedAt pgtype.Timestamptz
+	OpenToAll bool
 }
 
 type PracticeTestQuestion struct {
@@ -399,18 +449,21 @@ type ScheduleItem struct {
 }
 
 type Student struct {
-	ClientID      int32
-	HhStudentID   int32
-	FirstName     string
-	LastName      string
-	PhoneRaw      string
-	LoginPhone    pgtype.Text
-	HhStatusID    pgtype.Int4
-	OfficeIds     []int32
-	DeactivatedAt pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
-	ActivatedAt   pgtype.Timestamptz
+	ClientID        int32
+	HhStudentID     int32
+	FirstName       string
+	LastName        string
+	PhoneRaw        string
+	LoginPhone      pgtype.Text
+	HhStatusID      pgtype.Int4
+	OfficeIds       []int32
+	DeactivatedAt   pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	ActivatedAt     pgtype.Timestamptz
+	Source          string
+	FirstNameCustom pgtype.Text
+	LastNameCustom  pgtype.Text
 }
 
 type StudentGoal struct {
@@ -438,16 +491,18 @@ type SyncRun struct {
 }
 
 type Teacher struct {
-	ID            int32
-	FirstName     string
-	LastName      string
-	PhoneRaw      string
-	LoginPhone    pgtype.Text
-	Fired         bool
-	DeactivatedAt pgtype.Timestamptz
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
-	ActivatedAt   pgtype.Timestamptz
+	ID              int32
+	FirstName       string
+	LastName        string
+	PhoneRaw        string
+	LoginPhone      pgtype.Text
+	Fired           bool
+	DeactivatedAt   pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	ActivatedAt     pgtype.Timestamptz
+	FirstNameCustom pgtype.Text
+	LastNameCustom  pgtype.Text
 }
 
 type VocabDeck struct {

@@ -20,7 +20,9 @@ backend:
 | Parent access (see child's attendance, report problems to admins) | parents | 5 |
 | Placement (Level Check) test — public, no login, unchanged in spirit | prospective students + staff | exists |
 
-Access (except placement) is limited to people who are active in HolliHop.
+Access (except placement) is limited to people who are active in HolliHop, and to students who signed up
+themselves on the web (section 21: they see some practice tests and the vocabulary, no classes, until they
+enrol).
 
 ## 2. Decisions log
 
@@ -47,6 +49,13 @@ Access (except placement) is limited to people who are active in HolliHop.
 | D19 | **Practice content = SAT MAKON's own bank**, cleaned by an AI review before loading. | The bank is the teachers' own material. See 9.1. |
 | D20 | **Every active student sees every practice test**; a test stays **locked until all its questions are approved**. Scores are an **estimated 200–800**. | Tests open one by one as review finishes. |
 | D21 | **Every question that isn't green gets an AI fix** (even made up, labelled so). It is approved one of two ways: by an **editor** in the panel (a list of trusted teachers granted by super admins), or by a **vote of the teachers' Telegram group** on the original next to the fixed version. No blind solving. | Changed 2026-10-20 (was: reviewers solve blind first). See 9.4. |
+| D22 | **Sign-up is open to everyone, for student accounts only**; teachers and support teachers come only from HolliHop. A new account proves a phone number by **SMS code** (Eskiz.uz); **Google sign-in** exists too. Phone + password login is unchanged. | 2026-11. See 21. |
+| D23 | Self-registered students are **students like the others**, in `students` (`source = 'self'`, ids −1000001 and down). When the same verified phone shows up in HolliHop as a **new** student, the sync **re-keys their row to the HolliHop ClientId**: one account, keeping everything they did. A person **already stored** from HolliHop who gets that phone is **not merged**: admins see a data-quality issue. | Merging two histories is left to people (an open item). |
+| D24 | A **sign-up whose verified phone already signs in an enrolled person** (a HolliHop student or teacher) makes no account: the client shows whose it is ("Diyora A. — is this you?") and, on yes, sign-up signs into that account, sets the password chosen and links Google. A number a **registered** student already has refuses sign-up ("This phone number already exists": sign in or reset the password). | Proving the phone is proving the account (as a reset). Changed 2026-11-05 (was: any existing account was signed into without asking). |
+| D25 | People may **set their own name**; the sync never overwrites it. They see it; teachers, admins and parents keep seeing HolliHop's. Groups, classes and attendance stay HolliHop-only. | |
+| D26 | **Registered** (not yet enrolled) students see the mock tests **DAY1–DAY10** only; the rest of practice (statistics, Ask later, reports, goals) and the vocabulary are open to them. Enrolled students see everything, as before. | `practice_tests.open_to_all`. |
+| D27 | Registered students **may sign in to the phone app** (no classes; DAY1–DAY10 open). | For now; **revisit** (the app was built for SAT MAKON's students). |
+| D28 | **Sign-up starts with an identity**: an **email** proved by a 6-digit code sent to it, or **Google**. The **phone** (SMS code) comes second, verified *with* that identity, and only then is the account made or linked. Each identity can show the owner of **one phone at most** (`identity_spent` after). People can sign in with their email too. Phone-first sign-up is gone. | 2026-11-06. Stops a phone number from being looked up without an email or Google account behind it; only the web used phone-first sign-up. |
 
 ## 3. System overview
 
@@ -115,6 +124,7 @@ Verified against the live account (read-only) on 2026-10-09/10 and the
 | Rule | Definition |
 |---|---|
 | **Active student** (may log in) | HolliHop status `Занимается` (StatusId 2) **and** valid, unique normalised phone. Only students who are or have been active are stored. |
+| **Registered student** (section 21) | Signed up themselves with a verified Uzbek phone (`students.source = 'self'`, ids −1000001 and down); not in HolliHop, no branch, no groups. Always active. Becomes the HolliHop student (**enrolled**) when the sync stores them (D23). |
 | **Group roster** | Enrollments current on that date (dates + weekday mask) **∩** active students. |
 | **Active teacher** (may log in) | `Fired = false` **and** listed in `TeacherIds` of a current schedule item **and** valid unique phone. "Current" allows a margin: the item starts within 14 days and ended no more than 7 days ago, so teachers aren't logged out between one group ending and the next starting. |
 | **Attendance-enabled group** | `LearningType = GROUP` and office ≠ `ONLINE` (configurable). |
@@ -145,7 +155,8 @@ full|incremental` runs one by hand.
 
 ### 6.2 Rules
 - Upsert by HolliHop id (`client_id` for students, `id` for teachers/groups/schedule items).
-- Sync writes **only HolliHop-sourced columns** (names, phone, status, offices, group links). It never touches app-owned columns (password hash, username, email, flags).
+- Sync writes **only HolliHop-sourced columns** (names, phone, status, offices, group links). It never touches app-owned columns (password hash, username, email, flags, the names people chose: `first_name_custom`, `last_name_custom`).
+- Self-registered students (D23, section 21) are never written, deactivated or counted (the mass-change guard counts HolliHop's students only). **Enrolment:** when a run is about to store a **new** student (ClientId not stored yet) who is active with a valid unique login phone, and a self-registered student has that login phone, the run re-keys that row to the ClientId instead (every foreign key to `students` cascades updates; `auth.MoveStudent` moves the password, username, sessions and Google link, which have none), fills the HolliHop columns and keeps its `activated_at`, so the password and sessions stay valid. A HolliHop person **already stored** (or a teacher) whose number is a self-registered student's isn't merged: the number stays with the self-registered account, the HolliHop person gets no login phone and an open `self_account_conflict` issue on the admins' HolliHop issues page.
 - Leaving → `deactivated_at = now()`, all sessions revoked immediately. Returning → reactivated, password reset to default, `must_change_password = true`.
 - Schedule items and enrollments: deleted and re-inserted inside the run's transaction (readers never see the gap). Only current and future enrollments of stored students are kept.
 - Cursor (`lastUpdatedFrom`) saved **only after the run commits**, using the response's `Now`.
@@ -163,10 +174,11 @@ full|incremental` runs one by hand.
 - **Hashing:** argon2id (19 MiB, t=2, p=1 — OWASP minimum), PHC string format, concurrency capped so a classroom logging in at once can't exhaust memory. Paths with nothing to verify spend the same time, so timing doesn't reveal whether an account exists.
 - **Sessions:** opaque random token (32 bytes), stored as SHA-256 in `auth_sessions`, 30-day expiry extended on use (at most one write per hour). Dead on logout, on password change (other devices), when the person is deactivated, after reset, and after 30 days unused. Stored on device in `expo-secure-store`.
 - **Brute force:** per-account lockout — every 5th consecutive failure locks for 15 min × 2^(lockouts−1), capped at 24 h (so the 4-digit default can't be guessed in practice); a successful login resets the count. Wrong current passwords in a password change count too. Per-IP limit of 100 attempts / 10 min (generous: a classroom shares one IP). Behind the edge nginx, `TRUST_PROXY=true` takes the IP from `X-Forwarded-For`.
-- **Reset:** `makonbook reset-password student|teacher <id>` (admin-panel button later) forgets the own password, unlocks and ends all sessions. Email-code reset (hashed code, 15 min expiry, 5 attempts) can follow; Telegram later.
+- **Reset:** `makonbook reset-password student|teacher <id>` (admin-panel button later) forgets the own password, unlocks and ends all sessions. People reset it themselves with a **code sent by SMS** (section 21).
+- **Sign-up, SMS codes, Google sign-in, own names:** section 21. Self-registered students have **no default password**: without their own they sign in with Google only.
 - **Errors:** unknown account and wrong password both answer 401 `invalid_credentials`; a locked account answers 429 `account_locked` with `Retry-After`.
 - **Admins:** HolliHop staff on our access list, signing in with their HolliHop login (D18). Practice-content editors: a list of trusted teachers (D21).
-- **Demo accounts (app store review):** `demo.student` and `demo.teacher` with the `DEMO_PASSWORD` setting (`internal/demo`, `makonbook demo [remove]`, refreshed daily by the worker): a fictional student (two classes, eight weeks of attendance, practice results rising, with ups and downs, from 1240 to 1520) and a fictional teacher (the Math class and an "open all day" class, so attendance can be taken at any hour), with ten fictional classmates. It lives in the mirror tables under **negative ids**, which the sync never touches; admins' lessons, reports and code search leave them out, attendance in demo groups is never queued for HolliHop, and parents' reports about the demo child skip Telegram.
+- **Demo accounts (app store review):** `demo.student` and `demo.teacher` with the `DEMO_PASSWORD` setting (`internal/demo`, `makonbook demo [remove]`, refreshed daily by the worker): a fictional student (two classes, eight weeks of attendance, practice results rising, with ups and downs, from 1240 to 1520) and a fictional teacher (the Math class and an "open all day" class, so attendance can be taken at any hour), with ten fictional classmates. It lives in the mirror tables under **negative ids** (−1 … −999999; further down are self-registered students, real people, which the demo's commands never touch), which the sync never touches; admins' lessons, reports and code search leave them out, attendance in demo groups is never queued for HolliHop, and parents' reports about the demo child skip Telegram.
 
 ## 8. Attendance (phase 2)
 
@@ -263,8 +275,8 @@ question is red until a teacher confirms. New tests are written later in the adm
   (`POST …/questions/{id}/approval`, `409` if it changed meanwhile); it must pass the checks a save does, so
   a question without a key can't be approved. `approved_by` keeps who. An approval can be taken back.
 
-### 9.3 Access (D20)
-Every active student sees every test. A test is **locked until all its questions are approved**, then it
+### 9.3 Access (D20, D26)
+Every active student sees every test; registered students (section 21) see DAY1–DAY10 only. A test is **locked until all its questions are approved**, then it
 opens; tests open one by one as their review finishes. Scores are shown as an **estimated 200–800** per
 section (College Board uses IRT; we can't reproduce it exactly).
 
@@ -352,7 +364,7 @@ section (College Board uses IRT; we can't reproduce it exactly).
   a test's latest published version, in the package's order, `answered` (uploaded attempts that took its
   section, in every test and version that has the question; a blank answer is answered and wrong) and
   `correct` (graded right with the keys of the version the attempt used, as its scores). The demo account's
-  made-up attempts don't count. Counted in memory and again every 5 minutes at most (`practice.StatsTTL`);
+  made-up attempts don't count; registered students' do. Counted in memory and again every 5 minutes at most (`practice.StatsTTL`);
   an unknown or locked test is `404 test_not_found`.
 - **Ask later** (`parked_questions`): a question a student parks during a test to look at later. The device
   makes the id; `PUT /v1/me/parked/{id}` creates or replaces it (idempotent; another student's id is `404`):
@@ -600,6 +612,18 @@ practice_reports(id uuid PK (the device's), student_client_id FK, test, version,
                  question_id, kind (question|technical), reason NULL, text, status (open|resolved), created_at,
                  resolved_at, resolved_by)
 student_goals(student_client_id PK FK, target_math NULL, target_rw NULL, exam_date NULL, updated_at)
+-- built (accounts): see 21
+students.source ('hollihop' | 'self'), students/teachers.first_name_custom, last_name_custom NULL
+            -- self-registered students' ids: sequence self_student_ids, -1000001 and down;
+            -- every FK to students is ON UPDATE CASCADE (enrolment re-keys)
+practice_tests.open_to_all                           -- DAY1–DAY10: registered students take them
+phone_codes(id, phone, purpose (signup|reset), salt, code_hash NULL, ip, tries, created_at, expires_at, used_at)
+email_codes(id, email, salt, code_hash, ip, tries, created_at, expires_at, used_at)
+credentials.email UNIQUE NULL                        -- lower case; sign-in identifier
+auth_tickets.identity (a phone ticket's identity ticket hash), revealed_phone (an identity's one shown phone)
+auth_tickets(token_hash PK, purpose (signup|reset|google|google_signup), phone NULL, google_sub NULL, email,
+             first_name, last_name, created_at, expires_at, used_at)
+google_links(sub PK, person_kind, person_id, email, created_at, UNIQUE(person_kind, person_id))
 -- built (phase 4): see 11
 vocab_lists(id uuid PK, slug UNIQUE, title, position, removed_at)
 vocab_words(id uuid PK, list_id FK, position, word, part_of_speech, definition, example, image, removed_at,
@@ -628,6 +652,18 @@ POST /v1/auth/login                    {login, password} → {token, must_change
 POST /v1/auth/change-password
 POST /v1/auth/logout
 GET  /v1/me                            profile, role, groups
+PUT  /v1/me/profile                    {first_name, last_name} — own names (21)
+
+# accounts (21)
+POST /v1/auth/email/start              {email} → {resend_in, expires_in}; a code by email (sign-up's first step)
+POST /v1/auth/email/verify             {email, code} → {email_ticket} | 409 email_taken
+POST /v1/auth/phone/start              {phone, purpose: signup|reset} → {resend_in, expires_in}; SMS code
+POST /v1/auth/phone/verify             {phone, code, purpose, email_ticket|google_ticket} → {ticket, account}
+POST /v1/auth/signup                   {ticket, email_ticket|google_ticket, first_name, last_name, password|null} → login + existing
+POST /v1/auth/reset                    {ticket, password} → login
+GET  /v1/auth/google/start?return=     302 to Google (PKCE, state cookie)
+GET  /v1/auth/google/callback          302 to WEB_ORIGIN/auth/google#ticket=…&return=… or #error=…
+POST /v1/auth/google/ticket            {ticket} → signed_in (login) | needs_phone {google_ticket, names, email}
 
 # teacher
 GET  /v1/teacher/lessons?date=         lesson days for the teacher
@@ -709,7 +745,138 @@ Lesson days, sessions, QR, scanning, overrides, outbox write-back (dry-run until
 (Bluebook-style images, Approve/Deny) (built). 5. Unlocking tests: publishing, catalog, download, attempts
 (built). 6. Mobile: the Practice tab, offline test runner, results and review, teachers' group view (built).
 
-**Phase 4 — vocabulary** (built: import, deck, FSRS on the phone, review log sync, teachers' view). **Phase 5 — parents** (built: codes, read-only child view in Uzbek/Russian, reports to the panel and Telegram). Later: Telegram login/reset, push notifications.
+**Phase 4 — vocabulary** (built: import, deck, FSRS on the phone, review log sync, teachers' view). **Phase 5 — parents** (built: codes, read-only child view in Uzbek/Russian, reports to the panel and Telegram). **Accounts** (built, for the web app: sign-up and password reset by SMS code, Google sign-in, own names, registered students linked at enrolment; section 21). Later: Telegram login/reset, push notifications.
 
 ## 20. Open items
-None at the moment — all earlier open items are recorded as D12–D17. Deferred on purpose: stricter device policy (D14), substitute-teacher handling without a HolliHop change (D12), Telegram, push notifications.
+- **Merging** a HolliHop person already stored with a self-registered account that has their phone
+  (`self_account_conflict`, D23): there is no tool yet; for now admins correct the number in HolliHop, or a
+  developer merges the two by hand.
+- **Registered students in the phone app** (D27): allowed for now; decide whether the app should offer them
+  anything, or send them to the web.
+
+Deferred on purpose: stricter device policy (D14), substitute-teacher handling without a HolliHop change (D12), Telegram, push notifications.
+
+## 21. Accounts (built)
+
+Sign-up is open to everyone, for **student accounts only** (D22); teachers and support teachers come only
+from HolliHop. Phone + password login (section 7) is unchanged. Built in `internal/auth` (codes, tickets,
+sign-up, reset, Google, own names), `internal/people` (self-registered students, the enrolment link),
+`internal/platform/sms` (the SMS gateway) and `internal/platform/mail` (SMTP).
+
+**Order of a sign-up (D28):** (1) an identity: an email (`/v1/auth/email/start`, `/v1/auth/email/verify` →
+`email_ticket`) or Google (`/v1/auth/google/*` → `google_ticket`); (2) the phone, by SMS code, with that
+identity (`/v1/auth/phone/start`, `/v1/auth/phone/verify` → `ticket` and whose the number is); (3)
+`/v1/auth/signup` with the phone ticket and the same identity.
+
+### 21.1 Who is who
+- **Registered** student (`Profile.status = "registered"`): signed up themselves; a row in `students` with
+  `source = 'self'`, an id from the sequence `self_student_ids` (−1000001 and down, clear of HolliHop's
+  positive ClientIds and of the demo's −1 … −999999), `phone_raw` = `login_phone` = the verified E.164 phone,
+  `hh_student_id` = the same negative id, no branch, no HolliHop status. Always active; no groups, so no
+  classes, attendance or parents' classes.
+- **Enrolled**: everyone in HolliHop, teachers too. A registered student becomes enrolled at the first sync
+  that stores them from HolliHop with the same verified phone (D23, 6.2): same account, same password,
+  username, Google link, sessions, attempts, vocabulary, Ask later, reports and goals.
+- Practice for registered students (D26): `practice_tests.open_to_all` (DAY1–DAY10; the importer opens new
+  tests with those codes). The catalog shows the others locked (`version`, `bytes`, `published_at` null, as an
+  unpublished test, so the phone app shows them locked) with `enrolled_only: true`; their package and
+  attempts answer `403 enrolled_only`. Statistics stay open; everything else in practice and vocabulary is
+  open. Enrolled students and teachers: no change.
+- They may sign in to the phone app (D27).
+
+### 21.2 Codes by email and SMS
+- `POST /v1/auth/email/start {email}` → `{resend_in: 60, expires_in: 600}`. The address is trimmed and
+  lower-cased and must be a plain `name@domain.tld` (else `422 invalid_email`). Codes follow the SMS rules below
+  (`email_codes`: hashed, 10 minutes, 5 tries, per address one a minute and 5 a day, per network 20 an hour).
+  Sent by SMTP (`SMTP_HOST`, `SMTP_PORT` 587 with STARTTLS or 465 with TLS, `SMTP_USERNAME`, `SMTP_PASSWORD`,
+  `MAIL_FROM`); `SMTP_HOST=log` writes the code to the log (development; refused in production); empty is off
+  (`503 email_unavailable`, also when sending fails).
+- `POST /v1/auth/email/verify {email, code}` → `{email_ticket}` (single-use, **30 minutes**: the identity for the
+  phone step), or `409 email_taken` when an active account already has the address (the code proved it, so
+  saying so is fine). Errors as for the phone code.
+- The email is kept in `credentials.email` (unique, lower case); someone who left gives theirs up when another
+  person proves it. `POST /v1/auth/login` takes an email as the identifier too (anything with `@`).
+- `POST /v1/auth/phone/start {phone, purpose: signup|reset}` → `{resend_in: 60, expires_in: 600}`. Uzbek numbers
+  only (`+998`, normalised as in section 5), else `422 invalid_phone`. A **6-digit** code from `crypto/rand`,
+  stored as SHA-256 with a random salt (`phone_codes`), good for **10 minutes and 5 tries**; only a phone's
+  latest code for the purpose counts. Limits: **per phone one code a minute and 5 a day; per network 20 an
+  hour** (`429 rate_limited` with `Retry-After`), checked under an advisory lock on the phone. For `reset` the
+  answer is the same whether or not anyone signs in with the number (a row without a code is stored, so the
+  limits behave the same too), and the SMS goes only to a number that has an account, in the background, so
+  the time taken says nothing either. A sign-up SMS that fails answers `503 sms_unavailable`.
+- `POST /v1/auth/phone/verify {phone, code, purpose, email_ticket|google_ticket}` → `{ticket}`: single-use,
+  **15 minutes**, for that purpose. For `signup` exactly one identity is required (`422 invalid_ticket`
+  otherwise, before the code is tried), and the phone ticket is good for sign-up with that identity only. An
+  identity shows the owner of **one phone at most**: once a verify showed a non-null `account`, verifying any
+  other phone with it is `409 identity_spent` (the same phone again is fine; while every phone it verified had
+  nobody, it isn't spent). For `signup` it also says whose the number is (`account`, D24): `null` (nobody), `{"status": "registered"}`
+  (a registered student), or `{"status": "enrolled", "kind": "student"|"teacher", "name": "Diyora A."}` (first
+  name and the last name's initial, their own name if they set one). Proving the phone is what earns this. A
+  `reset` answer has `ticket` only.
+  Wrong: `422 invalid_code` (the message says how many tries are left); the 5th wrong one spends the code:
+  `429 too_many_tries` (`Retry-After`: when a new code can be sent); expired, used, replaced or never sent:
+  `410 code_expired`.
+- Tickets (`auth_tickets`) are 32 random bytes, stored as SHA-256, spent in the same transaction as what they
+  allow; a request that is turned down (weak password, bad name, phone or Google taken) spends nothing.
+- Gateway: `SMS_PROVIDER=eskiz` — Eskiz.uz (`POST notify.eskiz.uz/api/auth/login` with the account's email and
+  password gives a JWT, kept and renewed an hour before it expires or on a 401; `POST /api/message/sms/send`
+  with `mobile_phone` (digits), `message`, `from`). Eskiz sends only texts it has approved: `SMS_TEXT`
+  (default `SATMAKON: your code is {code}`) must match an approved template; `ESKIZ_FROM` is the sender name
+  (default `4546`, Eskiz's own). `SMS_PROVIDER=log` writes the code to the log (development; refused in
+  production); empty turns sign-up and reset off (`503 sms_unavailable`, and `/v1/app/config` says
+  `signup: false`).
+
+### 21.3 Sign-up and reset
+- `POST /v1/auth/signup {ticket, email_ticket|null, google_ticket|null, first_name|null, last_name|null,
+  password|null}` (a `signup` ticket and the identity it was verified with, exactly one, else `422
+  invalid_ticket`; the password follows section 7, else `422 weak_password`; required with an email, may be null
+  with Google):
+  - the phone signs in an **enrolled** person, a HolliHop student or teacher (D24; the client asked "is this
+    you?"): no account is made; it signs into theirs, sets the password if given (their other sessions end, as
+    after a password change; the lockout clears), adds the email if no other active account has it (else
+    leaves it out), or links the Google account; the names are ignored and may be null;
+  - the phone signs in a **registered** student: `409 phone_taken`, and nothing changes (no session, no email
+    or Google link, the same password);
+  - nobody's: a registered student is made with the phone, the email (`409 email_taken` if another account took
+    it meanwhile) or Google account, the password, and these names (required: 1–60 characters after trimming, no
+    control characters, else `422 invalid_profile`; stored as the names, not as overrides: at enrolment
+    HolliHop's names replace them, unless they set their own since) and signed in.
+  - Answers as a login plus `existing`. `409 google_taken` if the Google account is linked to someone else who
+    is active (a link to someone who left moves).
+- `POST /v1/auth/reset {ticket, password}` (a `reset` ticket): sets the password of whoever signs in with that
+  phone, clears the lockout, ends every other session and signs in; `404 no_account` if nobody does any more.
+  It is also how a Google-only account sets its first password. Both clear `must_change_password`.
+
+### 21.4 Google
+- OAuth authorization code flow with **PKCE**, run by the API: the web's pages load nothing from Google.
+  `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (empty = off: `503 google_unavailable`, `google: false` in the app
+  config) and `WEB_ORIGIN` (`https://sat.makonbook.uz`; its `/v1/` is this API, so the redirect URI
+  `${WEB_ORIGIN}/v1/auth/google/callback` is the web's own origin).
+- `GET /v1/auth/google/start?return=<path>` → 302 to Google (`openid email profile`, `prompt=select_account`).
+  The state, the PKCE verifier and the return path (a path on the web's origin, else `/`) go in a 10-minute
+  cookie `mb_google` (HttpOnly, Secure, SameSite=Lax, path `/v1/auth/google/`), signed with HMAC-SHA256 under a
+  key derived from the client secret.
+- `GET /v1/auth/google/callback`: checks the state against the cookie, trades the code at Google's token
+  endpoint (with the secret and the verifier) and reads the ID token's claims: issuer, audience, expiry and
+  `email_verified`. The token comes straight from Google over TLS, so its signature isn't checked (OpenID
+  Connect Core 3.1.3.7; the repo has no JWKS code). Then 302 to `${WEB_ORIGIN}/auth/google#ticket=<t>&return=<path>`
+  (a 10-minute single-use ticket) or `#error=google_denied` (cancelled at Google) / `#error=google_failed`.
+- `POST /v1/auth/google/ticket {ticket}`: a Google account linked to someone active →
+  `{status: "signed_in", token, expires_at, user}` (a HolliHop person still on the default password gets
+  `must_change_password: true`, as at a login); otherwise → `{status: "needs_phone", google_ticket, first_name,
+  last_name, email}`, the `google_ticket` (30 minutes) going to `/v1/auth/signup` once a phone is verified.
+- `google_links(sub PK, person_kind, person_id, email)`: one Google account per person and per account; it
+  follows a student who enrols. Someone who signed in with Google can also sign in with phone + password once
+  they set one.
+
+### 21.5 Own names
+- `PUT /v1/me/profile {first_name, last_name}` (students and teachers): the names the person sees for
+  themselves from then on — `/v1/me` and every sign-in answer show `custom ?? HolliHop` — stored in
+  `first_name_custom` / `last_name_custom`, which the sync never writes (D25). null clears one, back to
+  HolliHop's — for HolliHop people only; a registered student needs both. Teachers', admins' and parents'
+  views, and Telegram messages, keep HolliHop's names (staff work from HolliHop).
+- `Profile` gains `status` (`enrolled` | `registered`), `phone` (the login phone, E.164, or null), `email`
+  (theirs, or null), `google` (a Google account is linked) and `has_password` (their own password, not the
+  default one).
+- `GET /v1/app/config` gains `signup` (SMS and an identity, email or Google, are configured), `reset` (SMS),
+  `email` and `google`; the web shows those options only when true.
