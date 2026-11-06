@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"math"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
+	"github.com/nazacd/makonbook-api/internal/platform/telegram"
 )
 
 // Error codes of accounts (spec 21; see api/openapi.yaml).
@@ -29,6 +31,9 @@ const (
 	CodeInvalidEmail      = "invalid_email"
 	CodeEmailTaken        = "email_taken"
 	CodeEmailUnavailable  = "email_unavailable"
+	CodeInvalidTelegram   = "invalid_telegram"
+	CodeTelegramTaken     = "telegram_taken"
+	CodeTelegramOff       = "telegram_unavailable"
 	CodeGoogleUnavailable = "google_unavailable"
 )
 
@@ -36,6 +41,10 @@ func (h *Handler) registerAccounts(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/auth/email/start", h.emailStart)
 	mux.HandleFunc("POST /v1/auth/email/verify", h.emailVerify)
 	mux.HandleFunc("POST /v1/auth/phone/start", h.phoneStart)
+	mux.HandleFunc("POST /v1/auth/phone/telegram/start", h.telegramCheckStart)
+	mux.HandleFunc("POST /v1/auth/phone/telegram/check", h.telegramCheck)
+	mux.HandleFunc("POST /v1/auth/telegram", h.telegramSignIn)
+	mux.HandleFunc("POST "+TelegramWebhookPath, h.telegramWebhook)
 	mux.HandleFunc("POST /v1/auth/phone/verify", h.phoneVerify)
 	mux.HandleFunc("POST /v1/auth/signup", h.signup)
 	mux.HandleFunc("POST /v1/auth/reset", h.reset)
@@ -383,6 +392,12 @@ func (h *Handler) accountsError(w http.ResponseWriter, r *http.Request, what str
 		httpx.WriteError(w, r, http.StatusConflict, CodeEmailTaken, err.Error())
 	case errors.Is(err, ErrInvalidEmail):
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidEmail, err.Error())
+	case errors.Is(err, ErrTelegramOff):
+		httpx.WriteError(w, r, http.StatusServiceUnavailable, CodeTelegramOff, err.Error())
+	case errors.Is(err, ErrInvalidTelegram):
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidTelegram, err.Error())
+	case errors.Is(err, ErrTelegramTaken):
+		httpx.WriteError(w, r, http.StatusConflict, CodeTelegramTaken, err.Error())
 	case errors.Is(err, ErrMailOff):
 		httpx.WriteError(w, r, http.StatusServiceUnavailable, CodeEmailUnavailable, err.Error())
 	case errors.Is(err, ErrMailFailed):
@@ -396,4 +411,108 @@ func (h *Handler) accountsError(w http.ResponseWriter, r *http.Request, what str
 
 func retryAfter(w http.ResponseWriter, d time.Duration) {
 	w.Header().Set("Retry-After", strconv.Itoa(max(int(math.Ceil(d.Seconds())), 1)))
+}
+
+type telegramSignInRequest struct {
+	Auth     json.RawMessage `json:"auth"`
+	DeviceID string          `json:"device_id"`
+}
+
+type telegramNeedsPhone struct {
+	Status         string `json:"status"` // needs_phone
+	TelegramTicket string `json:"telegram_ticket"`
+	FirstName      string `json:"first_name"`
+	LastName       string `json:"last_name"`
+}
+
+func (h *Handler) telegramSignIn(w http.ResponseWriter, r *http.Request) {
+	var req telegramSignInRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if len(req.DeviceID) > 100 {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "device_id too long")
+		return
+	}
+	res, err := h.svc.TelegramSignIn(r.Context(), req.Auth, req.DeviceID)
+	if h.accountsError(w, r, "telegram sign-in", err) {
+		return
+	}
+	if res.SignedIn == nil {
+		httpx.WriteJSON(w, r, http.StatusOK, telegramNeedsPhone{Status: "needs_phone", TelegramTicket: res.SignupTicket,
+			FirstName: res.Account.FirstName, LastName: res.Account.LastName})
+		return
+	}
+	if resp, ok := h.loggedIn(w, r, *res.SignedIn); ok {
+		httpx.WriteJSON(w, r, http.StatusOK, googleSignedIn{Status: "signed_in", loginResponse: resp})
+	}
+}
+
+type telegramCheckStartRequest struct {
+	Purpose string `json:"purpose"`
+	Identity
+}
+
+func (h *Handler) telegramCheckStart(w http.ResponseWriter, r *http.Request) {
+	var req telegramCheckStartRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.Purpose != PurposeSignup && req.Purpose != PurposeReset {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, `purpose must be "signup" or "reset"`)
+		return
+	}
+	c, err := h.svc.StartTelegramCheck(r.Context(), req.Purpose, req.Identity, httpx.ClientIP(r, h.trustProxy))
+	var limited *RateLimitedError
+	switch {
+	case errors.As(err, &limited):
+		retryAfter(w, limited.RetryAfter)
+		httpx.WriteError(w, r, http.StatusTooManyRequests, httpx.CodeRateLimited, "too many phone checks from this network; try again later")
+	case h.accountsError(w, r, "telegram check", err):
+	default:
+		httpx.WriteJSON(w, r, http.StatusOK, c)
+	}
+}
+
+func (h *Handler) telegramCheck(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Nonce string `json:"nonce"`
+	}
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	res, err := h.svc.CheckTelegram(r.Context(), req.Nonce)
+	switch {
+	case h.codeError(w, r, err):
+	case h.accountsError(w, r, "telegram check", err):
+	case !res.Verified:
+		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"status": "pending"})
+	default:
+		body := map[string]any{"status": "verified", "phone": res.Phone, "ticket": res.Ticket}
+		if res.Purpose == PurposeSignup {
+			body["account"] = res.Owner
+		}
+		httpx.WriteJSON(w, r, http.StatusOK, body)
+	}
+}
+
+// telegramWebhook takes the sign-in bot's updates. It answers 200 to
+// anything from Telegram (a failed reply is only logged, so Telegram doesn't
+// retry), 403 to anyone without the secret.
+func (h *Handler) telegramWebhook(w http.ResponseWriter, r *http.Request) {
+	if !h.svc.telegramOn() {
+		httpx.WriteError(w, r, http.StatusServiceUnavailable, CodeTelegramOff, ErrTelegramOff.Error())
+		return
+	}
+	var u telegram.Update
+	secret := r.Header.Get("X-Telegram-Bot-Api-Secret-Token")
+	if !h.svc.telegramSecret(secret) {
+		httpx.WriteError(w, r, http.StatusForbidden, httpx.CodeForbidden, ErrBadWebhook.Error())
+		return
+	}
+	if !httpx.DecodeJSON(w, r, &u) {
+		return
+	}
+	logTelegram(httpx.Logger(r.Context()), h.svc.HandleTelegramUpdate(r.Context(), secret, u))
+	w.WriteHeader(http.StatusOK)
 }

@@ -10,7 +10,7 @@ import (
 // MoveStudent moves a student's login data from one id to another, inside
 // the sync's transaction: a self-registered student who enrols becomes the
 // HolliHop student (people.Link), signed in as before with the same
-// password, username and Google account (spec 21).
+// password, username, Google and Telegram accounts (spec 21).
 func MoveStudent(ctx context.Context, tx authdb.DBTX, from, to int32) error {
 	q := authdb.New(tx)
 	p := authdb.MoveStudentCredentialsParams{FromID: from, ToID: to}
@@ -22,6 +22,9 @@ func MoveStudent(ctx context.Context, tx authdb.DBTX, from, to int32) error {
 	}
 	if err := q.MoveStudentGoogle(ctx, authdb.MoveStudentGoogleParams(p)); err != nil {
 		return fmt.Errorf("move the Google link of %d: %w", from, err)
+	}
+	if err := q.MoveStudentTelegram(ctx, authdb.MoveStudentTelegramParams(p)); err != nil {
+		return fmt.Errorf("move the Telegram link of %d: %w", from, err)
 	}
 	return nil
 }

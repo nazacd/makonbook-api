@@ -90,10 +90,11 @@ type Service struct {
 	log    *slog.Logger
 
 	// Accounts (spec 21): nil when not configured.
-	sms     sms.Sender
-	smsText string
-	google  *GoogleConfig
-	mail    mail.Sender
+	sms      sms.Sender
+	smsText  string
+	google   *GoogleConfig
+	mail     mail.Sender
+	telegram *telegramBot
 }
 
 func NewService(db DB, p People, h *Hasher) *Service {
@@ -383,6 +384,7 @@ type Profile struct {
 	Phone       *string            `json:"phone"`        // the login phone, E.164
 	Email       *string            `json:"email"`        // their email (sign-in and sign-up), lower case
 	Google      bool               `json:"google"`       // a Google account is linked
+	Telegram    bool               `json:"telegram"`     // a Telegram account is linked
 	HasPassword bool               `json:"has_password"` // their own, not the default one
 	Groups      []people.GroupInfo `json:"groups"`
 }
@@ -412,6 +414,10 @@ func (s *Service) Profile(ctx context.Context, pr Principal, today time.Time) (P
 	if err != nil {
 		return Profile{}, fmt.Errorf("google link: %w", err)
 	}
+	tg, err := s.q.HasTelegramLink(ctx, authdb.HasTelegramLinkParams{PersonKind: p.Kind, PersonID: p.ID})
+	if err != nil {
+		return Profile{}, fmt.Errorf("telegram link: %w", err)
+	}
 	_, hasPassword := ownPassword(cred.PasswordHash, cred.PasswordChangedAt, p)
 	prof := Profile{
 		Kind:               p.Kind,
@@ -421,6 +427,7 @@ func (s *Service) Profile(ctx context.Context, pr Principal, today time.Time) (P
 		MustChangePassword: pr.MustChangePassword,
 		Status:             StatusEnrolled,
 		Google:             google,
+		Telegram:           tg,
 		HasPassword:        hasPassword,
 		Groups:             groups,
 	}

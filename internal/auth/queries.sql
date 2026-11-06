@@ -138,20 +138,22 @@ UPDATE phone_codes SET used_at = @now::timestamptz
 WHERE id = @id AND used_at IS NULL;
 
 -- name: InsertTicket :exec
-INSERT INTO auth_tickets (token_hash, purpose, phone, google_sub, email, first_name, last_name, identity, created_at, expires_at)
-VALUES (@token_hash, @purpose, @phone, @google_sub, @email, @first_name, @last_name, @identity, @created_at, @expires_at);
+INSERT INTO auth_tickets (token_hash, purpose, phone, google_sub, email, first_name, last_name, identity,
+                          telegram_id, telegram_username, created_at, expires_at)
+VALUES (@token_hash, @purpose, @phone, @google_sub, @email, @first_name, @last_name, @identity,
+        @telegram_id, @telegram_username, @created_at, @expires_at);
 
 -- A ticket that can still be used, without using it (to check a request
 -- before changing anything).
 -- name: PeekTicket :one
-SELECT phone, google_sub, email, first_name, last_name, identity, revealed_phone
+SELECT phone, google_sub, email, first_name, last_name, identity, revealed_phone, telegram_id, telegram_username
 FROM auth_tickets
 WHERE token_hash = @token_hash AND purpose = @purpose AND used_at IS NULL AND expires_at > @now::timestamptz;
 
 -- name: UseTicket :one
 UPDATE auth_tickets SET used_at = @now::timestamptz
 WHERE token_hash = @token_hash AND purpose = @purpose AND used_at IS NULL AND expires_at > @now::timestamptz
-RETURNING phone, google_sub, email, first_name, last_name, identity, revealed_phone;
+RETURNING phone, google_sub, email, first_name, last_name, identity, revealed_phone, telegram_id, telegram_username;
 
 -- name: DeleteOldPhoneCodes :execrows
 DELETE FROM phone_codes WHERE created_at < @before::timestamptz;
@@ -234,3 +236,60 @@ UPDATE credentials SET email = NULL WHERE email = @email;
 INSERT INTO credentials (person_kind, person_id, email)
 VALUES (@person_kind, @person_id, @email)
 ON CONFLICT (person_kind, person_id) DO UPDATE SET email = EXCLUDED.email;
+
+-- Telegram ------------------------------------------------------------------------
+
+-- name: MoveStudentTelegram :exec
+UPDATE telegram_links SET person_id = @to_id
+WHERE person_kind = 'student' AND person_id = @from_id;
+
+-- name: TelegramLinkByID :one
+SELECT person_kind, person_id FROM telegram_links WHERE telegram_id = @telegram_id;
+
+-- name: HasTelegramLink :one
+SELECT EXISTS (SELECT 1 FROM telegram_links WHERE person_kind = @person_kind AND person_id = @person_id);
+
+-- name: DeleteTelegramLink :exec
+DELETE FROM telegram_links WHERE telegram_id = @telegram_id;
+
+-- name: UnlinkTelegramPerson :exec
+DELETE FROM telegram_links WHERE person_kind = @person_kind AND person_id = @person_id;
+
+-- name: InsertTelegramLink :exec
+INSERT INTO telegram_links (telegram_id, person_kind, person_id, username)
+VALUES (@telegram_id, @person_kind, @person_id, @username);
+
+-- name: SetTelegramUsername :exec
+UPDATE telegram_links SET username = @username WHERE telegram_id = @telegram_id;
+
+-- name: InsertTelegramCheck :exec
+INSERT INTO telegram_phone_checks (nonce_hash, purpose, identity, identity_purpose, ip, created_at, expires_at)
+VALUES (@nonce_hash, @purpose, @identity, @identity_purpose, @ip, @created_at, @expires_at);
+
+-- name: NetworkTelegramChecksSince :one
+SELECT count(*)::int FROM telegram_phone_checks WHERE ip = @ip AND created_at > @since::timestamptz;
+
+-- /start <nonce>: the check now belongs to this Telegram account.
+-- name: OpenTelegramCheck :execrows
+UPDATE telegram_phone_checks SET telegram_user_id = @telegram_user_id
+WHERE nonce_hash = @nonce_hash AND verified_at IS NULL AND used_at IS NULL AND expires_at > @now::timestamptz;
+
+-- The contact verifies the account's latest open check.
+-- name: VerifyTelegramCheck :execrows
+UPDATE telegram_phone_checks SET phone = @phone::text, verified_at = @now::timestamptz
+WHERE nonce_hash = (
+    SELECT c.nonce_hash FROM telegram_phone_checks c
+    WHERE c.telegram_user_id = @telegram_user_id AND c.verified_at IS NULL AND c.used_at IS NULL
+      AND c.expires_at > @now::timestamptz
+    ORDER BY c.created_at DESC LIMIT 1);
+
+-- name: GetTelegramCheck :one
+SELECT purpose, identity, identity_purpose, phone, expires_at, verified_at, used_at
+FROM telegram_phone_checks WHERE nonce_hash = @nonce_hash;
+
+-- name: UseTelegramCheck :execrows
+UPDATE telegram_phone_checks SET used_at = @now::timestamptz
+WHERE nonce_hash = @nonce_hash AND verified_at IS NOT NULL AND used_at IS NULL;
+
+-- name: DeleteOldTelegramChecks :execrows
+DELETE FROM telegram_phone_checks WHERE created_at < @before::timestamptz;

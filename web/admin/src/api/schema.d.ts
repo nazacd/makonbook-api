@@ -185,6 +185,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/telegram": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign in with Telegram (Login Widget data)
+         * @description The web sends people to oauth.telegram.org (the sign-in bot,
+         *     `/v1/app/config` `telegram`) and gets `#tgAuthResult` back: its fields
+         *     go here as `auth`, as received. The server checks Telegram's hash
+         *     (HMAC-SHA256 of the other fields, sorted, `key=value` lines, keyed
+         *     with SHA-256 of the bot's token) and that `auth_date` is within 24
+         *     hours. A Telegram account linked to someone active signs them in;
+         *     otherwise the answer carries a `telegram_ticket` (30 minutes), an
+         *     identity for the phone step and sign-up, like Google's.
+         */
+        post: operations["telegramSignIn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/phone/telegram/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Prove a phone through the Telegram bot instead of an SMS code
+         * @description Answers a nonce and a t.me link to the sign-in bot (10 minutes). The
+         *     person opens it, taps *Share my number*, and the bot accepts their own
+         *     contact if it is an Uzbek (+998) number. Then
+         *     `/v1/auth/phone/telegram/check` gives the phone ticket. For `signup`
+         *     exactly one identity is required, as for `/v1/auth/phone/verify`.
+         *     20 checks an hour per network.
+         */
+        post: operations["startTelegramPhone"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/auth/phone/telegram/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Whether the bot has the phone yet; once it has, the phone ticket (once)
+         * @description Poll every few seconds. `verified` carries the same phone ticket as
+         *     `/v1/auth/phone/verify` (for the purpose, bound to the identity for
+         *     `signup`) and, for `signup` only, `account` (whose the number is,
+         *     which spends the identity as an SMS verify does). For `reset` it
+         *     answers the same whether or not anyone signs in with the number
+         *     (`/v1/auth/reset` then says `no_account`). After it answered
+         *     `verified`, or after 10 minutes: `410 code_expired`.
+         */
+        post: operations["checkTelegramPhone"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/telegram/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The sign-in bot's updates (Telegram only)
+         * @description Registered with `makonbook telegram webhook <public API URL>`.
+         *     Requests without the `X-Telegram-Bot-Api-Secret-Token` header set to
+         *     `TELEGRAM_LOGIN_WEBHOOK_SECRET` are refused.
+         */
+        post: operations["telegramWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/auth/phone/start": {
         parameters: {
             query?: never;
@@ -225,8 +325,9 @@ export interface paths {
          *     `/v1/auth/reset` a `reset` one.
          *
          *     For `signup` the request needs exactly one identity: `email_ticket`
-         *     (from `/v1/auth/email/verify`) or `google_ticket` (from
-         *     `/v1/auth/google/ticket`, `needs_phone`); otherwise `422
+         *     (from `/v1/auth/email/verify`), `google_ticket` (from
+         *     `/v1/auth/google/ticket`, `needs_phone`) or `telegram_ticket` (from
+         *     `/v1/auth/telegram`, `needs_phone`); otherwise `422
          *     invalid_ticket` (checked before the code, which is then not tried).
          *     The phone ticket is good for sign-up with that identity only. An
          *     identity shows the owner of one phone at most: once a verify has
@@ -262,7 +363,8 @@ export interface paths {
         /**
          * Create a student account, or sign into the SAT MAKON account the phone has
          * @description Needs a `signup` ticket from `/v1/auth/phone/verify` and the identity
-         *     it was verified with (exactly one of `email_ticket`, `google_ticket`;
+         *     it was verified with (exactly one of `email_ticket`, `google_ticket`,
+         *     `telegram_ticket`;
          *     otherwise `422 invalid_ticket`). The verify's `account` says which case
          *     this is:
          *     - an **enrolled** person (a student or teacher in HolliHop) signs in
@@ -270,7 +372,7 @@ export interface paths {
          *       (`existing: true`; the client asked "Is this you?" first), sets the
          *       password if one is given (their other sessions end, as after a
          *       password change), adds the email if no other active account has it
-         *       (else leaves it out), or links the Google account. The names are
+         *       (else leaves it out), or links the Google or Telegram account. The names are
          *       ignored and may be null.
          *     - a **registered** student (signed up before) does: `409 phone_taken`;
          *       nothing changes (no session, no email or Google link, same password).
@@ -2275,6 +2377,8 @@ export interface components {
             email?: string | null;
             /** @description A Google account is linked */
             google?: boolean;
+            /** @description A Telegram account is linked */
+            telegram?: boolean;
             /** @description Their own password (false while on the default one, or signed up with Google only) */
             has_password?: boolean;
             /** @description Current and upcoming groups (enrolled in, or teaching). */
@@ -2432,14 +2536,21 @@ export interface components {
             status: "ok";
         };
         AppConfig: {
-            /** @description Sign-up is available (an email code or Google, then an SMS code) */
+            /** @description Sign-up is available (an email code, Google or Telegram, then the phone by SMS code or the Telegram bot) */
             signup?: boolean;
-            /** @description Password reset by SMS code is available */
+            /** @description Password reset is available (the phone by SMS code or the Telegram bot) */
             reset?: boolean;
             /** @description Sign-up can start with an email code */
             email?: boolean;
             /** @description Google sign-in is available */
             google?: boolean;
+            /** @description The Telegram sign-in bot (Login Widget, phone checks); null when off */
+            telegram?: null | {
+                /** @description The bot token's number (public) */
+                bot_id: number;
+                /** @example SatMakonBot */
+                bot_username: string;
+            };
             min_app_version: {
                 /** @example 1.0.0 */
                 android: string;
@@ -2453,7 +2564,7 @@ export interface components {
                  * @description Stable machine-readable code.
                  * @enum {string}
                  */
-                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "phone_taken" | "identity_spent" | "invalid_email" | "email_taken" | "email_unavailable" | "google_unavailable" | "enrolled_only";
+                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "phone_taken" | "identity_spent" | "invalid_email" | "email_taken" | "email_unavailable" | "invalid_telegram" | "telegram_taken" | "telegram_unavailable" | "google_unavailable" | "enrolled_only";
                 /** @description Human-readable explanation; may change. */
                 message: string;
                 /** @description For a rejected form (`invalid_question`): what is wrong, per field (e.g. `stem`, `choices.B`). */
@@ -2879,6 +2990,244 @@ export interface operations {
             };
         };
     };
+    telegramSignIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    auth: {
+                        id: number;
+                        first_name: string;
+                        last_name?: string;
+                        username?: string;
+                        photo_url?: string;
+                        auth_date: number;
+                        hash: string;
+                    };
+                    device_id?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Signed in, or a phone is needed to finish signing up */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "signed_in";
+                        token: string;
+                        /** Format: date-time */
+                        expires_at: string;
+                        user: components["schemas"]["Profile"];
+                    } | {
+                        /** @enum {string} */
+                        status: "needs_phone";
+                        telegram_ticket: string;
+                        first_name: string;
+                        /** @description May be empty */
+                        last_name: string;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            /** @description `invalid_telegram`: the hash doesn't match, or the data is older than 24 hours */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `telegram_unavailable` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    startTelegramPhone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    purpose: "signup" | "reset";
+                    email_ticket?: string | null;
+                    google_ticket?: string | null;
+                    telegram_ticket?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Open the link */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        nonce: string;
+                        /** @example https://t.me/SatMakonBot?start=… */
+                        link: string;
+                        /** @example 600 */
+                        expires_in: number;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            /** @description `invalid_ticket` (signup without exactly one valid identity) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `rate_limited` */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `telegram_unavailable` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    checkTelegramPhone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    nonce: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Pending, or verified */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "pending";
+                    } | {
+                        /** @enum {string} */
+                        status: "verified";
+                        /** @example +998901234567 */
+                        phone: string;
+                        ticket: string;
+                        /** @description `signup` only: as in `/v1/auth/phone/verify` */
+                        account?: null | {
+                            /** @enum {string} */
+                            status: "registered" | "enrolled";
+                            /** @enum {string} */
+                            kind?: "student" | "teacher";
+                            name?: string;
+                        };
+                    };
+                };
+            };
+            /** @description `identity_spent` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `code_expired`: expired, unknown, or already traded */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_ticket`: the identity expired or was used meanwhile */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `telegram_unavailable` */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    telegramWebhook: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Telegram-Bot-Api-Secret-Token": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": Record<string, never>;
+            };
+        };
+        responses: {
+            /** @description Taken */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
     startPhoneCode: {
         parameters: {
             query?: never;
@@ -2970,6 +3319,8 @@ export interface operations {
                     email_ticket?: string | null;
                     /** @description `signup`: the identity, if it is a Google account */
                     google_ticket?: string | null;
+                    /** @description `signup`: the identity, if it is a Telegram account */
+                    telegram_ticket?: string | null;
                 };
             };
         };
@@ -3067,10 +3418,12 @@ export interface operations {
                     first_name: string | null;
                     /** @description 1–60 characters after trimming; needed only for a new account */
                     last_name: string | null;
-                    /** @description The rules of `/v1/auth/password`; required with an email, may be null with Google */
+                    /** @description The rules of `/v1/auth/password`; required with an email, may be null with Google or Telegram */
                     password: string | null;
                     /** @description From `/v1/auth/google/ticket` (`needs_phone`), to sign in with Google from then on */
                     google_ticket?: string | null;
+                    /** @description From `/v1/auth/telegram` (`needs_phone`), to sign in with Telegram from then on */
+                    telegram_ticket?: string | null;
                     device_id?: string;
                 };
             };
@@ -3089,7 +3442,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
-            /** @description `phone_taken`: a registered student already signs in with this phone; `email_taken`: a new account's email was taken meanwhile; `google_taken`: that Google account is linked to someone else */
+            /** @description `phone_taken`: a registered student already signs in with this phone; `email_taken`: a new account's email was taken meanwhile; `google_taken` / `telegram_taken`: that Google or Telegram account is linked to someone else */
             409: {
                 headers: {
                     [name: string]: unknown;

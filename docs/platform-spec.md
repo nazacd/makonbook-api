@@ -56,6 +56,7 @@ enrol).
 | D26 | **Registered** (not yet enrolled) students see the mock tests **DAY1–DAY10** only; the rest of practice (statistics, Ask later, reports, goals) and the vocabulary are open to them. Enrolled students see everything, as before. | `practice_tests.open_to_all`. |
 | D27 | Registered students **may sign in to the phone app** (no classes; DAY1–DAY10 open). | For now; **revisit** (the app was built for SAT MAKON's students). |
 | D28 | **Sign-up starts with an identity**: an **email** proved by a 6-digit code sent to it, or **Google**. The **phone** (SMS code) comes second, verified *with* that identity, and only then is the account made or linked. Each identity can show the owner of **one phone at most** (`identity_spent` after). People can sign in with their email too. Phone-first sign-up is gone. | 2026-11-06. Stops a phone number from being looked up without an email or Google account behind it; only the web used phone-first sign-up. |
+| D29 | **Telegram** is a third identity (the Login Widget) and a **free way to prove the phone** next to SMS: the sign-in bot (its own bot) asks for the person's **own contact**; only +998 numbers. | 2026-11-06. Saves SMS costs; Telegram is widespread in Uzbekistan. |
 
 ## 3. System overview
 
@@ -621,6 +622,9 @@ phone_codes(id, phone, purpose (signup|reset), salt, code_hash NULL, ip, tries, 
 email_codes(id, email, salt, code_hash, ip, tries, created_at, expires_at, used_at)
 credentials.email UNIQUE NULL                        -- lower case; sign-in identifier
 auth_tickets.identity (a phone ticket's identity ticket hash), revealed_phone (an identity's one shown phone)
+telegram_links(telegram_id PK, person_kind, person_id, username, created_at, UNIQUE(person_kind, person_id))
+telegram_phone_checks(nonce_hash PK, purpose, identity, identity_purpose, ip, telegram_user_id, phone, created_at,
+                      expires_at, verified_at, used_at)
 auth_tickets(token_hash PK, purpose (signup|reset|google|google_signup), phone NULL, google_sub NULL, email,
              first_name, last_name, created_at, expires_at, used_at)
 google_links(sub PK, person_kind, person_id, email, created_at, UNIQUE(person_kind, person_id))
@@ -659,7 +663,11 @@ POST /v1/auth/email/start              {email} → {resend_in, expires_in}; a co
 POST /v1/auth/email/verify             {email, code} → {email_ticket} | 409 email_taken
 POST /v1/auth/phone/start              {phone, purpose: signup|reset} → {resend_in, expires_in}; SMS code
 POST /v1/auth/phone/verify             {phone, code, purpose, email_ticket|google_ticket} → {ticket, account}
-POST /v1/auth/signup                   {ticket, email_ticket|google_ticket, first_name, last_name, password|null} → login + existing
+POST /v1/auth/signup                   {ticket, email_ticket|google_ticket|telegram_ticket, first_name, last_name, password|null} → login + existing
+POST /v1/auth/telegram                 {auth (Login Widget data)} → signed_in (login) | needs_phone {telegram_ticket, names}
+POST /v1/auth/phone/telegram/start     {purpose, identity (signup)} → {nonce, link, expires_in}
+POST /v1/auth/phone/telegram/check     {nonce} → {status: pending} | {status: verified, phone, ticket, account}
+POST /v1/telegram/webhook              the sign-in bot's updates (secret header)
 POST /v1/auth/reset                    {ticket, password} → login
 GET  /v1/auth/google/start?return=     302 to Google (PKCE, state cookie)
 GET  /v1/auth/google/callback          302 to WEB_ORIGIN/auth/google#ticket=…&return=… or #error=…
@@ -763,10 +771,11 @@ from HolliHop. Phone + password login (section 7) is unchanged. Built in `intern
 sign-up, reset, Google, own names), `internal/people` (self-registered students, the enrolment link),
 `internal/platform/sms` (the SMS gateway) and `internal/platform/mail` (SMTP).
 
-**Order of a sign-up (D28):** (1) an identity: an email (`/v1/auth/email/start`, `/v1/auth/email/verify` →
-`email_ticket`) or Google (`/v1/auth/google/*` → `google_ticket`); (2) the phone, by SMS code, with that
-identity (`/v1/auth/phone/start`, `/v1/auth/phone/verify` → `ticket` and whose the number is); (3)
-`/v1/auth/signup` with the phone ticket and the same identity.
+**Order of a sign-up (D28, D29):** (1) an identity: an email (`/v1/auth/email/start`, `/v1/auth/email/verify` →
+`email_ticket`), Google (`/v1/auth/google/*` → `google_ticket`) or Telegram (`/v1/auth/telegram` →
+`telegram_ticket`); (2) the phone, by SMS code (`/v1/auth/phone/start`, `/v1/auth/phone/verify`) or through the
+Telegram bot (`/v1/auth/phone/telegram/start`, `/check`), with that identity → `ticket` and whose the number
+is; (3) `/v1/auth/signup` with the phone ticket and the same identity.
 
 ### 21.1 Who is who
 - **Registered** student (`Profile.status = "registered"`): signed up themselves; a row in `students` with
@@ -869,7 +878,30 @@ identity (`/v1/auth/phone/start`, `/v1/auth/phone/verify` → `ticket` and whose
   follows a student who enrols. Someone who signed in with Google can also sign in with phone + password once
   they set one.
 
-### 21.5 Own names
+### 21.5 Telegram (D29)
+- **The sign-in bot**: its own bot (`TELEGRAM_LOGIN_BOT_TOKEN`, `TELEGRAM_LOGIN_BOT_USERNAME`,
+  `TELEGRAM_LOGIN_WEBHOOK_SECRET`; empty token = off), not the alerts' (`TELEGRAM_BOT_TOKEN`) or the review
+  bot's. `GET /v1/app/config` gives `telegram: {bot_id, bot_username}` (the token's number is public) or null.
+- **Sign-in**: the web sends people to oauth.telegram.org (the Login Widget's redirect flow) and posts
+  `#tgAuthResult` to `POST /v1/auth/telegram {auth}`. The hash is checked as Telegram specifies (HMAC-SHA256 of
+  the other fields, sorted, `key=value` joined with `\n`, keyed with SHA-256 of the token; constant-time) and
+  `auth_date` must be within 24 hours, else `422 invalid_telegram`. Linked to someone active → signed in;
+  otherwise `needs_phone` with a `telegram_ticket` (30 minutes), an identity exactly like Google's (password
+  optional; `409 telegram_taken` when linking an account linked to someone else active). `telegram_links`
+  (Telegram id unique, the person, username) follows a student who enrols. `Profile.telegram` says whether one
+  is linked.
+- **Phone through the bot** (instead of an SMS code, for `signup` and `reset`):
+  `POST /v1/auth/phone/telegram/start {purpose, identity (signup)}` → `{nonce, link: https://t.me/<bot>?start=<nonce>,
+  expires_in: 600}` (20 an hour per network). In the bot, `/start <nonce>` ties the check to that Telegram
+  account and shows a *Share my number* button (`request_contact`); a contact counts only if it is the sender's
+  own (`contact.user_id == from.id`) and an Uzbek number. `POST /v1/auth/phone/telegram/check {nonce}` →
+  `{status: "pending"}` or, once, `{status: "verified", phone, ticket, account}` — the same phone ticket as an
+  SMS verify, `account` for `signup` only (and it spends the identity the same way); `410 code_expired` after
+  10 minutes or once traded. A reset answers the same whether or not the number has an account.
+- **Webhook**: `POST /v1/telegram/webhook`, refused (403) without `X-Telegram-Bot-Api-Secret-Token` =
+  the secret. Registered with `makonbook telegram webhook <public API URL>` (`setWebhook`, updates: messages).
+
+### 21.6 Own names
 - `PUT /v1/me/profile {first_name, last_name}` (students and teachers): the names the person sees for
   themselves from then on — `/v1/me` and every sign-in answer show `custom ?? HolliHop` — stored in
   `first_name_custom` / `last_name_custom`, which the sync never writes (D25). null clears one, back to
