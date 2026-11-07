@@ -304,3 +304,103 @@ func TestTelegramWebhookCommand(t *testing.T) {
 		t.Errorf("call: %+v", c)
 	}
 }
+
+// botCheck proves phone through the bot from the Telegram account user, for
+// the start body (purpose and identity), and answers the check.
+func (a tgAccounts) botCheck(user int64, phone string, start map[string]any) response {
+	a.t.Helper()
+	r := a.do("POST", "/v1/auth/phone/telegram/start", "", start)
+	nonce, ok := r.body["nonce"].(string)
+	if !ok {
+		a.t.Fatalf("start: %d %v", r.status, r.body)
+	}
+	a.webhook(tgSecret, message(user, "/start "+nonce, nil))
+	a.webhook(tgSecret, message(user, "", map[string]any{"phone_number": phone, "user_id": user}))
+	return a.do("POST", "/v1/auth/phone/telegram/check", "", map[string]any{"nonce": nonce})
+}
+
+// forSignup is a sign-up check's start body with the identity.
+func forSignup(id map[string]any) map[string]any {
+	b := map[string]any{"purpose": PurposeSignup}
+	for k, v := range id {
+		b[k] = v
+	}
+	return b
+}
+
+// A phone shared through the bot links that Telegram account to whoever
+// signs up or resets with it, and the same Telegram account signs straight in.
+func TestTelegramCheckLinksTheAccount(t *testing.T) {
+	a := setupTelegram(t)
+
+	// Email sign-up, phone through the bot: Telegram 60 is linked.
+	id := a.emailID("bot@example.com")
+	v := a.botCheck(60, "+998903000020", forSignup(id))
+	r := a.do("POST", "/v1/auth/signup", "", signupBody(v.body["ticket"].(string), id, "Bot", "User", "a good password"))
+	if u, _ := r.body["user"].(map[string]any); r.status != http.StatusOK || u["telegram"] != true {
+		t.Fatalf("signup: %d %v", r.status, r.body)
+	}
+	if r := a.signIn(signed(60, "Bot", a.clock.now())); r.body["status"] != "signed_in" {
+		t.Errorf("telegram sign-in after the bot check: %v", r.body)
+	}
+
+	// The reported case: an account made with email and an SMS code, then
+	// "Continue with Telegram" and the same phone through the bot from that
+	// Telegram account: signed in, not "already exists".
+	email := a.emailID("free@example.com")
+	if r := a.do("POST", "/v1/auth/signup", "", signupBody(a.ticket("+998903000021", PurposeSignup, email), email, "Free", "Account", "a good password")); r.status != http.StatusOK {
+		t.Fatalf("free account: %d %v", r.status, r.body)
+	}
+	tg := map[string]any{"telegram_ticket": a.signIn(signed(61, "Free", a.clock.now())).body["telegram_ticket"]}
+	r = a.botCheck(61, "+998903000021", forSignup(tg))
+	if u, _ := r.body["user"].(map[string]any); r.status != http.StatusOK || r.body["status"] != "signed_in" || r.body["token"] == "" ||
+		u["status"] != StatusRegistered || u["telegram"] != true || u["phone"] != "+998903000021" {
+		t.Fatalf("same Telegram, registered owner: %d %v", r.status, r.body)
+	}
+	if r := a.signIn(signed(61, "Free", a.clock.now())); r.body["status"] != "signed_in" {
+		t.Errorf("linked: %v", r.body)
+	}
+	if r := a.do("POST", "/v1/auth/signup", "", signupBody("x", tg, "A", "B", nil)); r.code() != CodeInvalidTicket {
+		t.Errorf("the identity wasn't spent: %d %v", r.status, r.body)
+	}
+
+	// And into an enrolled owner, who must still replace the default password.
+	tg = map[string]any{"telegram_ticket": a.signIn(signed(62, "Aziz", a.clock.now())).body["telegram_ticket"]}
+	r = a.botCheck(62, "+998902001234", forSignup(tg))
+	if u, _ := r.body["user"].(map[string]any); r.body["status"] != "signed_in" || u["id"] != float64(1) || u["must_change_password"] != true || u["telegram"] != true {
+		t.Errorf("same Telegram, enrolled owner: %d %v", r.status, r.body)
+	}
+
+	// A Telegram identity, but someone else's Telegram shares the phone: the
+	// usual answers.
+	tg = map[string]any{"telegram_ticket": a.signIn(signed(63, "X", a.clock.now())).body["telegram_ticket"]}
+	r = a.botCheck(64, "+998903000021", forSignup(tg))
+	if account, _ := r.body["account"].(map[string]any); r.body["status"] != "verified" || account["status"] != StatusRegistered {
+		t.Fatalf("different Telegram: %v", r.body)
+	}
+	if r := a.do("POST", "/v1/auth/signup", "", signupBody(r.body["ticket"].(string), tg, nil, nil, nil)); r.code() != CodePhoneTaken {
+		t.Errorf("phone_taken: %d %v", r.status, r.body)
+	}
+	tg = map[string]any{"telegram_ticket": a.signIn(signed(65, "Y", a.clock.now())).body["telegram_ticket"]}
+	r = a.botCheck(66, "+998901000010", forSignup(tg))
+	if account, _ := r.body["account"].(map[string]any); r.body["status"] != "verified" || account["status"] != StatusEnrolled {
+		t.Errorf("different Telegram, enrolled: %v", r.body)
+	}
+
+	// No stealing: Telegram 60 is the first account's; a reset of the
+	// teacher's phone through the bot from it leaves the link where it is.
+	r = a.botCheck(60, "+998901000010", map[string]any{"purpose": "reset"})
+	r = a.do("POST", "/v1/auth/reset", "", map[string]string{"ticket": r.body["ticket"].(string), "password": "teacher reset"})
+	if u, _ := r.body["user"].(map[string]any); r.status != http.StatusOK || u["kind"] != "teacher" || u["telegram"] != false {
+		t.Errorf("reset: %d %v", r.status, r.body)
+	}
+	if r := a.signIn(signed(60, "Bot", a.clock.now())); r.body["user"].(map[string]any)["phone"] != "+998903000020" {
+		t.Errorf("the link moved: %v", r.body)
+	}
+	// A free Telegram account is linked by a reset.
+	r = a.botCheck(67, "+998901000010", map[string]any{"purpose": "reset"})
+	r = a.do("POST", "/v1/auth/reset", "", map[string]string{"ticket": r.body["ticket"].(string), "password": "teacher again"})
+	if u, _ := r.body["user"].(map[string]any); u["telegram"] != true {
+		t.Errorf("reset links: %v", r.body)
+	}
+}

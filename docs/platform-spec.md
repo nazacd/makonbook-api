@@ -57,6 +57,7 @@ enrol).
 | D27 | Registered students **may sign in to the phone app** (no classes; DAY1–DAY10 open). | For now; **revisit** (the app was built for SAT MAKON's students). |
 | D28 | **Sign-up starts with an identity**: an **email** proved by a 6-digit code sent to it, or **Google**. The **phone** (SMS code) comes second, verified *with* that identity, and only then is the account made or linked. Each identity can show the owner of **one phone at most** (`identity_spent` after). People can sign in with their email too. Phone-first sign-up is gone. | 2026-11-06. Stops a phone number from being looked up without an email or Google account behind it; only the web used phone-first sign-up. |
 | D29 | **Telegram** is a third identity (the Login Widget) and a **free way to prove the phone** next to SMS: the sign-in bot (its own bot) asks for the person's **own contact**; only +998 numbers. | 2026-11-06. Saves SMS costs; Telegram is widespread in Uzbekistan. |
+| D30 | **A phone shared through the bot links that Telegram account** to whoever signs up or resets with it (never taken from someone else active, never replacing another link). A sign-up whose Telegram identity is the **same Telegram account that shared the phone** signs straight into the phone's owner, registered or enrolled. | 2026-11-07, after a free account owner coming back with Telegram was told "already exists". |
 
 ## 3. System overview
 
@@ -898,6 +899,13 @@ is; (3) `/v1/auth/signup` with the phone ticket and the same identity.
   `{status: "pending"}` or, once, `{status: "verified", phone, ticket, account}` — the same phone ticket as an
   SMS verify, `account` for `signup` only (and it spends the identity the same way); `410 code_expired` after
   10 minutes or once traded. A reset answers the same whether or not the number has an account.
+- **Same Telegram on both sides (D30)**: a `signup` check whose identity is a `telegram_ticket` of the
+  Telegram account that shared the phone, for a phone someone active has (registered or enrolled), answers
+  `{status: "signed_in", token, expires_at, user}` instead: signed into the owner, the tickets spent, the
+  Telegram account linked if free (no `phone_taken`). Other identities and SMS checks are as above.
+- **Links from bot checks (D30)**: the phone ticket of a bot check remembers the Telegram account
+  (`auth_tickets.checked_telegram_id`); `/v1/auth/signup` and `/v1/auth/reset` link it to the person they sign
+  in, unless it is linked to someone else active or the person has another Telegram account (then nothing).
 - **Webhook**: `POST /v1/telegram/webhook`, refused (403) without `X-Telegram-Bot-Api-Secret-Token` =
   the secret. Registered with `makonbook telegram webhook <public API URL>` (`setWebhook`, updates: messages).
 

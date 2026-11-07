@@ -402,7 +402,16 @@ paths:
         which spends the identity as an SMS verify does). For `reset` it
         answers the same whether or not anyone signs in with the number
         (`/v1/auth/reset` then says `no_account`). After it answered
-        `verified`, or after 10 minutes: `410 code_expired`.
+        `verified` or `signed_in`, or after 10 minutes: `410 code_expired`.
+
+        `signed_in`: a `signup` whose identity is a `telegram_ticket` of the
+        same Telegram account that shared the phone, for a phone someone
+        active has (registered or enrolled), signs straight into them
+        (Telegram vouches for both): the tickets are spent and the Telegram
+        account is linked if free. The ticket of a bot check also links its
+        Telegram account to whoever `/v1/auth/signup` or `/v1/auth/reset`
+        then signs in, when that account isn't linked to someone else and
+        they have no other.
       operationId: checkTelegramPhone
       tags: [accounts]
       requestBody:
@@ -414,13 +423,21 @@ paths:
               required: [nonce]
               properties:
                 nonce: { type: string }
+                device_id: { type: string, maxLength: 100 }
       responses:
         "200":
-          description: Pending, or verified
+          description: Pending, verified, or signed in
           content:
             application/json:
               schema:
                 oneOf:
+                  - type: object
+                    required: [status, token, expires_at, user]
+                    properties:
+                      status: { type: string, enum: [signed_in] }
+                      token: { type: string }
+                      expires_at: { type: string, format: date-time }
+                      user: { $ref: "#/components/schemas/Profile" }
                   - type: object
                     required: [status]
                     properties:

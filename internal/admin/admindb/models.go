@@ -91,20 +91,21 @@ type AuthSession struct {
 }
 
 type AuthTicket struct {
-	TokenHash        []byte
-	Purpose          string
-	Phone            pgtype.Text
-	GoogleSub        pgtype.Text
-	Email            pgtype.Text
-	FirstName        pgtype.Text
-	LastName         pgtype.Text
-	CreatedAt        pgtype.Timestamptz
-	ExpiresAt        pgtype.Timestamptz
-	UsedAt           pgtype.Timestamptz
-	Identity         []byte
-	RevealedPhone    pgtype.Text
-	TelegramID       pgtype.Int8
-	TelegramUsername pgtype.Text
+	TokenHash         []byte
+	Purpose           string
+	Phone             pgtype.Text
+	GoogleSub         pgtype.Text
+	Email             pgtype.Text
+	FirstName         pgtype.Text
+	LastName          pgtype.Text
+	CreatedAt         pgtype.Timestamptz
+	ExpiresAt         pgtype.Timestamptz
+	UsedAt            pgtype.Timestamptz
+	Identity          []byte
+	RevealedPhone     pgtype.Text
+	TelegramID        pgtype.Int8
+	TelegramUsername  pgtype.Text
+	CheckedTelegramID pgtype.Int8
 }
 
 type Credential struct {
