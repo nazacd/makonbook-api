@@ -280,7 +280,7 @@ func (q *Queries) GetLiveSession(ctx context.Context, tokenHash []byte) (GetLive
 }
 
 const getTelegramCheck = `-- name: GetTelegramCheck :one
-SELECT purpose, identity, identity_purpose, phone, expires_at, verified_at, used_at
+SELECT purpose, identity, identity_purpose, phone, telegram_user_id, expires_at, verified_at, used_at
 FROM telegram_phone_checks WHERE nonce_hash = $1
 `
 
@@ -289,6 +289,7 @@ type GetTelegramCheckRow struct {
 	Identity        []byte
 	IdentityPurpose pgtype.Text
 	Phone           pgtype.Text
+	TelegramUserID  pgtype.Int8
 	ExpiresAt       pgtype.Timestamptz
 	VerifiedAt      pgtype.Timestamptz
 	UsedAt          pgtype.Timestamptz
@@ -302,6 +303,7 @@ func (q *Queries) GetTelegramCheck(ctx context.Context, nonceHash []byte) (GetTe
 		&i.Identity,
 		&i.IdentityPurpose,
 		&i.Phone,
+		&i.TelegramUserID,
 		&i.ExpiresAt,
 		&i.VerifiedAt,
 		&i.UsedAt,
@@ -486,24 +488,25 @@ func (q *Queries) InsertTelegramLink(ctx context.Context, arg InsertTelegramLink
 
 const insertTicket = `-- name: InsertTicket :exec
 INSERT INTO auth_tickets (token_hash, purpose, phone, google_sub, email, first_name, last_name, identity,
-                          telegram_id, telegram_username, created_at, expires_at)
+                          telegram_id, telegram_username, checked_telegram_id, created_at, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10, $11, $12)
+        $9, $10, $11, $12, $13)
 `
 
 type InsertTicketParams struct {
-	TokenHash        []byte
-	Purpose          string
-	Phone            pgtype.Text
-	GoogleSub        pgtype.Text
-	Email            pgtype.Text
-	FirstName        pgtype.Text
-	LastName         pgtype.Text
-	Identity         []byte
-	TelegramID       pgtype.Int8
-	TelegramUsername pgtype.Text
-	CreatedAt        pgtype.Timestamptz
-	ExpiresAt        pgtype.Timestamptz
+	TokenHash         []byte
+	Purpose           string
+	Phone             pgtype.Text
+	GoogleSub         pgtype.Text
+	Email             pgtype.Text
+	FirstName         pgtype.Text
+	LastName          pgtype.Text
+	Identity          []byte
+	TelegramID        pgtype.Int8
+	TelegramUsername  pgtype.Text
+	CheckedTelegramID pgtype.Int8
+	CreatedAt         pgtype.Timestamptz
+	ExpiresAt         pgtype.Timestamptz
 }
 
 func (q *Queries) InsertTicket(ctx context.Context, arg InsertTicketParams) error {
@@ -518,6 +521,7 @@ func (q *Queries) InsertTicket(ctx context.Context, arg InsertTicketParams) erro
 		arg.Identity,
 		arg.TelegramID,
 		arg.TelegramUsername,
+		arg.CheckedTelegramID,
 		arg.CreatedAt,
 		arg.ExpiresAt,
 	)
@@ -783,7 +787,8 @@ func (q *Queries) OpenTelegramCheck(ctx context.Context, arg OpenTelegramCheckPa
 }
 
 const peekTicket = `-- name: PeekTicket :one
-SELECT phone, google_sub, email, first_name, last_name, identity, revealed_phone, telegram_id, telegram_username
+SELECT phone, google_sub, email, first_name, last_name, identity, revealed_phone, telegram_id, telegram_username,
+       checked_telegram_id
 FROM auth_tickets
 WHERE token_hash = $1 AND purpose = $2 AND used_at IS NULL AND expires_at > $3::timestamptz
 `
@@ -795,15 +800,16 @@ type PeekTicketParams struct {
 }
 
 type PeekTicketRow struct {
-	Phone            pgtype.Text
-	GoogleSub        pgtype.Text
-	Email            pgtype.Text
-	FirstName        pgtype.Text
-	LastName         pgtype.Text
-	Identity         []byte
-	RevealedPhone    pgtype.Text
-	TelegramID       pgtype.Int8
-	TelegramUsername pgtype.Text
+	Phone             pgtype.Text
+	GoogleSub         pgtype.Text
+	Email             pgtype.Text
+	FirstName         pgtype.Text
+	LastName          pgtype.Text
+	Identity          []byte
+	RevealedPhone     pgtype.Text
+	TelegramID        pgtype.Int8
+	TelegramUsername  pgtype.Text
+	CheckedTelegramID pgtype.Int8
 }
 
 // A ticket that can still be used, without using it (to check a request
@@ -821,6 +827,7 @@ func (q *Queries) PeekTicket(ctx context.Context, arg PeekTicketParams) (PeekTic
 		&i.RevealedPhone,
 		&i.TelegramID,
 		&i.TelegramUsername,
+		&i.CheckedTelegramID,
 	)
 	return i, err
 }
@@ -1199,7 +1206,8 @@ func (q *Queries) UseTelegramCheck(ctx context.Context, arg UseTelegramCheckPara
 const useTicket = `-- name: UseTicket :one
 UPDATE auth_tickets SET used_at = $1::timestamptz
 WHERE token_hash = $2 AND purpose = $3 AND used_at IS NULL AND expires_at > $1::timestamptz
-RETURNING phone, google_sub, email, first_name, last_name, identity, revealed_phone, telegram_id, telegram_username
+RETURNING phone, google_sub, email, first_name, last_name, identity, revealed_phone, telegram_id, telegram_username,
+          checked_telegram_id
 `
 
 type UseTicketParams struct {
@@ -1209,15 +1217,16 @@ type UseTicketParams struct {
 }
 
 type UseTicketRow struct {
-	Phone            pgtype.Text
-	GoogleSub        pgtype.Text
-	Email            pgtype.Text
-	FirstName        pgtype.Text
-	LastName         pgtype.Text
-	Identity         []byte
-	RevealedPhone    pgtype.Text
-	TelegramID       pgtype.Int8
-	TelegramUsername pgtype.Text
+	Phone             pgtype.Text
+	GoogleSub         pgtype.Text
+	Email             pgtype.Text
+	FirstName         pgtype.Text
+	LastName          pgtype.Text
+	Identity          []byte
+	RevealedPhone     pgtype.Text
+	TelegramID        pgtype.Int8
+	TelegramUsername  pgtype.Text
+	CheckedTelegramID pgtype.Int8
 }
 
 func (q *Queries) UseTicket(ctx context.Context, arg UseTicketParams) (UseTicketRow, error) {
@@ -1233,6 +1242,7 @@ func (q *Queries) UseTicket(ctx context.Context, arg UseTicketParams) (UseTicket
 		&i.RevealedPhone,
 		&i.TelegramID,
 		&i.TelegramUsername,
+		&i.CheckedTelegramID,
 	)
 	return i, err
 }

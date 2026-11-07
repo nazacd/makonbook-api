@@ -254,7 +254,16 @@ export interface paths {
          *     which spends the identity as an SMS verify does). For `reset` it
          *     answers the same whether or not anyone signs in with the number
          *     (`/v1/auth/reset` then says `no_account`). After it answered
-         *     `verified`, or after 10 minutes: `410 code_expired`.
+         *     `verified` or `signed_in`, or after 10 minutes: `410 code_expired`.
+         *
+         *     `signed_in`: a `signup` whose identity is a `telegram_ticket` of the
+         *     same Telegram account that shared the phone, for a phone someone
+         *     active has (registered or enrolled), signs straight into them
+         *     (Telegram vouches for both): the tickets are spent and the Telegram
+         *     account is linked if free. The ticket of a bot check also links its
+         *     Telegram account to whoever `/v1/auth/signup` or `/v1/auth/reset`
+         *     then signs in, when that account isn't linked to someone else and
+         *     they have no other.
          */
         post: operations["checkTelegramPhone"];
         delete?: never;
@@ -3134,17 +3143,25 @@ export interface operations {
             content: {
                 "application/json": {
                     nonce: string;
+                    device_id?: string;
                 };
             };
         };
         responses: {
-            /** @description Pending, or verified */
+            /** @description Pending, verified, or signed in */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": {
+                        /** @enum {string} */
+                        status: "signed_in";
+                        token: string;
+                        /** Format: date-time */
+                        expires_at: string;
+                        user: components["schemas"]["Profile"];
+                    } | {
                         /** @enum {string} */
                         status: "pending";
                     } | {

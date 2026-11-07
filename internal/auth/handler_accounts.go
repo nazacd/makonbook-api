@@ -476,15 +476,24 @@ func (h *Handler) telegramCheckStart(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) telegramCheck(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Nonce string `json:"nonce"`
+		Nonce    string `json:"nonce"`
+		DeviceID string `json:"device_id"`
 	}
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	res, err := h.svc.CheckTelegram(r.Context(), req.Nonce)
+	if len(req.DeviceID) > 100 {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "device_id too long")
+		return
+	}
+	res, err := h.svc.CheckTelegram(r.Context(), req.Nonce, req.DeviceID)
 	switch {
 	case h.codeError(w, r, err):
 	case h.accountsError(w, r, "telegram check", err):
+	case res.SignedIn != nil:
+		if resp, ok := h.loggedIn(w, r, *res.SignedIn); ok {
+			httpx.WriteJSON(w, r, http.StatusOK, googleSignedIn{Status: "signed_in", loginResponse: resp})
+		}
 	case !res.Verified:
 		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"status": "pending"})
 	default:

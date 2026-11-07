@@ -139,21 +139,23 @@ WHERE id = @id AND used_at IS NULL;
 
 -- name: InsertTicket :exec
 INSERT INTO auth_tickets (token_hash, purpose, phone, google_sub, email, first_name, last_name, identity,
-                          telegram_id, telegram_username, created_at, expires_at)
+                          telegram_id, telegram_username, checked_telegram_id, created_at, expires_at)
 VALUES (@token_hash, @purpose, @phone, @google_sub, @email, @first_name, @last_name, @identity,
-        @telegram_id, @telegram_username, @created_at, @expires_at);
+        @telegram_id, @telegram_username, @checked_telegram_id, @created_at, @expires_at);
 
 -- A ticket that can still be used, without using it (to check a request
 -- before changing anything).
 -- name: PeekTicket :one
-SELECT phone, google_sub, email, first_name, last_name, identity, revealed_phone, telegram_id, telegram_username
+SELECT phone, google_sub, email, first_name, last_name, identity, revealed_phone, telegram_id, telegram_username,
+       checked_telegram_id
 FROM auth_tickets
 WHERE token_hash = @token_hash AND purpose = @purpose AND used_at IS NULL AND expires_at > @now::timestamptz;
 
 -- name: UseTicket :one
 UPDATE auth_tickets SET used_at = @now::timestamptz
 WHERE token_hash = @token_hash AND purpose = @purpose AND used_at IS NULL AND expires_at > @now::timestamptz
-RETURNING phone, google_sub, email, first_name, last_name, identity, revealed_phone, telegram_id, telegram_username;
+RETURNING phone, google_sub, email, first_name, last_name, identity, revealed_phone, telegram_id, telegram_username,
+          checked_telegram_id;
 
 -- name: DeleteOldPhoneCodes :execrows
 DELETE FROM phone_codes WHERE created_at < @before::timestamptz;
@@ -284,7 +286,7 @@ WHERE nonce_hash = (
     ORDER BY c.created_at DESC LIMIT 1);
 
 -- name: GetTelegramCheck :one
-SELECT purpose, identity, identity_purpose, phone, expires_at, verified_at, used_at
+SELECT purpose, identity, identity_purpose, phone, telegram_user_id, expires_at, verified_at, used_at
 FROM telegram_phone_checks WHERE nonce_hash = @nonce_hash;
 
 -- name: UseTelegramCheck :execrows
