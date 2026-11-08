@@ -11,6 +11,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const choosePhoto = `-- name: ChoosePhoto :exec
+INSERT INTO credentials (person_kind, person_id, photo_id, photo_chosen)
+VALUES ($1, $2, $3, true)
+ON CONFLICT (person_kind, person_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, photo_chosen = true
+`
+
+type ChoosePhotoParams struct {
+	PersonKind string
+	PersonID   int32
+	PhotoID    pgtype.Text
+}
+
+// The person's own choice (an upload, or none): the automatic copy stops.
+func (q *Queries) ChoosePhoto(ctx context.Context, arg ChoosePhotoParams) error {
+	_, err := q.db.Exec(ctx, choosePhoto, arg.PersonKind, arg.PersonID, arg.PhotoID)
+	return err
+}
+
 const clearEmail = `-- name: ClearEmail :exec
 UPDATE credentials SET email = NULL WHERE email = $1
 `
@@ -164,6 +182,15 @@ func (q *Queries) DeletePersonTelegram(ctx context.Context, arg DeletePersonTele
 	return err
 }
 
+const deletePhoto = `-- name: DeletePhoto :exec
+DELETE FROM photos WHERE id = $1
+`
+
+func (q *Queries) DeletePhoto(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, deletePhoto, id)
+	return err
+}
+
 const deleteTelegramLink = `-- name: DeleteTelegramLink :exec
 DELETE FROM telegram_links WHERE telegram_id = $1
 `
@@ -222,7 +249,8 @@ func (q *Queries) EmailOwner(ctx context.Context, email pgtype.Text) (EmailOwner
 }
 
 const getCredential = `-- name: GetCredential :one
-SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email, photo_id
+SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email, photo_id,
+       photo_chosen
 FROM credentials
 WHERE person_kind = $1 AND person_id = $2
 `
@@ -245,12 +273,14 @@ func (q *Queries) GetCredential(ctx context.Context, arg GetCredentialParams) (C
 		&i.LockedUntil,
 		&i.Email,
 		&i.PhotoID,
+		&i.PhotoChosen,
 	)
 	return i, err
 }
 
 const getCredentialByUsername = `-- name: GetCredentialByUsername :one
-SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email, photo_id
+SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email, photo_id,
+       photo_chosen
 FROM credentials
 WHERE username = $1
 `
@@ -268,6 +298,7 @@ func (q *Queries) GetCredentialByUsername(ctx context.Context, username pgtype.T
 		&i.LockedUntil,
 		&i.Email,
 		&i.PhotoID,
+		&i.PhotoChosen,
 	)
 	return i, err
 }

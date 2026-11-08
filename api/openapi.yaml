@@ -749,13 +749,67 @@ paths:
           description: "`telegram_unavailable`"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/me/photo:
+    put:
+      summary: Set your own photo (the raw image as the body)
+      description: |
+        Everyone signed in (students and teachers, with or without a phone,
+        even on the default password). JPEG, PNG or WebP, at most 512 KB;
+        what the bytes are counts, not the header, and the image must decode
+        (not necessarily square). It gets a new address (`photo_url`; old
+        ones are cached forever); the previous photo is deleted. From then on
+        Google's or Telegram's picture is never copied over it. 20 uploads an
+        hour per person.
+      operationId: setMyPhoto
+      tags: [accounts]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          image/jpeg: { schema: { type: string, format: binary } }
+          image/png: { schema: { type: string, format: binary } }
+          image/webp: { schema: { type: string, format: binary } }
+      responses:
+        "200":
+          description: The profile, with the new photo_url
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "401": { $ref: "#/components/responses/Error" }
+        "413":
+          description: "`photo_too_large`: over 512 KB"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_photo`: not a JPEG, PNG or WebP image that decodes"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "429":
+          description: "`rate_limited`"
+          headers:
+            Retry-After: { schema: { type: integer } }
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    delete:
+      summary: Remove your photo
+      description: The photo is deleted; Google's or Telegram's picture isn't copied again.
+      operationId: removeMyPhoto
+      tags: [accounts]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The profile, with photo_url null
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Profile" }
+        "401": { $ref: "#/components/responses/Error" }
+
   /v1/photos/{id}:
     get:
       summary: A profile photo (no token; long cache)
       description: |
-        The `photo_url` of a profile. A copy of the Google or Telegram picture
-        (JPEG, PNG or WebP, at most 512 KB), served from the API's origin so
-        pages that load images from their own origin only can show it.
+        The `photo_url` of a profile: one the person uploaded, or a copy of
+        the Google or Telegram picture (JPEG, PNG or WebP, at most 512 KB),
+        served from the API's origin so pages that load images from their own
+        origin only can show it. A photo never changes (a new one gets a new
+        id), hence the year-long immutable cache.
       operationId: photo
       tags: [accounts]
       parameters:
@@ -3425,6 +3479,8 @@ components:
                 - telegram_no_phone
                 - phone_already_set
                 - phone_required
+                - photo_too_large
+                - invalid_photo
                 - google_unavailable
                 - enrolled_only
             message:

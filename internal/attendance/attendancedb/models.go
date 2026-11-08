@@ -122,6 +122,7 @@ type Credential struct {
 	LockedUntil       pgtype.Timestamptz
 	Email             pgtype.Text
 	PhotoID           pgtype.Text
+	PhotoChosen       bool
 }
 
 type DataQualityIssue struct {

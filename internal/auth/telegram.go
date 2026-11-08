@@ -387,13 +387,22 @@ func (s *Service) MyPhoneTelegram(ctx context.Context, pr Principal, ticket, dev
 	if !pt.SharedPhone.Valid {
 		return LoginResult{}, ErrNoTelegramPhone
 	}
-	return s.applyPhone(ctx, u, pt.SharedPhone.String, func(q *authdb.Queries) (*TelegramAccount, error) {
+	res, err := s.applyPhone(ctx, u, pt.SharedPhone.String, func(q *authdb.Queries) (*TelegramAccount, error) {
 		t, err := s.useTicket(ctx, q, ticket, ticketTelegramVerify, now)
 		if err != nil {
 			return nil, err
 		}
 		return t.telegram, nil
 	}, deviceID)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	// The Telegram picture, for whoever has the phone now (the owner after a
+	// merge), if they have no photo and never chose one.
+	if p, err := s.people.Get(ctx, res.Principal.Kind, res.Principal.ID); err == nil {
+		s.ensurePhoto(ctx, p, pt.PhotoUrl.String)
+	}
+	return res, nil
 }
 
 // linkTelegramIfFree links the Telegram account to p unless it is linked to

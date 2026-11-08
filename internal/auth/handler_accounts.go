@@ -2,6 +2,7 @@ package auth
 
 import (
 	"errors"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -33,6 +34,8 @@ const (
 	CodeTelegramNoPhone     = "telegram_no_phone"
 	CodePhoneAlreadySet     = "phone_already_set"
 	CodePhoneRequired       = "phone_required"
+	CodePhotoTooLarge       = "photo_too_large"
+	CodeInvalidPhoto        = "invalid_photo"
 )
 
 func (h *Handler) registerAccounts(mux *http.ServeMux) {
@@ -53,6 +56,9 @@ func (h *Handler) registerAccounts(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/me/phone/telegram", h.Require(h.myPhoneTelegram))
 	mux.HandleFunc("PUT /v1/me/profile", h.Require(h.setProfile))
 	mux.HandleFunc("GET "+photoPath+"{id}", h.servePhoto)
+	// Everyone signed in, with or without a phone or a password of their own.
+	mux.HandleFunc("PUT /v1/me/photo", h.RequireAllowingDefaultPassword(h.setPhoto))
+	mux.HandleFunc("DELETE /v1/me/photo", h.RequireAllowingDefaultPassword(h.removePhoto))
 }
 
 // RequireContent is Require for the content (practice, vocabulary): a
@@ -415,6 +421,37 @@ func (h *Handler) setProfile(w http.ResponseWriter, r *http.Request) {
 	h.me(w, r)
 }
 
+// --- Own photo --------------------------------------------------------------------
+
+// setPhoto takes the photo as the raw body (image/jpeg, image/png or
+// image/webp, at most 512 KB); its bytes decide what it is.
+func (h *Handler) setPhoto(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r.Context())
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxPhotoBytes+1))
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) || len(data) > maxPhotoBytes {
+		httpx.WriteError(w, r, http.StatusRequestEntityTooLarge, CodePhotoTooLarge, ErrPhotoTooLarge.Error())
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "couldn't read the photo")
+		return
+	}
+	err = h.svc.SetMyPhoto(r.Context(), p, data)
+	if h.limited(w, r, err) || h.accountsError(w, r, "set photo", err) {
+		return
+	}
+	h.me(w, r)
+}
+
+func (h *Handler) removePhoto(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r.Context())
+	if err := h.svc.RemoveMyPhoto(r.Context(), p); h.accountsError(w, r, "remove photo", err) {
+		return
+	}
+	h.me(w, r)
+}
+
 // --- Shared -----------------------------------------------------------------------
 
 // answerLogin answers a new session (LoginResponse), or the error.
@@ -507,6 +544,10 @@ func (h *Handler) accountsError(w http.ResponseWriter, r *http.Request, what str
 		httpx.WriteError(w, r, http.StatusConflict, CodeGoogleTaken, err.Error())
 	case errors.Is(err, ErrEmailTaken):
 		httpx.WriteError(w, r, http.StatusConflict, CodeEmailTaken, err.Error())
+	case errors.Is(err, ErrPhotoTooLarge):
+		httpx.WriteError(w, r, http.StatusRequestEntityTooLarge, CodePhotoTooLarge, err.Error())
+	case errors.Is(err, ErrInvalidPhoto):
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidPhoto, err.Error())
 	case errors.Is(err, ErrPhoneSet):
 		httpx.WriteError(w, r, http.StatusConflict, CodePhoneAlreadySet, err.Error())
 	default:

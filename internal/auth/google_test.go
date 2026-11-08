@@ -198,7 +198,7 @@ func TestGoogleSignUpAndSignIn(t *testing.T) {
 	r := a.trade(v.Get("ticket"))
 	user, _ := r.body["user"].(map[string]any)
 	if r.status != http.StatusOK || r.body["token"] == "" || user["status"] != StatusRegistered || user["phone"] != nil ||
-		user["email"] != "g-1@gmail.com" || user["google"] != true || user["has_password"] != false || user["first_name"] != "Malika" {
+		user["email"] != "g-1@gmail.com" || user["google"] != true || user["has_password"] != false || user["first_name"] != "Malika" || user["photo_url"] == nil {
 		t.Fatalf("trade: %d %v", r.status, r.body)
 	}
 	if r := a.trade(v.Get("ticket")); r.code() != CodeInvalidTicket {
