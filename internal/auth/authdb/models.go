@@ -597,6 +597,14 @@ type TelegramPhoneCheck struct {
 	UsedAt          pgtype.Timestamptz
 }
 
+type UniversityLogo struct {
+	Slug        string
+	ContentType string
+	Body        []byte
+	Sha256      string
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type VocabDeck struct {
 	Singleton bool
 	Version   string

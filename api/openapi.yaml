@@ -1933,6 +1933,32 @@ paths:
           description: "`invalid_answers`"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/logos/{slug}:
+    get:
+      summary: A roadmap stop's university logo
+      description: |
+        No sign-in (for `<img>`). Spec 22.7. SVG, PNG or WebP with its
+        content type; `ETag` is its sha-256 (If-None-Match → 304) and
+        `Cache-Control: public, max-age=86400`. Every answer carries
+        `X-Content-Type-Options: nosniff` and `Content-Security-Policy:
+        default-src 'none'; style-src 'unsafe-inline'; img-src data:;
+        sandbox`. Link it with the `logo_url` the roadmap gives.
+      operationId: getLogo
+      tags: [roadmaps]
+      parameters:
+        - { name: slug, in: path, required: true, schema: { type: string, example: queen-s-university } }
+      responses:
+        "200":
+          description: The logo
+          content:
+            image/svg+xml: { schema: { type: string } }
+            image/png: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        "304": { description: Unchanged (If-None-Match) }
+        "404":
+          description: No logo for this slug
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /v1/me/parent-code:
     get:
       summary: The student's parent code
@@ -3363,22 +3389,26 @@ components:
           oneOf:
             - type: "null"
             - type: object
-              required: [unit_id, unit_title, lesson_id, lesson_title, university]
+              required: [unit_id, unit_title, lesson_id, lesson_title, university, logo_url]
               properties:
                 unit_id: { type: string }
                 unit_title: { type: string }
                 lesson_id: { type: string }
                 lesson_title: { type: string }
                 university: { type: string }
+                logo_url: { type: [string, "null"], description: "The university's logo: /v1/logos/{slug}?v=…, relative to the API; null if none" }
         free_units: { type: [integer, "null"], description: "Free accounts: how many units are open (the first country's); null for enrolled students" }
 
     RoadmapStop:
       type: object
-      required: [university, city, country]
+      required: [university, city, country, logo_url]
       properties:
         university: { type: string }
         city: { type: string }
         country: { type: string }
+        logo_url:
+          type: [string, "null"]
+          description: "The university's logo, /v1/logos/{slug}?v=<first 8 of its sha-256> (relative to the API; the version changes with the file, so it can be cached); null if none"
 
     Roadmap:
       allOf:

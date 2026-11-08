@@ -1280,6 +1280,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/logos/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A roadmap stop's university logo
+         * @description No sign-in (for `<img>`). Spec 22.7. SVG, PNG or WebP with its
+         *     content type; `ETag` is its sha-256 (If-None-Match → 304) and
+         *     `Cache-Control: public, max-age=86400`. Every answer carries
+         *     `X-Content-Type-Options: nosniff` and `Content-Security-Policy:
+         *     default-src 'none'; style-src 'unsafe-inline'; img-src data:;
+         *     sandbox`. Link it with the `logo_url` the roadmap gives.
+         */
+        get: operations["getLogo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/parent-code": {
         parameters: {
             query?: never;
@@ -2463,6 +2488,8 @@ export interface components {
                 lesson_id: string;
                 lesson_title: string;
                 university: string;
+                /** @description The university's logo: /v1/logos/{slug}?v=…, relative to the API; null if none */
+                logo_url: string | null;
             };
             /** @description Free accounts: how many units are open (the first country's); null for enrolled students */
             free_units: number | null;
@@ -2471,6 +2498,8 @@ export interface components {
             university: string;
             city: string;
             country: string;
+            /** @description The university's logo, /v1/logos/{slug}?v=<first 8 of its sha-256> (relative to the API; the version changes with the file, so it can be cached); null if none */
+            logo_url: string | null;
         };
         Roadmap: components["schemas"]["RoadmapSummary"] & {
             countries: {
@@ -5723,6 +5752,46 @@ export interface operations {
             };
             /** @description `invalid_answers` */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getLogo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The logo */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/svg+xml": string;
+                    "image/png": string;
+                    "image/webp": string;
+                };
+            };
+            /** @description Unchanged (If-None-Match) */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No logo for this slug */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

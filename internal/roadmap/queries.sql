@@ -75,3 +75,14 @@ UPDATE roadmap_assessments SET answers = @answers WHERE id = @id;
 UPDATE roadmap_assessments
 SET answers = @answers, finished_at = now(), correct = @correct, total = @total, percent = @percent
 WHERE id = @id;
+
+-- name: LogoHashes :many
+SELECT slug, sha256 FROM university_logos;
+
+-- name: GetLogo :one
+SELECT content_type, body, sha256 FROM university_logos WHERE slug = @slug;
+
+-- name: SaveLogo :exec
+INSERT INTO university_logos (slug, content_type, body, sha256) VALUES (@slug, @content_type, @body, @sha256)
+ON CONFLICT (slug) DO UPDATE SET content_type = excluded.content_type, body = excluded.body,
+    sha256 = excluded.sha256, updated_at = now();

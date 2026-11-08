@@ -111,6 +111,23 @@ func (q *Queries) GetAssessment(ctx context.Context, id pgtype.UUID) (RoadmapAss
 	return i, err
 }
 
+const getLogo = `-- name: GetLogo :one
+SELECT content_type, body, sha256 FROM university_logos WHERE slug = $1
+`
+
+type GetLogoRow struct {
+	ContentType string
+	Body        []byte
+	Sha256      string
+}
+
+func (q *Queries) GetLogo(ctx context.Context, slug string) (GetLogoRow, error) {
+	row := q.db.QueryRow(ctx, getLogo, slug)
+	var i GetLogoRow
+	err := row.Scan(&i.ContentType, &i.Body, &i.Sha256)
+	return i, err
+}
+
 const getOnboarding = `-- name: GetOnboarding :one
 SELECT answers, updated_at FROM onboarding WHERE student_client_id = $1
 `
@@ -363,6 +380,35 @@ func (q *Queries) LockAssessment(ctx context.Context, id pgtype.UUID) (RoadmapAs
 	return i, err
 }
 
+const logoHashes = `-- name: LogoHashes :many
+SELECT slug, sha256 FROM university_logos
+`
+
+type LogoHashesRow struct {
+	Slug   string
+	Sha256 string
+}
+
+func (q *Queries) LogoHashes(ctx context.Context) ([]LogoHashesRow, error) {
+	rows, err := q.db.Query(ctx, logoHashes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LogoHashesRow
+	for rows.Next() {
+		var i LogoHashesRow
+		if err := rows.Scan(&i.Slug, &i.Sha256); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const openAssessment = `-- name: OpenAssessment :one
 SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent FROM roadmap_assessments
 WHERE student_client_id = $1 AND lesson_id = $2 AND kind = $3
@@ -453,6 +499,29 @@ type SaveAnswersParams struct {
 
 func (q *Queries) SaveAnswers(ctx context.Context, arg SaveAnswersParams) error {
 	_, err := q.db.Exec(ctx, saveAnswers, arg.Answers, arg.ID)
+	return err
+}
+
+const saveLogo = `-- name: SaveLogo :exec
+INSERT INTO university_logos (slug, content_type, body, sha256) VALUES ($1, $2, $3, $4)
+ON CONFLICT (slug) DO UPDATE SET content_type = excluded.content_type, body = excluded.body,
+    sha256 = excluded.sha256, updated_at = now()
+`
+
+type SaveLogoParams struct {
+	Slug        string
+	ContentType string
+	Body        []byte
+	Sha256      string
+}
+
+func (q *Queries) SaveLogo(ctx context.Context, arg SaveLogoParams) error {
+	_, err := q.db.Exec(ctx, saveLogo,
+		arg.Slug,
+		arg.ContentType,
+		arg.Body,
+		arg.Sha256,
+	)
 	return err
 }
 

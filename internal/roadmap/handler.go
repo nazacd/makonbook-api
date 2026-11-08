@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/nazacd/makonbook-api/internal/auth"
@@ -52,6 +53,31 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/me/assessments/{id}", h.requireContent(h.assessment))
 	mux.HandleFunc("PUT /v1/me/assessments/{id}/answers", h.requireContent(h.saveAnswers))
 	mux.HandleFunc("POST /v1/me/assessments/{id}/submit", h.requireContent(h.submit))
+	mux.HandleFunc("GET /v1/logos/{slug}", h.logo)
+}
+
+// logoCSP keeps an SVG logo from running anything, even opened on its own.
+const logoCSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox"
+
+// logo serves a university's logo (no sign-in: the web shows it in <img>).
+func (h *Handler) logo(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", logoCSP)
+	l, err := h.svc.Logo(r.Context(), r.PathValue("slug"))
+	if err != nil {
+		h.fail(w, r, "logo", err)
+		return
+	}
+	etag := `"` + l.SHA256 + `"`
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	if r.Header.Get("If-None-Match") == etag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", l.ContentType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(l.Body)))
+	_, _ = w.Write(l.Body)
 }
 
 func (h *Handler) who(r *http.Request) (Who, auth.Principal) {

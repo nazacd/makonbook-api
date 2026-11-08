@@ -271,7 +271,7 @@ func TestLay(t *testing.T) {
 	if l.freeUnits == nil || *l.freeUnits != 1 {
 		t.Errorf("free units: %v", l.freeUnits)
 	}
-	sum := summaryOf(assignment{course: &c, source: SourceOnboarding}, l)
+	sum := summaryOf(assignment{course: &c, source: SourceOnboarding}, l, nil)
 	if sum.LessonsDone != 2 || sum.UnitsDone != 1 || sum.LessonsTotal != 4 || sum.UnitsTotal != 3 || sum.Current == nil ||
 		sum.Current.LessonID != "m-2-1" || sum.Title != "Math · Foundation" {
 		t.Errorf("free summary: %+v", sum)
@@ -279,7 +279,7 @@ func TestLay(t *testing.T) {
 
 	// Enrolled, everything done: no current lesson.
 	p.best["m-3-1"], p.homework["m-3-1"] = 100, map[int]bool{0: true}
-	sum = summaryOf(assignment{course: &c, source: SourceGroup}, lay(&c, false, p))
+	sum = summaryOf(assignment{course: &c, source: SourceGroup}, lay(&c, false, p), nil)
 	if sum.Current != nil || sum.LessonsDone != 4 || sum.UnitsDone != 3 || sum.FreeUnits != nil {
 		t.Errorf("all done: %+v", sum)
 	}

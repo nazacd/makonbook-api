@@ -63,6 +63,7 @@ enrol).
 | D33 | **Roadmaps** (section 22): SAT MAKON's curriculum is **imported from files, never committed**, one version per change, progress **kept by lesson id**. Enrolled students get the courses their **groups' disciplines** teach; registered students choose through **onboarding** and get the **first country free**. | 2026-11-10, for the web. |
 | D34 | A roadmap lesson is **done** when its **level check is passed (≥ 70 %)** and **every homework set is finished at any score**; lessons open **one after another in course order**. Level checks and homework are **drawn from the approved bank and graded on the server**, preferring questions the student hasn't had. | 2026-11-10. |
 | D35 | Onboarding levels: a section score **below 450 → Foundation, 450–590 → Pre-SAT, 600+ → Advanced**; a total counts half for each section; no score → Foundation. | 2026-11-10. |
+| D36 | **University logos** on the roadmap stops are used **with the universities' permission** (confirmed by SAT MAKON) and, as trademarks in a public repo, **never committed**: they are loaded from the server's curriculum folder into the database and served by the API. | 2026-11-10. |
 
 ## 3. System overview
 
@@ -717,6 +718,7 @@ GET  /v1/me/roadmaps                   the student's roadmaps; GET …/{id} with
 GET  /v1/me/roadmaps/{id}/lessons/{lessonId}              a lesson, its level check and homework
 POST /v1/me/roadmaps/{id}/lessons/{lessonId}/assessments  start or continue one
 GET  /v1/me/assessments/{id}           PUT …/answers saves; POST …/submit grades
+GET  /v1/logos/{slug}                  a stop's university logo (no sign-in)
 
 # vocabulary (phase 4)
 GET  /v1/vocab/deck?have=              every list and word (or "unchanged")
@@ -1007,4 +1009,21 @@ roadmap_choices     (student_client_id, roadmap_id, created_at)                 
 roadmap_assessments (id uuid, student_client_id, roadmap_id, lesson_id, kind, homework_index,
                      question_ids uuid[], answers jsonb, created_at, finished_at, correct, total, percent)
 figure_files        (key PK, file → practice_published_images)                            practice's
+university_logos    (slug PK, content_type, body bytea, sha256, updated_at)               22.7
 ```
+
+### 22.7 University logos (D36)
+- Used with the universities' permission; trademarks, so **never committed**. They sit in `logos/` beside the
+  curriculum files on the server, one per university, named `<slug>.svg|.png|.webp`, where the slug
+  (`roadmap.Slug`) is the stop's university name in lower case, accents folded to ASCII, each run of anything
+  but letters and digits a `-`, trimmed ("Queen's University" → `queen-s-university`).
+- `curriculum import` loads the logos whose slug is a university of the imported courses: the bytes decide (an
+  SVG must be well-formed XML with an `<svg>` root; PNG and WebP must decode), at most 1 MB. A changed file
+  replaces the stored one; the same one is left alone; anything else is skipped with its reason. It lists the
+  universities still without a logo; `curriculum logos` lists every university's slug and whether it has one.
+- `GET /v1/logos/{slug}` (no sign-in): the bytes with their type, `ETag` = the sha-256, `Cache-Control: public,
+  max-age=86400`; every answer (404 too) carries `X-Content-Type-Options: nosniff` and `Content-Security-Policy:
+  default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox`, so an SVG opened on its own runs
+  nothing.
+- `stop.logo_url` on each unit of `GET /v1/me/roadmaps/{id}`, and `current.logo_url` in the summaries:
+  `/v1/logos/{slug}?v=<first 8 of the sha>` (relative, the API's origin; a new logo is a new URL), or null.

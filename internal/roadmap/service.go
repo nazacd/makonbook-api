@@ -329,12 +329,14 @@ type Current struct {
 	LessonID    string `json:"lesson_id"`
 	LessonTitle string `json:"lesson_title"`
 	University  string `json:"university"`
+	// LogoURL is the university's logo (/v1/logos/…, same origin), or null.
+	LogoURL *string `json:"logo_url"`
 }
 
 var subjectNames = map[string]string{"math": "Math", "english": "English"}
 var levelNames = map[string]string{"foundation": "Foundation", "pre-sat": "Pre-SAT", "advanced": "Advanced"}
 
-func summaryOf(a assignment, l layout) Summary {
+func summaryOf(a assignment, l layout, logos map[string]string) Summary {
 	c := a.course
 	sum := Summary{
 		ID: c.ID(), Subject: c.Subject, Level: c.Level, Title: subjectNames[c.Subject] + " · " + levelNames[c.Level],
@@ -353,7 +355,7 @@ func summaryOf(a assignment, l layout) Summary {
 		} else if sum.Current == nil {
 			sum.Current = &Current{
 				UnitID: pl.unit.ID, UnitTitle: pl.unit.Title, LessonID: pl.lesson.ID, LessonTitle: pl.lesson.Title,
-				University: pl.unit.Stop.University,
+				University: pl.unit.Stop.University, LogoURL: logoURL(logos, pl.unit.Stop.University),
 			}
 		}
 	}
@@ -374,8 +376,12 @@ func (s *Service) Roadmaps(ctx context.Context, who Who, today time.Time) ([]Sum
 	if err != nil {
 		return nil, err
 	}
+	logos, err := s.logoHashes(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for _, a := range as {
-		out = append(out, summaryOf(a, lay(a.course, who.Registered, p)))
+		out = append(out, summaryOf(a, lay(a.course, who.Registered, p), logos))
 	}
 	return out, nil
 }
@@ -402,10 +408,17 @@ type UnitView struct {
 	Title   string       `json:"title"`
 	Domain  string       `json:"domain"`
 	Summary string       `json:"summary"`
-	Stop    Stop         `json:"stop"`
+	Stop    StopView     `json:"stop"`
 	Status  string       `json:"status"`
 	Lock    *string      `json:"lock"`
 	Lessons []LessonItem `json:"lessons"`
+}
+
+// StopView is a unit's stop with its university's logo (/v1/logos/…, same
+// origin), or null.
+type StopView struct {
+	Stop
+	LogoURL *string `json:"logo_url"`
 }
 
 // LessonItem is a lesson on the map.
@@ -456,7 +469,11 @@ func (s *Service) Roadmap(ctx context.Context, who Who, id string, today time.Ti
 		return Detail{}, err
 	}
 	c := a.course
-	d := Detail{Summary: summaryOf(a, l), Countries: []CountryView{}, Units: []UnitView{}}
+	logos, err := s.logoHashes(ctx)
+	if err != nil {
+		return Detail{}, err
+	}
+	d := Detail{Summary: summaryOf(a, l, logos), Countries: []CountryView{}, Units: []UnitView{}}
 	for _, co := range c.Countries {
 		cv := CountryView{ID: co.ID, Name: co.Name, Units: co.Units}
 		if code, ok := countryCodes[co.ID]; ok {
@@ -467,7 +484,8 @@ func (s *Service) Roadmap(ctx context.Context, who Who, id string, today time.Ti
 	for _, us := range l.units {
 		u := us.unit
 		uv := UnitView{
-			ID: u.ID, Title: u.Title, Domain: u.Domain, Summary: u.Summary, Stop: u.Stop, Status: us.status, Lock: us.lock,
+			ID: u.ID, Title: u.Title, Domain: u.Domain, Summary: u.Summary, Stop: StopView{Stop: u.Stop, LogoURL: logoURL(logos, u.Stop.University)},
+			Status: us.status, Lock: us.lock,
 			Lessons: []LessonItem{},
 		}
 		for li := range u.Lessons {
