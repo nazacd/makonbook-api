@@ -1,406 +1,300 @@
 package auth
 
 import (
-	"bytes"
-	"crypto/hmac"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
-	"sort"
+	"net/url"
 	"strings"
 	gosync "sync"
 	"testing"
 	"time"
 )
 
-const (
-	tgToken  = "123456:test-token"
-	tgSecret = "webhook-secret-for-tests"
-)
-
-// fakeBotAPI is the Bot API: it records each call (method and JSON body).
-type fakeBotAPI struct {
+// fakeTelegram is oauth.telegram.org: the token endpoint (codes handed out by
+// the test, as the consent page would) and the JWKS, with an RSA key and an
+// EC key; tokens are signed with the one in alg.
+type fakeTelegram struct {
+	t     *testing.T
+	rsa   *rsa.PrivateKey
+	ec    *ecdsa.PrivateKey
 	mu    gosync.Mutex
-	calls []botCall
+	codes map[string]pendingCode
+	alg   string // RS256 (default) or ES256
+	forge bool   // sign with a key that isn't published
 }
 
-type botCall struct {
-	Method string
-	Body   map[string]any
-}
-
-func (f *fakeBotAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	method := strings.TrimPrefix(r.URL.Path, "/bot"+tgToken+"/")
-	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	f.mu.Lock()
-	f.calls = append(f.calls, botCall{method, body})
-	f.mu.Unlock()
-	_, _ = io.WriteString(w, `{"ok":true,"result":true}`)
-}
-
-func (f *fakeBotAPI) last(t *testing.T) botCall {
-	t.Helper()
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if len(f.calls) == 0 {
-		t.Fatal("no Bot API call")
+func newFakeTelegram(t *testing.T) *fakeTelegram {
+	r, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
 	}
-	return f.calls[len(f.calls)-1]
+	e, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &fakeTelegram{t: t, rsa: r, ec: e, codes: map[string]pendingCode{}, alg: "RS256"}
+}
+
+func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+
+func (f *fakeTelegram) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/jwks":
+		ecPub, err := f.ec.PublicKey.Bytes()
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]any{
+			{"kty": "RSA", "kid": "r1", "alg": "RS256", "use": "sig", "n": b64(f.rsa.N.Bytes()), "e": b64(big.NewInt(int64(f.rsa.E)).Bytes())},
+			{"kty": "EC", "kid": "e1", "crv": "P-256", "x": b64(ecPub[1:33]), "y": b64(ecPub[33:])},
+		}})
+	case "/token":
+		if err := r.ParseForm(); err != nil {
+			f.t.Error(err)
+		}
+		id, secret, ok := r.BasicAuth()
+		fm := r.PostForm
+		if !ok || id != "8123456789" || secret != "tg-secret" || fm.Get("grant_type") != "authorization_code" ||
+			fm.Get("client_id") != "8123456789" || fm.Get("redirect_uri") != "https://sat.example/v1/auth/telegram/callback" {
+			f.t.Errorf("token request: %v %v", r.Header.Get("Authorization"), fm)
+		}
+		f.mu.Lock()
+		c, found := f.codes[fm.Get("code")]
+		delete(f.codes, fm.Get("code"))
+		f.mu.Unlock()
+		sum := sha256.Sum256([]byte(fm.Get("code_verifier")))
+		if !found || b64(sum[:]) != c.challenge {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "x", "token_type": "Bearer", "expires_in": 3600, "id_token": f.sign(c.claims)})
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (f *fakeTelegram) sign(claims map[string]any) string {
+	kid := "r1"
+	if f.alg == "ES256" {
+		kid = "e1"
+	}
+	header, _ := json.Marshal(map[string]string{"alg": f.alg, "kid": kid, "typ": "JWT"})
+	payload, _ := json.Marshal(claims)
+	input := b64(header) + "." + b64(payload)
+	digest := sha256.Sum256([]byte(input))
+	var sig []byte
+	if f.alg == "ES256" {
+		rr, ss, err := ecdsa.Sign(rand.Reader, f.ec, digest[:])
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		sig = append(append(make([]byte, 32-len(rr.Bytes())), rr.Bytes()...), append(make([]byte, 32-len(ss.Bytes())), ss.Bytes()...)...)
+	} else {
+		key := f.rsa
+		if f.forge {
+			key, _ = rsa.GenerateKey(rand.Reader, 2048)
+		}
+		var err error
+		if sig, err = rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:]); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	return input + "." + b64(sig)
 }
 
 type tgAccounts struct {
-	accounts
-	bot *fakeBotAPI
+	googleAccounts
+	tg *fakeTelegram
 }
 
 func setupTelegram(t *testing.T) tgAccounts {
-	a := setupAccounts(t, nil)
-	bot := &fakeBotAPI{}
-	srv := httptest.NewServer(bot)
+	a := setupGoogle(t)
+	tg := newFakeTelegram(t)
+	srv := httptest.NewServer(tg)
 	t.Cleanup(srv.Close)
-	a.svc.WithTelegram(TelegramConfig{Token: tgToken, Username: "SatMakonBot", WebhookSecret: tgSecret, APIURL: srv.URL})
-	return tgAccounts{accounts: a, bot: bot}
+	a.svc.WithTelegram(TelegramConfig{ClientID: "8123456789", ClientSecret: "tg-secret", WebOrigin: "https://sat.example",
+		AuthURL: "https://oauth.example/auth", TokenURL: srv.URL + "/token", JWKSURL: srv.URL + "/jwks"})
+	a.svc.photos.allowHTTP = true
+	return tgAccounts{googleAccounts: a, tg: tg}
 }
 
-// signed is Login Widget data for a Telegram account, signed as Telegram
-// signs it.
-func signed(id int64, first string, at time.Time) map[string]any {
-	f := map[string]any{"id": id, "first_name": first, "last_name": "Yusupova", "username": "malika_y", "auth_date": at.Unix()}
-	var lines []string
-	for k, v := range f {
-		lines = append(lines, fmt.Sprintf("%s=%v", k, v))
+func (a tgAccounts) tgClaims(id int64, phone string) map[string]any {
+	c := map[string]any{"iss": "https://oauth.telegram.org", "aud": "8123456789", "sub": "x", "iat": a.clock.now().Unix(),
+		"exp": a.clock.now().Add(time.Hour).Unix(), "id": id, "name": "Diyora Abdullayeva", "given_name": "Diyora",
+		"family_name": "Abdullayeva", "preferred_username": "diyora"}
+	if phone != "" {
+		c["phone_number"], c["phone_number_verified"] = phone, true
 	}
-	sort.Strings(lines)
-	key := sha256.Sum256([]byte(tgToken))
-	m := hmac.New(sha256.New, key[:])
-	m.Write([]byte(strings.Join(lines, "\n")))
-	f["hash"] = hex.EncodeToString(m.Sum(nil))
-	return f
+	return c
 }
 
-func (a tgAccounts) signIn(auth map[string]any) response {
+// tgRoundTrip starts the flow (token: for verify), lets "Telegram" approve it
+// with claims, and returns the web page's query.
+func (a tgAccounts) tgRoundTrip(purpose, token string, claims map[string]any) url.Values {
 	a.t.Helper()
-	return a.do("POST", "/v1/auth/telegram", "", map[string]any{"auth": auth})
+	r := a.do("POST", "/v1/auth/telegram/start", token, map[string]any{"purpose": purpose, "return": "/practice"})
+	if r.status != http.StatusOK {
+		a.t.Fatalf("start: %d %v", r.status, r.body)
+	}
+	at, _ := url.Parse(r.body["url"].(string))
+	q := at.Query()
+	if at.Host != "oauth.example" || q.Get("client_id") != "8123456789" || q.Get("scope") != "openid profile phone" ||
+		q.Get("redirect_uri") != "https://sat.example/v1/auth/telegram/callback" || q.Get("code_challenge_method") != "S256" {
+		a.t.Fatalf("auth url = %s", at)
+	}
+	code := "code-" + q.Get("state")[:8]
+	a.tg.mu.Lock()
+	a.tg.codes[code] = pendingCode{challenge: q.Get("code_challenge"), claims: claims}
+	a.tg.mu.Unlock()
+	return a.tgCallback("?state=" + url.QueryEscape(q.Get("state")) + "&code=" + code)
 }
 
-// webhook posts an update as Telegram would.
-func (a tgAccounts) webhook(secret string, update map[string]any) int {
+func (a tgAccounts) tgCallback(query string) url.Values {
 	a.t.Helper()
-	b, _ := json.Marshal(update)
-	req, _ := http.NewRequestWithContext(a.t.Context(), http.MethodPost, a.srv.URL+TelegramWebhookPath, bytes.NewReader(b))
-	req.Header.Set("X-Telegram-Bot-Api-Secret-Token", secret)
-	resp, err := a.srv.Client().Do(req)
-	if err != nil {
-		a.t.Fatal(err)
+	resp := a.get(TelegramCallbackPath+query, nil)
+	page, rawQuery, _ := strings.Cut(resp.location, "?")
+	if resp.status != http.StatusFound || page != "https://sat.example/auth/telegram" {
+		a.t.Fatalf("callback: %d %q", resp.status, resp.location)
 	}
-	_ = resp.Body.Close()
-	return resp.StatusCode
+	v, _ := url.ParseQuery(rawQuery)
+	return v
 }
 
-func message(from int64, text string, contact map[string]any) map[string]any {
-	m := map[string]any{"message_id": 1, "from": map[string]any{"id": from, "first_name": "M"},
-		"chat": map[string]any{"id": from, "type": "private"}, "text": text}
-	if contact != nil {
-		m["contact"] = contact
+func (a tgAccounts) tgSignIn(claims map[string]any) response {
+	a.t.Helper()
+	v := a.tgRoundTrip(TelegramSignIn, "", claims)
+	if v.Get("purpose") != TelegramSignIn || v.Get("return") != "/practice" || v.Get("ticket") == "" {
+		a.t.Fatalf("callback query = %v", v)
 	}
-	return map[string]any{"update_id": 1, "message": m}
+	return a.do("POST", "/v1/auth/telegram/ticket", "", map[string]string{"ticket": v.Get("ticket")})
 }
 
-func TestTelegramAuthHash(t *testing.T) {
+func TestTelegramCallbackChecks(t *testing.T) {
 	a := setupTelegram(t)
-	now := a.clock.now()
-	raw := func(m map[string]any) json.RawMessage { b, _ := json.Marshal(m); return b }
-	if acc, err := a.svc.checkTelegramAuth(raw(signed(777, "Malika", now.Add(-time.Hour)))); err != nil || acc.ID != 777 || acc.Username != "malika_y" {
-		t.Errorf("good: %+v %v", acc, err)
+	if v := a.tgCallback("?state=forged&code=x"); v.Get("error") != TelegramFailed {
+		t.Errorf("unknown state: %v", v)
 	}
-	tampered := signed(777, "Malika", now)
-	tampered["first_name"] = "Someone"
-	stale := signed(777, "Malika", now.Add(-25*time.Hour))
-	noHash := signed(777, "Malika", now)
-	delete(noHash, "hash")
-	for name, m := range map[string]map[string]any{"tampered": tampered, "stale": stale, "no hash": noHash} {
-		if _, err := a.svc.checkTelegramAuth(raw(m)); !errors.Is(err, ErrInvalidTelegram) {
-			t.Errorf("%s: %v", name, err)
+	r := a.do("POST", "/v1/auth/telegram/start", "", map[string]any{"purpose": "signin"})
+	st, _ := url.Parse(r.body["url"].(string))
+	if v := a.tgCallback("?state=" + url.QueryEscape(st.Query().Get("state")) + "&error=access_denied"); v.Get("error") != TelegramDenied {
+		t.Errorf("declined: %v", v)
+	}
+	if r := a.do("POST", "/v1/auth/telegram/start", "", map[string]any{"purpose": "verify"}); r.status != http.StatusUnauthorized {
+		t.Errorf("verify without a session: %d", r.status)
+	}
+	for name, change := range map[string]func(map[string]any){
+		"audience": func(c map[string]any) { c["aud"] = "999" },
+		"issuer":   func(c map[string]any) { c["iss"] = "https://evil.example" },
+		"expired":  func(c map[string]any) { c["exp"] = a.clock.now().Add(-time.Minute).Unix() },
+		"no id":    func(c map[string]any) { delete(c, "id") },
+	} {
+		c := a.tgClaims(1, "")
+		change(c)
+		if v := a.tgRoundTrip(TelegramSignIn, "", c); v.Get("error") != TelegramFailed {
+			t.Errorf("%s: %v", name, v)
 		}
 	}
-	if r := a.signIn(tampered); r.status != http.StatusUnprocessableEntity || r.code() != CodeInvalidTelegram {
-		t.Errorf("tampered over HTTP: %d %v", r.status, r.body)
+	a.tg.forge = true
+	if v := a.tgRoundTrip(TelegramSignIn, "", a.tgClaims(1, "")); v.Get("error") != TelegramFailed {
+		t.Errorf("forged signature: %v", v)
+	}
+	a.tg.forge, a.tg.alg = false, "ES256"
+	if r := a.tgSignIn(a.tgClaims(1, "")); r.status != http.StatusOK {
+		t.Errorf("ES256: %d %v", r.status, r.body)
 	}
 }
 
 func TestTelegramSignIn(t *testing.T) {
 	a := setupTelegram(t)
-	r := a.signIn(signed(777, "Malika", a.clock.now()))
-	if r.status != http.StatusOK || r.body["status"] != "needs_phone" || r.body["first_name"] != "Malika" ||
-		r.body["last_name"] != "Yusupova" || r.body["telegram_ticket"] == "" {
-		t.Fatalf("needs phone: %d %v", r.status, r.body)
-	}
-	id := map[string]any{"telegram_ticket": r.body["telegram_ticket"]}
+	img := photoServer(t)
 
-	// Telegram as the identity; no password needed.
-	ticket := a.ticket("+998903000011", PurposeSignup, id)
-	r = a.do("POST", "/v1/auth/signup", "", signupBody(ticket, id, "Malika", "Yusupova", nil))
-	if u, _ := r.body["user"].(map[string]any); r.status != http.StatusOK || u["telegram"] != true || u["has_password"] != false || u["status"] != StatusRegistered {
-		t.Fatalf("signup: %d %v", r.status, r.body)
+	// c) New, with the phone shared (any country) and a photo.
+	c := a.tgClaims(7001, "971501234567")
+	c["picture"] = img.URL + "/tg.jpg"
+	r := a.tgSignIn(c)
+	u, _ := r.body["user"].(map[string]any)
+	if r.status != http.StatusOK || u["status"] != StatusRegistered || u["phone"] != "+971501234567" || u["telegram"] != true ||
+		u["first_name"] != "Diyora" || u["last_name"] != "Abdullayeva" || u["has_password"] != false {
+		t.Fatalf("new: %d %v", r.status, r.body)
 	}
-	userID := r.body["user"].(map[string]any)["id"]
-
-	// Linked: Telegram signs them in.
-	r = a.signIn(signed(777, "Malika", a.clock.now()))
-	if r.status != http.StatusOK || r.body["status"] != "signed_in" || r.body["token"] == "" || r.body["user"].(map[string]any)["id"] != userID {
-		t.Errorf("signed in: %d %v", r.status, r.body)
+	if me := a.do("GET", "/v1/me", r.body["token"].(string), nil); me.body["photo_url"] == nil {
+		t.Errorf("no photo: %v", me.body)
 	}
-
-	// A new Telegram account shows one phone's owner at most.
-	other := map[string]any{"telegram_ticket": a.signIn(signed(888, "Aziz", a.clock.now())).body["telegram_ticket"]}
-	if r := a.verified("+998902001234", PurposeSignup, other); r.body["account"].(map[string]any)["status"] != StatusEnrolled {
-		t.Errorf("enrolled: %v", r.body)
-	}
-	a.clock.add(2 * time.Minute)
-	a.start("+998901000010", PurposeSignup)
-	if r := a.verify("+998901000010", a.sms.code(t, "+998901000010", 1), PurposeSignup, other); r.code() != CodeIdentitySpent {
-		t.Errorf("spent: %d %v", r.status, r.body)
-	}
-
-	// Account 777 again, from a second tab before the link: taken by then.
-	stale := map[string]any{"telegram_ticket": a.signIn(signed(999, "X", a.clock.now())).body["telegram_ticket"]}
-	if r := a.do("POST", "/v1/auth/signup", "", signupBody(a.ticket("+998903000012", PurposeSignup, stale), stale, "X", "Y", nil)); r.status != http.StatusOK {
-		t.Fatalf("999's signup: %d %v", r.status, r.body)
-	}
-	if _, err := a.pool.Exec(t.Context(), "INSERT INTO auth_tickets (token_hash, purpose, telegram_id, created_at, expires_at) VALUES ($1, 'telegram_signup', 999, now(), now() + interval '1 hour')",
-		hashToken("second-tab")); err != nil {
-		t.Fatal(err)
-	}
-	second := map[string]any{"telegram_ticket": "second-tab"}
-	ticket = a.ticket("+998902001234", PurposeSignup, second)
-	if r := a.do("POST", "/v1/auth/signup", "", signupBody(ticket, second, nil, nil, nil)); r.status != http.StatusConflict || r.code() != CodeTelegramTaken {
-		t.Errorf("taken: %d %v", r.status, r.body)
-	}
-}
-
-func TestTelegramPhoneCheck(t *testing.T) {
-	a := setupTelegram(t)
-	start := func(body map[string]any) response { return a.do("POST", "/v1/auth/phone/telegram/start", "", body) }
-	check := func(nonce any) response {
-		return a.do("POST", "/v1/auth/phone/telegram/check", "", map[string]any{"nonce": nonce})
-	}
-
-	if r := start(map[string]any{"purpose": "signup"}); r.code() != CodeInvalidTicket {
-		t.Errorf("no identity: %d %v", r.status, r.body)
-	}
-	id := a.emailID("aziz@example.com")
-	body := map[string]any{"purpose": "signup"}
-	for k, v := range id {
-		body[k] = v
-	}
-	r := start(body)
-	nonce, _ := r.body["nonce"].(string)
-	if r.status != http.StatusOK || r.body["link"] != "https://t.me/SatMakonBot?start="+nonce || r.body["expires_in"] != float64(600) {
-		t.Fatalf("start: %d %v", r.status, r.body)
-	}
-	if r := check(nonce); r.status != http.StatusOK || r.body["status"] != "pending" {
-		t.Errorf("pending: %d %v", r.status, r.body)
-	}
-
-	// The webhook: only Telegram, with the secret.
-	if code := a.webhook("wrong", message(42, "/start "+nonce, nil)); code != http.StatusForbidden {
-		t.Errorf("wrong secret: %d", code)
-	}
-	if code := a.webhook(tgSecret, message(42, "/start "+nonce, nil)); code != http.StatusOK {
-		t.Fatalf("start: %d", code)
-	}
-	call := a.bot.last(t)
-	kb, _ := json.Marshal(call.Body["reply_markup"])
-	if call.Method != "sendMessage" || call.Body["chat_id"] != float64(42) || !strings.Contains(string(kb), `"request_contact":true`) ||
-		!strings.Contains(string(kb), "Share my number") {
-		t.Errorf("start reply: %+v", call)
-	}
-	// Someone else's contact, a foreign number, then their own.
-	a.webhook(tgSecret, message(42, "", map[string]any{"phone_number": "998902001234", "first_name": "A", "user_id": 43}))
-	if c := a.bot.last(t); c.Body["text"] != tgNotOwn {
-		t.Errorf("another's contact: %+v", c)
-	}
-	a.webhook(tgSecret, message(42, "", map[string]any{"phone_number": "12025550123", "first_name": "A", "user_id": 42}))
-	if c := a.bot.last(t); c.Body["text"] != tgNotUzbek {
-		t.Errorf("foreign number: %+v", c)
-	}
-	if r := check(nonce); r.body["status"] != "pending" {
-		t.Errorf("still pending: %v", r.body)
-	}
-	a.webhook(tgSecret, message(42, "", map[string]any{"phone_number": "998902001234", "first_name": "A", "user_id": 42}))
-	if c := a.bot.last(t); c.Body["text"] != tgDone || c.Body["reply_markup"].(map[string]any)["remove_keyboard"] != true {
-		t.Errorf("own contact: %+v", c)
-	}
-	a.webhook(tgSecret, message(42, "hello", nil))
-	if c := a.bot.last(t); c.Body["text"] != tgOther {
-		t.Errorf("anything else: %+v", c)
-	}
-
-	// Verified: the phone ticket (with whose it is), once.
-	r = check(nonce)
-	account, _ := r.body["account"].(map[string]any)
-	if r.status != http.StatusOK || r.body["status"] != "verified" || r.body["phone"] != "+998902001234" || r.body["ticket"] == "" ||
-		account["status"] != StatusEnrolled || account["name"] != "Aziz K." {
-		t.Fatalf("verified: %d %v", r.status, r.body)
-	}
-	if r := check(nonce); r.status != http.StatusGone || r.code() != CodeCodeExpired {
-		t.Errorf("used twice: %d %v", r.status, r.body)
-	}
-	if r := a.do("POST", "/v1/auth/signup", "", signupBody(r.body["ticket"].(string), id, nil, nil, "aziz password")); r.status != http.StatusOK || r.body["existing"] != true {
-		t.Errorf("signup with the bot's ticket: %d %v", r.status, r.body)
-	}
-
-	// Expired.
-	r = start(map[string]any{"purpose": "reset"})
-	a.clock.add(11 * time.Minute)
-	if r := check(r.body["nonce"]); r.code() != CodeCodeExpired {
-		t.Errorf("expired: %d %v", r.status, r.body)
-	}
-}
-
-// A password reset with the bot instead of an SMS code.
-func TestTelegramReset(t *testing.T) {
-	a := setupTelegram(t)
-	viaBot := func(user int64, phone string) map[string]any {
-		r := a.do("POST", "/v1/auth/phone/telegram/start", "", map[string]any{"purpose": "reset"})
-		nonce := r.body["nonce"].(string)
-		a.webhook(tgSecret, message(user, "/start "+nonce, nil))
-		a.webhook(tgSecret, message(user, "", map[string]any{"phone_number": phone, "user_id": user}))
-		r = a.do("POST", "/v1/auth/phone/telegram/check", "", map[string]any{"nonce": nonce})
-		if r.body["status"] != "verified" {
-			t.Fatalf("check: %d %v", r.status, r.body)
-		}
-		if _, said := r.body["account"]; said {
-			t.Errorf("a reset says whose the phone is: %v", r.body)
-		}
-		return r.body
-	}
-	v := viaBot(50, "+998902001234")
-	r := a.do("POST", "/v1/auth/reset", "", map[string]string{"ticket": v["ticket"].(string), "password": "reset by telegram"})
-	if r.status != http.StatusOK {
-		t.Fatalf("reset: %d %v", r.status, r.body)
-	}
-	a.mustLogin("+998902001234", "reset by telegram")
-	// Nobody's number: verified all the same; the reset says no_account.
-	v = viaBot(51, "998903000099")
-	if r := a.do("POST", "/v1/auth/reset", "", map[string]string{"ticket": v["ticket"].(string), "password": "whatever pass"}); r.code() != CodeNoAccount {
-		t.Errorf("nobody's: %d %v", r.status, r.body)
-	}
-}
-
-func TestTelegramWebhookCommand(t *testing.T) {
-	a := setupTelegram(t)
-	hook, err := a.svc.SetTelegramWebhook(t.Context(), "https://api.makonbook.uz/")
-	if err != nil || hook != "https://api.makonbook.uz/v1/telegram/webhook" {
-		t.Fatalf("%q %v", hook, err)
-	}
-	if c := a.bot.last(t); c.Method != "setWebhook" || c.Body["url"] != hook || c.Body["secret_token"] != tgSecret {
-		t.Errorf("call: %+v", c)
-	}
-}
-
-// botCheck proves phone through the bot from the Telegram account user, for
-// the start body (purpose and identity), and answers the check.
-func (a tgAccounts) botCheck(user int64, phone string, start map[string]any) response {
-	a.t.Helper()
-	r := a.do("POST", "/v1/auth/phone/telegram/start", "", start)
-	nonce, ok := r.body["nonce"].(string)
-	if !ok {
-		a.t.Fatalf("start: %d %v", r.status, r.body)
-	}
-	a.webhook(tgSecret, message(user, "/start "+nonce, nil))
-	a.webhook(tgSecret, message(user, "", map[string]any{"phone_number": phone, "user_id": user}))
-	return a.do("POST", "/v1/auth/phone/telegram/check", "", map[string]any{"nonce": nonce})
-}
-
-// forSignup is a sign-up check's start body with the identity.
-func forSignup(id map[string]any) map[string]any {
-	b := map[string]any{"purpose": PurposeSignup}
-	for k, v := range id {
-		b[k] = v
-	}
-	return b
-}
-
-// A phone shared through the bot links that Telegram account to whoever
-// signs up or resets with it, and the same Telegram account signs straight in.
-func TestTelegramCheckLinksTheAccount(t *testing.T) {
-	a := setupTelegram(t)
-
-	// Email sign-up, phone through the bot: Telegram 60 is linked.
-	id := a.emailID("bot@example.com")
-	v := a.botCheck(60, "+998903000020", forSignup(id))
-	r := a.do("POST", "/v1/auth/signup", "", signupBody(v.body["ticket"].(string), id, "Bot", "User", "a good password"))
-	if u, _ := r.body["user"].(map[string]any); r.status != http.StatusOK || u["telegram"] != true {
-		t.Fatalf("signup: %d %v", r.status, r.body)
-	}
-	if r := a.signIn(signed(60, "Bot", a.clock.now())); r.body["status"] != "signed_in" {
-		t.Errorf("telegram sign-in after the bot check: %v", r.body)
-	}
-
-	// The reported case: an account made with email and an SMS code, then
-	// "Continue with Telegram" and the same phone through the bot from that
-	// Telegram account: signed in, not "already exists".
-	email := a.emailID("free@example.com")
-	if r := a.do("POST", "/v1/auth/signup", "", signupBody(a.ticket("+998903000021", PurposeSignup, email), email, "Free", "Account", "a good password")); r.status != http.StatusOK {
-		t.Fatalf("free account: %d %v", r.status, r.body)
-	}
-	tg := map[string]any{"telegram_ticket": a.signIn(signed(61, "Free", a.clock.now())).body["telegram_ticket"]}
-	r = a.botCheck(61, "+998903000021", forSignup(tg))
-	if u, _ := r.body["user"].(map[string]any); r.status != http.StatusOK || r.body["status"] != "signed_in" || r.body["token"] == "" ||
-		u["status"] != StatusRegistered || u["telegram"] != true || u["phone"] != "+998903000021" {
-		t.Fatalf("same Telegram, registered owner: %d %v", r.status, r.body)
-	}
-	if r := a.signIn(signed(61, "Free", a.clock.now())); r.body["status"] != "signed_in" {
+	// a) Linked: the same account.
+	if r := a.tgSignIn(a.tgClaims(7001, "")); r.body["user"].(map[string]any)["id"] != u["id"] {
 		t.Errorf("linked: %v", r.body)
 	}
-	if r := a.do("POST", "/v1/auth/signup", "", signupBody("x", tg, "A", "B", nil)); r.code() != CodeInvalidTicket {
-		t.Errorf("the identity wasn't spent: %d %v", r.status, r.body)
+
+	// b) The phone is student 1's: Telegram is linked to them; must still
+	// replace the default password.
+	r = a.tgSignIn(a.tgClaims(7002, "998902001234"))
+	if u := r.body["user"].(map[string]any); u["id"] != float64(1) || u["telegram"] != true || u["must_change_password"] != true {
+		t.Errorf("by phone: %v", r.body)
+	}
+	// and a teacher's.
+	if r := a.tgSignIn(a.tgClaims(7003, "998901000010")); r.body["user"].(map[string]any)["kind"] != "teacher" {
+		t.Errorf("teacher: %v", r.body)
 	}
 
-	// And into an enrolled owner, who must still replace the default password.
-	tg = map[string]any{"telegram_ticket": a.signIn(signed(62, "Aziz", a.clock.now())).body["telegram_ticket"]}
-	r = a.botCheck(62, "+998902001234", forSignup(tg))
-	if u, _ := r.body["user"].(map[string]any); r.body["status"] != "signed_in" || u["id"] != float64(1) || u["must_change_password"] != true || u["telegram"] != true {
-		t.Errorf("same Telegram, enrolled owner: %d %v", r.status, r.body)
+	// No phone shared: an account without one (the content is locked).
+	r = a.tgSignIn(a.tgClaims(7004, ""))
+	u = r.body["user"].(map[string]any)
+	if u["phone"] != nil || u["status"] != StatusRegistered {
+		t.Fatalf("no phone: %v", r.body)
 	}
+	// a) again, now sharing a free phone: it becomes theirs.
+	if r := a.tgSignIn(a.tgClaims(7004, "998903000050")); r.body["user"].(map[string]any)["phone"] != "+998903000050" ||
+		r.body["user"].(map[string]any)["id"] != u["id"] {
+		t.Errorf("phone added at sign-in: %v", r.body)
+	}
+	if r := a.do("POST", "/v1/auth/telegram/ticket", "", map[string]string{"ticket": "nope"}); r.code() != CodeInvalidTicket {
+		t.Errorf("bad ticket: %d %v", r.status, r.body)
+	}
+}
 
-	// A Telegram identity, but someone else's Telegram shares the phone: the
-	// usual answers.
-	tg = map[string]any{"telegram_ticket": a.signIn(signed(63, "X", a.clock.now())).body["telegram_ticket"]}
-	r = a.botCheck(64, "+998903000021", forSignup(tg))
-	if account, _ := r.body["account"].(map[string]any); r.body["status"] != "verified" || account["status"] != StatusRegistered {
-		t.Fatalf("different Telegram: %v", r.body)
-	}
-	if r := a.do("POST", "/v1/auth/signup", "", signupBody(r.body["ticket"].(string), tg, nil, nil, nil)); r.code() != CodePhoneTaken {
-		t.Errorf("phone_taken: %d %v", r.status, r.body)
-	}
-	tg = map[string]any{"telegram_ticket": a.signIn(signed(65, "Y", a.clock.now())).body["telegram_ticket"]}
-	r = a.botCheck(66, "+998901000010", forSignup(tg))
-	if account, _ := r.body["account"].(map[string]any); r.body["status"] != "verified" || account["status"] != StatusEnrolled {
-		t.Errorf("different Telegram, enrolled: %v", r.body)
-	}
+// A signed-in person without a phone adds the one Telegram shares.
+func TestTelegramVerifyPhone(t *testing.T) {
+	a := setupTelegram(t)
+	token, u := a.emailSignup("tg.verify@example.com", "Verify")
 
-	// No stealing: Telegram 60 is the first account's; a reset of the
-	// teacher's phone through the bot from it leaves the link where it is.
-	r = a.botCheck(60, "+998901000010", map[string]any{"purpose": "reset"})
-	r = a.do("POST", "/v1/auth/reset", "", map[string]string{"ticket": r.body["ticket"].(string), "password": "teacher reset"})
-	if u, _ := r.body["user"].(map[string]any); r.status != http.StatusOK || u["kind"] != "teacher" || u["telegram"] != false {
-		t.Errorf("reset: %d %v", r.status, r.body)
+	// Telegram didn't share it.
+	v := a.tgRoundTrip(TelegramVerify, token, a.tgClaims(8001, ""))
+	if v.Get("purpose") != TelegramVerify {
+		t.Fatalf("callback: %v", v)
 	}
-	if r := a.signIn(signed(60, "Bot", a.clock.now())); r.body["user"].(map[string]any)["phone"] != "+998903000020" {
-		t.Errorf("the link moved: %v", r.body)
+	if r := a.do("POST", "/v1/me/phone/telegram", token, map[string]string{"ticket": v.Get("ticket")}); r.status != http.StatusUnprocessableEntity || r.code() != CodeTelegramNoPhone {
+		t.Errorf("no phone: %d %v", r.status, r.body)
 	}
-	// A free Telegram account is linked by a reset.
-	r = a.botCheck(67, "+998901000010", map[string]any{"purpose": "reset"})
-	r = a.do("POST", "/v1/auth/reset", "", map[string]string{"ticket": r.body["ticket"].(string), "password": "teacher again"})
-	if u, _ := r.body["user"].(map[string]any); u["telegram"] != true {
-		t.Errorf("reset links: %v", r.body)
+	// Another person's ticket.
+	other, _ := a.emailSignup("other@example.com", "Other")
+	v = a.tgRoundTrip(TelegramVerify, other, a.tgClaims(8002, "998903000060"))
+	if r := a.do("POST", "/v1/me/phone/telegram", token, map[string]string{"ticket": v.Get("ticket")}); r.code() != CodeInvalidTicket {
+		t.Errorf("someone else's ticket: %d %v", r.status, r.body)
+	}
+	// Their own, with a free number: theirs, Telegram linked.
+	v = a.tgRoundTrip(TelegramVerify, token, a.tgClaims(8003, "998903000061"))
+	r := a.do("POST", "/v1/me/phone/telegram", token, map[string]string{"ticket": v.Get("ticket")})
+	if me := r.body["user"]; r.status != http.StatusOK || me.(map[string]any)["phone"] != "+998903000061" || me.(map[string]any)["telegram"] != true ||
+		me.(map[string]any)["id"] != u["id"] {
+		t.Fatalf("verify: %d %v", r.status, r.body)
+	}
+	if r := a.do("POST", "/v1/auth/telegram/start", token, map[string]any{"purpose": "verify"}); r.code() != CodePhoneAlreadySet {
+		t.Errorf("verify with a phone: %d %v", r.status, r.body)
+	}
+	// Student 1's number: merged into them.
+	v = a.tgRoundTrip(TelegramVerify, other, a.tgClaims(8004, "998902001234"))
+	r = a.do("POST", "/v1/me/phone/telegram", other, map[string]string{"ticket": v.Get("ticket")})
+	if me := r.body["user"].(map[string]any); r.status != http.StatusOK || me["id"] != float64(1) || me["email"] != "other@example.com" || me["telegram"] != true {
+		t.Errorf("merge: %d %v", r.status, r.body)
 	}
 }

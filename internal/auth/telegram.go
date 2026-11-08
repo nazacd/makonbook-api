@@ -3,15 +3,14 @@ package auth
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
-	"sort"
-	"strconv"
+	"io"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -20,186 +19,387 @@ import (
 
 	"github.com/nazacd/makonbook-api/internal/auth/authdb"
 	"github.com/nazacd/makonbook-api/internal/people"
-	"github.com/nazacd/makonbook-api/internal/platform/telegram"
 )
 
-// Telegram (spec 21): a third identity, signed in with Telegram's Login
-// Widget (the web sends people to oauth.telegram.org and gets the signed
-// data back), and a free way to prove a phone: the sign-in bot (its own bot,
-// not the review bot's) asks for the person's own contact.
+// Telegram sign-in (spec 21.3): Telegram's OpenID Connect flow, run by the
+// API (authorization code with PKCE, scope "openid profile phone"). Telegram
+// shares the person's verified phone when they allow it. Two purposes:
+// signin (anyone) and verify (a signed-in person adding their phone).
+
+// Telegram's endpoints (oauth.telegram.org/.well-known/openid-configuration).
+//
+//nolint:gosec // G101: addresses, not credentials
+const (
+	TelegramAuthURL  = "https://oauth.telegram.org/auth"
+	TelegramTokenURL = "https://oauth.telegram.org/token"
+	TelegramJWKSURL  = "https://oauth.telegram.org/.well-known/jwks.json"
+	telegramIssuer   = "https://oauth.telegram.org"
+)
 
 const (
-	TelegramSignupTTL  = 30 * time.Minute // a Telegram account waiting for a phone
-	TelegramCheckTTL   = 10 * time.Minute // a phone check through the bot
-	telegramAuthMaxAge = 24 * time.Hour   // Login Widget data older than this is refused
-	// TelegramWebhookPath is where Telegram posts the bot's updates.
-	TelegramWebhookPath = "/v1/telegram/webhook"
+	// TelegramCallbackPath is where Telegram sends people back, on WebOrigin.
+	TelegramCallbackPath = "/v1/auth/telegram/callback"
+	telegramWebPath      = "/auth/telegram"
+	telegramStateTTL     = 10 * time.Minute
+	telegramTicketTTL    = 5 * time.Minute
 )
 
-var (
-	ErrTelegramOff     = errors.New("Telegram isn't available") //nolint:staticcheck // a product name
-	ErrInvalidTelegram = errors.New("the Telegram sign-in data isn't valid or is too old; try again")
-	ErrTelegramTaken   = errors.New("this Telegram account is linked to another account")
-	ErrBadWebhook      = errors.New("not from Telegram")
+// Telegram flow purposes.
+const (
+	TelegramSignIn = "signin"
+	TelegramVerify = "verify"
 )
 
-// TelegramConfig turns on Telegram.
+// Reasons the callback sends the web instead of a ticket (?error=…).
+const (
+	TelegramDenied = "telegram_denied"
+	TelegramFailed = "telegram_failed"
+)
+
+var ErrTelegramOff = errors.New("sign-in with Telegram isn't available")
+
+// TelegramConfig turns on Telegram sign-in.
 type TelegramConfig struct {
-	Token         string // the sign-in bot's, from @BotFather
-	Username      string // the bot's username, without @
-	WebhookSecret string // Telegram sends it with every update (setWebhook's secret_token)
-	APIURL        string // the Bot API; Telegram's when empty (tests use their own)
+	ClientID, ClientSecret string // from @BotFather → the bot → Login Widget
+	WebOrigin              string // its /v1/ is this API
+	// Telegram's endpoints unless set (tests use their own).
+	AuthURL, TokenURL, JWKSURL string
+	Client                     *http.Client // a client with a 15 s timeout when nil
 }
 
-type telegramBot struct {
+type telegramOIDC struct {
 	TelegramConfig
-	id  int64
-	bot *telegram.Bot
+	keys *jwks
 }
 
-// WithTelegram turns on Telegram sign-in and phone checks.
+// WithTelegram turns on Telegram sign-in.
 func (s *Service) WithTelegram(c TelegramConfig) *Service {
-	id, _ := strconv.ParseInt(strings.SplitN(c.Token, ":", 2)[0], 10, 64)
-	b := telegram.New(c.Token)
-	if c.APIURL != "" {
-		b.WithBaseURL(c.APIURL)
+	if c.AuthURL == "" {
+		c.AuthURL = TelegramAuthURL
 	}
-	s.telegram = &telegramBot{TelegramConfig: c, id: id, bot: b}
+	if c.TokenURL == "" {
+		c.TokenURL = TelegramTokenURL
+	}
+	if c.JWKSURL == "" {
+		c.JWKSURL = TelegramJWKSURL
+	}
+	if c.Client == nil {
+		c.Client = &http.Client{Timeout: 15 * time.Second}
+	}
+	s.telegram = &telegramOIDC{TelegramConfig: c, keys: &jwks{url: c.JWKSURL, client: c.Client}}
 	return s
 }
 
-// TelegramBot is the sign-in bot's public id (the token's number) and
-// username, for the Login Widget; ok is false when Telegram is off.
-func (s *Service) TelegramBot() (id int64, username string, ok bool) {
-	if s.telegram == nil {
-		return 0, "", false
-	}
-	return s.telegram.id, s.telegram.Username, true
-}
+// TelegramEnabled: Telegram sign-in is configured.
+func (s *Service) TelegramEnabled() bool { return s.telegram != nil }
 
-// TelegramAccount is a Telegram account as the Login Widget describes it.
+// TelegramAccount is a Telegram account as its ID token describes it.
 type TelegramAccount struct {
-	ID        int64
+	ID        int64 // Telegram's user id (the claim "id")
 	Username  string
 	FirstName string
 	LastName  string
+	Phone     string // E.164, when they shared it
+	PhotoURL  string
 }
 
-// checkTelegramAuth checks Login Widget data (Telegram's "Checking
-// authorization"): the hash is HMAC-SHA256 of the other fields, sorted, as
-// key=value lines, keyed with SHA-256 of the bot's token; auth_date within a
-// day.
-func (s *Service) checkTelegramAuth(raw json.RawMessage) (TelegramAccount, error) {
-	dec := json.NewDecoder(bytes.NewReader(raw))
+// TelegramStart begins Telegram's flow: the address to send the browser to.
+// verify needs the signed-in person (pr), whom the flow is tied to. The state
+// and the PKCE verifier stay on the server for 10 minutes.
+func (s *Service) TelegramStart(ctx context.Context, purpose string, pr *Principal, returnPath string) (string, error) {
+	t := s.telegram
+	if t == nil {
+		return "", ErrTelegramOff
+	}
+	state, err := randomString()
+	if err != nil {
+		return "", err
+	}
+	verifier, err := randomString()
+	if err != nil {
+		return "", err
+	}
+	now := s.now()
+	p := authdb.InsertOAuthStateParams{StateHash: hashToken(state), Purpose: purpose, Verifier: verifier,
+		ReturnPath: safeReturn(returnPath), CreatedAt: timestamp(now), ExpiresAt: timestamp(now.Add(telegramStateTTL))}
+	if purpose == TelegramVerify {
+		p.PersonKind = pgtype.Text{String: pr.Kind, Valid: true}
+		p.PersonID = pgtype.Int4{Int32: pr.ID, Valid: true}
+	}
+	if err := s.q.InsertOAuthState(ctx, p); err != nil {
+		return "", fmt.Errorf("store state: %w", err)
+	}
+	challenge := sha256.Sum256([]byte(verifier))
+	q := url.Values{
+		"client_id":             {t.ClientID},
+		"redirect_uri":          {t.WebOrigin + TelegramCallbackPath},
+		"response_type":         {"code"},
+		"scope":                 {"openid profile phone"},
+		"state":                 {state},
+		"code_challenge":        {base64.RawURLEncoding.EncodeToString(challenge[:])},
+		"code_challenge_method": {"S256"},
+	}
+	return t.AuthURL + "?" + q.Encode(), nil
+}
+
+// TelegramCallback finishes the round trip at Telegram and answers where to
+// send the browser: the web's /auth/telegram with ?ticket=…&purpose=…&return=…
+// or ?error=…; reason explains a failure, for the log.
+func (s *Service) TelegramCallback(ctx context.Context, query url.Values) (location string, reason error) {
+	t := s.telegram
+	fail := func(code string, err error) (string, error) {
+		return t.WebOrigin + telegramWebPath + "?error=" + code, err
+	}
+	now := s.now()
+	st, err := s.q.UseOAuthState(ctx, authdb.UseOAuthStateParams{StateHash: hashToken(query.Get("state")), Now: timestamp(now)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fail(TelegramFailed, errors.New("unknown, used or expired state"))
+	}
+	if err != nil {
+		return fail(TelegramFailed, err)
+	}
+	if e := query.Get("error"); e != "" {
+		if e == "access_denied" {
+			return fail(TelegramDenied, nil)
+		}
+		return fail(TelegramFailed, fmt.Errorf("telegram answered %q", e))
+	}
+	code := query.Get("code")
+	if code == "" {
+		return fail(TelegramFailed, errors.New("no code"))
+	}
+	acc, err := s.telegramExchange(ctx, code, st.Verifier)
+	if err != nil {
+		return fail(TelegramFailed, err)
+	}
+	td := ticketData{purpose: ticketTelegramSignin, telegram: &acc}
+	if st.Purpose == TelegramVerify {
+		td.purpose, td.personKind, td.personID = ticketTelegramVerify, st.PersonKind.String, st.PersonID.Int32
+	}
+	ticket, err := s.newTicket(ctx, s.q, td, telegramTicketTTL)
+	if err != nil {
+		return fail(TelegramFailed, err)
+	}
+	q := url.Values{"ticket": {ticket}, "purpose": {st.Purpose}, "return": {st.ReturnPath}}
+	return t.WebOrigin + telegramWebPath + "?" + q.Encode(), nil
+}
+
+// telegramExchange trades the code for Telegram's ID token (client secret by
+// Basic auth, PKCE verifier) and checks it: signature (JWKS), issuer,
+// audience, expiry.
+func (s *Service) telegramExchange(ctx context.Context, code, verifier string) (TelegramAccount, error) {
+	t := s.telegram
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {t.WebOrigin + TelegramCallbackPath},
+		"client_id":     {t.ClientID},
+		"code_verifier": {verifier},
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.TokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return TelegramAccount{}, err
+	}
+	req.SetBasicAuth(t.ClientID, t.ClientSecret)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	resp, err := t.Client.Do(req)
+	if err != nil {
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			err = uerr.Err
+		}
+		return TelegramAccount{}, fmt.Errorf("telegram token: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256<<10))
+	if err != nil {
+		return TelegramAccount{}, fmt.Errorf("telegram token: %w", err)
+	}
+	var tok struct {
+		IDToken string `json:"id_token"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &tok); err != nil || resp.StatusCode != http.StatusOK || tok.IDToken == "" {
+		return TelegramAccount{}, fmt.Errorf("telegram token: status %d %s", resp.StatusCode, tok.Error)
+	}
+	payload, err := t.keys.verify(ctx, tok.IDToken)
+	if err != nil {
+		return TelegramAccount{}, err
+	}
+	return s.telegramClaims(payload)
+}
+
+func (s *Service) telegramClaims(payload []byte) (TelegramAccount, error) {
+	var c struct {
+		Iss                 string          `json:"iss"`
+		Aud                 json.RawMessage `json:"aud"`
+		Exp                 json.Number     `json:"exp"`
+		ID                  json.Number     `json:"id"`
+		Name                string          `json:"name"`
+		GivenName           string          `json:"given_name"`
+		FamilyName          string          `json:"family_name"`
+		PreferredUsername   string          `json:"preferred_username"`
+		Picture             string          `json:"picture"`
+		PhoneNumber         string          `json:"phone_number"`
+		PhoneNumberVerified *bool           `json:"phone_number_verified"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(payload))
 	dec.UseNumber()
-	var fields map[string]any
-	if err := dec.Decode(&fields); err != nil || fields == nil {
-		return TelegramAccount{}, ErrInvalidTelegram
+	if err := dec.Decode(&c); err != nil {
+		return TelegramAccount{}, fmt.Errorf("id token: %w", err)
 	}
-	hash, _ := fields["hash"].(string)
-	var lines []string
-	for k, v := range fields {
-		if k == "hash" || v == nil {
-			continue
+	if c.Iss != telegramIssuer {
+		return TelegramAccount{}, fmt.Errorf("id token: issuer %q", c.Iss)
+	}
+	var aud json.Number
+	if json.Unmarshal(c.Aud, &aud) != nil || aud.String() != s.telegram.ClientID {
+		var str string
+		if json.Unmarshal(c.Aud, &str) != nil || str != s.telegram.ClientID {
+			return TelegramAccount{}, errors.New("id token: not for this client")
 		}
-		var val string
-		switch v := v.(type) {
-		case string:
-			val = v
-		case json.Number:
-			val = v.String()
-		case bool:
-			val = strconv.FormatBool(v)
-		default:
-			return TelegramAccount{}, ErrInvalidTelegram
+	}
+	if exp, err := c.Exp.Int64(); err != nil || s.now().Unix() >= exp {
+		return TelegramAccount{}, errors.New("id token: expired")
+	}
+	id, err := c.ID.Int64()
+	if err != nil || id == 0 {
+		return TelegramAccount{}, errors.New("id token: no user id (scope profile)")
+	}
+	first, last := strings.TrimSpace(c.GivenName), strings.TrimSpace(c.FamilyName)
+	if first == "" && last == "" {
+		first, last, _ = strings.Cut(strings.TrimSpace(c.Name), " ")
+	}
+	acc := TelegramAccount{ID: id, Username: c.PreferredUsername, FirstName: first, LastName: strings.TrimSpace(last)}
+	if strings.HasPrefix(c.Picture, "https://") || strings.HasPrefix(c.Picture, "http://") { // copyPhoto takes https only
+		acc.PhotoURL = c.Picture
+	}
+	if c.PhoneNumber != "" && (c.PhoneNumberVerified == nil || *c.PhoneNumberVerified) {
+		raw := strings.TrimSpace(c.PhoneNumber)
+		if !strings.HasPrefix(raw, "+") {
+			raw = "+" + raw
 		}
-		lines = append(lines, k+"="+val)
-	}
-	sort.Strings(lines)
-	key := sha256.Sum256([]byte(s.telegram.Token))
-	m := hmac.New(sha256.New, key[:])
-	m.Write([]byte(strings.Join(lines, "\n")))
-	want := hex.EncodeToString(m.Sum(nil))
-	if !hmac.Equal([]byte(strings.ToLower(hash)), []byte(want)) {
-		return TelegramAccount{}, ErrInvalidTelegram
-	}
-	num := func(k string) int64 {
-		n, _ := fields[k].(json.Number)
-		v, _ := n.Int64()
-		return v
-	}
-	str := func(k string) string { v, _ := fields[k].(string); return strings.TrimSpace(v) }
-	at := time.Unix(num("auth_date"), 0)
-	if now := s.now(); now.Sub(at) > telegramAuthMaxAge || at.Sub(now) > 5*time.Minute {
-		return TelegramAccount{}, ErrInvalidTelegram
-	}
-	acc := TelegramAccount{ID: num("id"), Username: str("username"), FirstName: str("first_name"), LastName: str("last_name")}
-	if acc.ID == 0 {
-		return TelegramAccount{}, ErrInvalidTelegram
+		if phone, ok := people.NormalizePhone(raw); ok {
+			acc.Phone = phone
+		}
 	}
 	return acc, nil
 }
 
-// TelegramResult is Telegram sign-in: a session when the account is linked
-// to someone active, else a ticket to sign up with (once a phone is proved).
-type TelegramResult struct {
-	SignedIn     *LoginResult
-	SignupTicket string
-	Account      TelegramAccount
-}
-
-// TelegramSignIn checks Login Widget data and signs in, or answers a
-// Telegram ticket for sign-up.
-func (s *Service) TelegramSignIn(ctx context.Context, raw json.RawMessage, deviceID string) (TelegramResult, error) {
+// TelegramTicket signs in with a sign-in ticket from the callback:
+//   - the Telegram account is linked to someone active: them (and the shared
+//     phone becomes theirs if they have none and nobody else has it);
+//   - else the shared phone is someone active's: Telegram is linked to them
+//     (if they have no Telegram yet) and they are signed in;
+//   - else a registered student is made: names, the phone if shared, the
+//     photo, Telegram linked.
+func (s *Service) TelegramTicket(ctx context.Context, ticket, deviceID string) (LoginResult, error) {
 	if s.telegram == nil {
-		return TelegramResult{}, ErrTelegramOff
-	}
-	acc, err := s.checkTelegramAuth(raw)
-	if err != nil {
-		return TelegramResult{}, err
+		return LoginResult{}, ErrTelegramOff
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return TelegramResult{}, err
+		return LoginResult{}, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	q := authdb.New(tx)
-	link, err := q.TelegramLinkByID(ctx, acc.ID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return TelegramResult{}, fmt.Errorf("telegram link: %w", err)
-	}
-	if err == nil {
-		p, err := people.NewDirectory(tx).Get(ctx, link.PersonKind, link.PersonID)
-		if err != nil && !errors.Is(err, people.ErrNotFound) {
-			return TelegramResult{}, err
-		}
-		if err == nil && p.Active {
-			if err := q.SetTelegramUsername(ctx, authdb.SetTelegramUsernameParams{TelegramID: acc.ID, Username: optText(acc.Username)}); err != nil {
-				return TelegramResult{}, err
-			}
-			c, err := q.GetCredential(ctx, authdb.GetCredentialParams{PersonKind: p.Kind, PersonID: p.ID})
-			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-				return TelegramResult{}, fmt.Errorf("get credential: %w", err)
-			}
-			_, custom := ownPassword(c.PasswordHash, c.PasswordChangedAt, p)
-			res, err := s.openSession(ctx, q, p, deviceID, usesDefault(p, custom))
-			if err != nil {
-				return TelegramResult{}, err
-			}
-			return TelegramResult{SignedIn: &res, Account: acc}, tx.Commit(ctx)
-		}
-	}
-	// Not linked, or linked to someone who has left: they sign up (or into
-	// the account their phone has), and the link moves then (linkTelegram).
-	signup, err := s.newTicket(ctx, q, ticketData{purpose: ticketTelegramSignup, telegram: &acc}, TelegramSignupTTL)
+	t, err := s.useTicket(ctx, q, ticket, ticketTelegramSignin, s.now())
 	if err != nil {
-		return TelegramResult{}, err
+		return LoginResult{}, err
 	}
-	return TelegramResult{SignupTicket: signup, Account: acc}, tx.Commit(ctx)
+	acc := *t.telegram
+	dir := people.NewDirectory(tx)
+
+	var p people.Person
+	found := false
+	if link, err := q.TelegramLinkByID(ctx, acc.ID); err == nil {
+		if lp, err := dir.Get(ctx, link.PersonKind, link.PersonID); err == nil && lp.Active {
+			p, found = lp, true
+			if acc.Phone != "" && lp.LoginPhone == "" && lp.Registered {
+				if _, owned, err := phoneOwner(ctx, dir, acc.Phone); err != nil {
+					return LoginResult{}, err
+				} else if !owned {
+					if err := people.SetSelfPhone(ctx, tx, lp.ID, acc.Phone); err != nil {
+						return LoginResult{}, err
+					}
+					if p, err = dir.Get(ctx, lp.Kind, lp.ID); err != nil {
+						return LoginResult{}, err
+					}
+				}
+			}
+		} else if err != nil && !errors.Is(err, people.ErrNotFound) {
+			return LoginResult{}, err
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return LoginResult{}, fmt.Errorf("telegram link: %w", err)
+	}
+	if !found && acc.Phone != "" {
+		o, owned, err := phoneOwner(ctx, dir, acc.Phone)
+		if err != nil {
+			return LoginResult{}, err
+		}
+		if owned {
+			p, found = o, true
+		}
+	}
+	if !found {
+		first, last := personNames(acc.FirstName, acc.LastName, acc.Username)
+		id, err := people.CreateSelfStudent(ctx, tx, first, last, acc.Phone)
+		if err != nil {
+			return LoginResult{}, err
+		}
+		if p, err = dir.Get(ctx, people.KindStudent, id); err != nil {
+			return LoginResult{}, err
+		}
+	}
+	if err := linkTelegramIfFree(ctx, q, dir, p, acc); err != nil {
+		return LoginResult{}, err
+	}
+	res, err := s.signInPerson(ctx, q, p, deviceID)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return LoginResult{}, err
+	}
+	s.ensurePhoto(ctx, p, acc.PhotoURL)
+	return res, nil
 }
 
-// linkTelegram links the Telegram account to p, as linkGoogle does Google's.
-func linkTelegram(ctx context.Context, q *authdb.Queries, dir *people.Directory, p people.Person, acc TelegramAccount) error {
+// MyPhoneTelegram adds the phone Telegram shared (a verify ticket of the
+// same person) to a signed-in person without one (applyPhone).
+func (s *Service) MyPhoneTelegram(ctx context.Context, pr Principal, ticket, deviceID string) (LoginResult, error) {
+	if s.telegram == nil {
+		return LoginResult{}, ErrTelegramOff
+	}
+	u, err := s.phoneless(ctx, pr)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	now := s.now()
+	pt, err := s.q.PeekTicket(ctx, authdb.PeekTicketParams{TokenHash: hashToken(ticket), Purpose: ticketTelegramVerify, Now: timestamp(now)})
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && (pt.PersonKind.String != pr.Kind || pt.PersonID.Int32 != pr.ID)) {
+		return LoginResult{}, ErrInvalidTicket
+	}
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if !pt.SharedPhone.Valid {
+		return LoginResult{}, ErrNoTelegramPhone
+	}
+	return s.applyPhone(ctx, u, pt.SharedPhone.String, func(q *authdb.Queries) (*TelegramAccount, error) {
+		t, err := s.useTicket(ctx, q, ticket, ticketTelegramVerify, now)
+		if err != nil {
+			return nil, err
+		}
+		return t.telegram, nil
+	}, deviceID)
+}
+
+// linkTelegramIfFree links the Telegram account to p unless it is linked to
+// someone else active or p has another one (never a link taken or
+// replaced); a link to someone who left moves.
+func linkTelegramIfFree(ctx context.Context, q *authdb.Queries, dir personGetter, p people.Person, acc TelegramAccount) error {
 	link, err := q.TelegramLinkByID(ctx, acc.ID)
 	switch {
 	case err == nil && link.PersonKind == p.Kind && link.PersonID == p.ID:
@@ -210,15 +410,17 @@ func linkTelegram(ctx context.Context, q *authdb.Queries, dir *people.Directory,
 			return err
 		}
 		if err == nil && other.Active {
-			return ErrTelegramTaken
-		}
-		if err := q.DeleteTelegramLink(ctx, acc.ID); err != nil {
-			return fmt.Errorf("unlink telegram: %w", err)
+			return nil
 		}
 	case !errors.Is(err, pgx.ErrNoRows):
 		return fmt.Errorf("telegram link: %w", err)
 	}
-	if err := q.UnlinkTelegramPerson(ctx, authdb.UnlinkTelegramPersonParams{PersonKind: p.Kind, PersonID: p.ID}); err != nil {
+	if has, err := q.HasTelegramLink(ctx, authdb.HasTelegramLinkParams{PersonKind: p.Kind, PersonID: p.ID}); err != nil {
+		return fmt.Errorf("telegram link: %w", err)
+	} else if has {
+		return nil
+	}
+	if err := q.DeleteTelegramLink(ctx, acc.ID); err != nil {
 		return fmt.Errorf("unlink telegram: %w", err)
 	}
 	if err := q.InsertTelegramLink(ctx, authdb.InsertTelegramLinkParams{TelegramID: acc.ID, PersonKind: p.Kind, PersonID: p.ID, Username: optText(acc.Username)}); err != nil {
@@ -226,289 +428,3 @@ func linkTelegram(ctx context.Context, q *authdb.Queries, dir *people.Directory,
 	}
 	return nil
 }
-
-// linkCheckedTelegram links the Telegram account that shared p's phone
-// through the bot (telegramID; 0: none) to p, inside the caller's
-// transaction, unless that would take it from someone else active or
-// replace another Telegram account p has: then nothing (never a link stolen).
-func linkCheckedTelegram(ctx context.Context, q *authdb.Queries, dir *people.Directory, p people.Person, telegramID int64) error {
-	if telegramID == 0 {
-		return nil
-	}
-	has, err := q.HasTelegramLink(ctx, authdb.HasTelegramLinkParams{PersonKind: p.Kind, PersonID: p.ID})
-	if err != nil {
-		return fmt.Errorf("telegram link: %w", err)
-	}
-	if link, err := q.TelegramLinkByID(ctx, telegramID); err == nil && link.PersonKind == p.Kind && link.PersonID == p.ID {
-		return nil // already theirs
-	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("telegram link: %w", err)
-	}
-	if has {
-		return nil // they have another Telegram account
-	}
-	if err := linkTelegram(ctx, q, dir, p, TelegramAccount{ID: telegramID}); err != nil && !errors.Is(err, ErrTelegramTaken) {
-		return err
-	}
-	return nil
-}
-
-// TelegramCheck is a phone check through the bot, as StartTelegramCheck
-// answers it.
-type TelegramCheck struct {
-	Nonce     string `json:"nonce"`
-	Link      string `json:"link"` // https://t.me/<bot>?start=<nonce>
-	ExpiresIn int    `json:"expires_in"`
-}
-
-// StartTelegramCheck starts proving a phone through the bot instead of an
-// SMS code; for a sign-up it needs the identity, as VerifyPhone does.
-// CodesPerNetwork an hour per network.
-func (s *Service) StartTelegramCheck(ctx context.Context, purpose string, identity Identity, ip string) (TelegramCheck, error) {
-	if s.telegram == nil {
-		return TelegramCheck{}, ErrTelegramOff
-	}
-	now := s.now()
-	var idHash []byte
-	var idPurpose pgtype.Text
-	if purpose == PurposeSignup {
-		h, p, err := s.identityFor(ctx, identity, "", now)
-		if err != nil {
-			return TelegramCheck{}, err
-		}
-		idHash, idPurpose = h, pgtype.Text{String: p, Valid: true}
-	}
-	n, err := s.q.NetworkTelegramChecksSince(ctx, authdb.NetworkTelegramChecksSinceParams{Ip: ip, Since: timestamp(now.Add(-time.Hour))})
-	if err != nil {
-		return TelegramCheck{}, err
-	}
-	if n >= CodesPerNetwork {
-		return TelegramCheck{}, &RateLimitedError{RetryAfter: time.Hour}
-	}
-	nonce, hash, err := newToken()
-	if err != nil {
-		return TelegramCheck{}, err
-	}
-	if err := s.q.InsertTelegramCheck(ctx, authdb.InsertTelegramCheckParams{
-		NonceHash: hash, Purpose: purpose, Identity: idHash, IdentityPurpose: idPurpose, Ip: ip,
-		CreatedAt: timestamp(now), ExpiresAt: timestamp(now.Add(TelegramCheckTTL)),
-	}); err != nil {
-		return TelegramCheck{}, fmt.Errorf("store check: %w", err)
-	}
-	return TelegramCheck{Nonce: nonce, Link: "https://t.me/" + s.telegram.Username + "?start=" + nonce,
-		ExpiresIn: int(TelegramCheckTTL.Seconds())}, nil
-}
-
-// TelegramCheckResult is a check's state; Ticket and Owner as VerifyPhone's.
-// SignedIn: the identity was the same Telegram account that shared the
-// phone, and the phone has an owner: signed straight into them.
-type TelegramCheckResult struct {
-	SignedIn *LoginResult
-	Purpose  string
-	Verified bool
-	Phone    string
-	Ticket   string
-	Owner    *PhoneOwner
-}
-
-// CheckTelegram answers whether the bot has the phone yet; once it has, the
-// phone ticket, once (ErrCodeExpired after that, and after expiry). A
-// sign-up whose identity is the Telegram account that shared the phone, for
-// a phone with an owner (registered or enrolled), signs straight into that
-// owner instead: Telegram vouches for both, so it is the same person.
-func (s *Service) CheckTelegram(ctx context.Context, nonce, deviceID string) (TelegramCheckResult, error) {
-	if s.telegram == nil {
-		return TelegramCheckResult{}, ErrTelegramOff
-	}
-	now := s.now()
-	hash := hashToken(nonce)
-	c, err := s.q.GetTelegramCheck(ctx, hash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return TelegramCheckResult{}, ErrCodeExpired
-	}
-	if err != nil {
-		return TelegramCheckResult{}, err
-	}
-	if c.UsedAt.Valid || !c.ExpiresAt.Time.After(now) {
-		return TelegramCheckResult{}, ErrCodeExpired
-	}
-	if !c.VerifiedAt.Valid {
-		return TelegramCheckResult{}, nil
-	}
-	if c.Purpose == PurposeSignup {
-		// The identity must still be live and not spent on another phone.
-		it, err := s.q.PeekTicket(ctx, authdb.PeekTicketParams{TokenHash: c.Identity, Purpose: c.IdentityPurpose.String, Now: timestamp(now)})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return TelegramCheckResult{}, ErrInvalidTicket
-		}
-		if err != nil {
-			return TelegramCheckResult{}, err
-		}
-		if it.RevealedPhone.Valid && it.RevealedPhone.String != c.Phone.String {
-			return TelegramCheckResult{}, ErrIdentitySpent
-		}
-		if c.IdentityPurpose.String == ticketTelegramSignup && it.TelegramID.Valid && c.TelegramUserID.Valid &&
-			it.TelegramID.Int64 == c.TelegramUserID.Int64 {
-			if owner, found, err := phoneOwner(ctx, s.people, c.Phone.String); err != nil {
-				return TelegramCheckResult{}, err
-			} else if found {
-				return s.sameTelegramSignIn(ctx, hash, c.Identity, owner, c.TelegramUserID.Int64, deviceID)
-			}
-		}
-	}
-	if n, err := s.q.UseTelegramCheck(ctx, authdb.UseTelegramCheckParams{NonceHash: hash, Now: timestamp(now)}); err != nil {
-		return TelegramCheckResult{}, err
-	} else if n == 0 {
-		return TelegramCheckResult{}, ErrCodeExpired
-	}
-	ticket, owner, err := s.phoneProved(ctx, c.Phone.String, c.Purpose, c.Identity, c.IdentityPurpose.String, c.TelegramUserID.Int64)
-	if err != nil {
-		return TelegramCheckResult{}, err
-	}
-	return TelegramCheckResult{Purpose: c.Purpose, Verified: true, Phone: c.Phone.String, Ticket: ticket, Owner: owner}, nil
-}
-
-// sameTelegramSignIn signs into p: the check and the identity ticket are
-// spent, the Telegram account linked (if free).
-func (s *Service) sameTelegramSignIn(ctx context.Context, checkHash, idHash []byte, p people.Person, telegramID int64, deviceID string) (TelegramCheckResult, error) {
-	now := s.now()
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return TelegramCheckResult{}, err
-	}
-	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	q := authdb.New(tx)
-	if n, err := q.UseTelegramCheck(ctx, authdb.UseTelegramCheckParams{NonceHash: checkHash, Now: timestamp(now)}); err != nil {
-		return TelegramCheckResult{}, err
-	} else if n == 0 {
-		return TelegramCheckResult{}, ErrCodeExpired
-	}
-	if _, err := q.UseTicket(ctx, authdb.UseTicketParams{TokenHash: idHash, Purpose: ticketTelegramSignup, Now: timestamp(now)}); errors.Is(err, pgx.ErrNoRows) {
-		return TelegramCheckResult{}, ErrInvalidTicket
-	} else if err != nil {
-		return TelegramCheckResult{}, fmt.Errorf("use ticket: %w", err)
-	}
-	if err := linkCheckedTelegram(ctx, q, people.NewDirectory(tx), p, telegramID); err != nil {
-		return TelegramCheckResult{}, err
-	}
-	c, err := q.GetCredential(ctx, authdb.GetCredentialParams{PersonKind: p.Kind, PersonID: p.ID})
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return TelegramCheckResult{}, fmt.Errorf("get credential: %w", err)
-	}
-	_, custom := ownPassword(c.PasswordHash, c.PasswordChangedAt, p)
-	res, err := s.openSession(ctx, q, p, deviceID, usesDefault(p, custom))
-	if err != nil {
-		return TelegramCheckResult{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return TelegramCheckResult{}, err
-	}
-	return TelegramCheckResult{SignedIn: &res, Purpose: PurposeSignup}, nil
-}
-
-// The bot's replies.
-const (
-	tgAskContact = "To check your phone number for SATMAKON, tap \"Share my number\" below."
-	tgNoCheck    = "This link has expired or was already used. Start again on SATMAKON."
-	tgOpenFirst  = "Open the link from the SATMAKON site first, then share your number here."
-	tgNotOwn     = "Please share your own number, with the \"Share my number\" button."
-	tgNotUzbek   = "An Uzbek mobile number (+998) is needed."
-	tgDone       = "Done — go back to SATMAKON."
-	tgOther      = "This bot only checks phone numbers for SATMAKON. Open the link from the SATMAKON site."
-)
-
-// HandleTelegramUpdate is the bot's webhook (secret: the header Telegram
-// sends, X-Telegram-Bot-Api-Secret-Token). Only private chats: "/start
-// <nonce>" ties the check to the account and asks for the contact; the
-// account's own contact proves the phone.
-func (s *Service) HandleTelegramUpdate(ctx context.Context, secret string, u telegram.Update) error {
-	t := s.telegram
-	if t == nil {
-		return ErrTelegramOff
-	}
-	if !s.telegramSecret(secret) {
-		return ErrBadWebhook
-	}
-	m := u.Message
-	if m == nil || m.From == nil || m.Chat.Type != "private" || m.From.IsBot {
-		return nil
-	}
-	now := s.now()
-	reply := func(text string, markup any) error {
-		p := map[string]any{"chat_id": m.Chat.ID, "text": text}
-		if markup != nil {
-			p["reply_markup"] = markup
-		}
-		return t.bot.Call(ctx, "sendMessage", p, nil)
-	}
-	removeKeyboard := map[string]any{"remove_keyboard": true}
-
-	if nonce, ok := strings.CutPrefix(strings.TrimSpace(m.Text), "/start "); ok {
-		n, err := s.q.OpenTelegramCheck(ctx, authdb.OpenTelegramCheckParams{
-			TelegramUserID: pgtype.Int8{Int64: m.From.ID, Valid: true}, NonceHash: hashToken(strings.TrimSpace(nonce)), Now: timestamp(now)})
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return reply(tgNoCheck, removeKeyboard)
-		}
-		return reply(tgAskContact, map[string]any{
-			"keyboard":          [][]map[string]any{{{"text": "Share my number", "request_contact": true}}},
-			"resize_keyboard":   true,
-			"one_time_keyboard": true,
-		})
-	}
-	if c := m.Contact; c != nil {
-		if c.UserID != m.From.ID {
-			return reply(tgNotOwn, nil)
-		}
-		raw := strings.TrimSpace(c.PhoneNumber)
-		if !strings.HasPrefix(raw, "+") {
-			raw = "+" + raw
-		}
-		phone, ok := uzbekPhone(raw)
-		if !ok {
-			return reply(tgNotUzbek, nil)
-		}
-		n, err := s.q.VerifyTelegramCheck(ctx, authdb.VerifyTelegramCheckParams{
-			Phone: phone, Now: timestamp(now), TelegramUserID: pgtype.Int8{Int64: m.From.ID, Valid: true}})
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return reply(tgOpenFirst, removeKeyboard)
-		}
-		return reply(tgDone, removeKeyboard)
-	}
-	return reply(tgOther, nil)
-}
-
-func (s *Service) telegramOn() bool { return s.telegram != nil }
-
-func (s *Service) telegramSecret(secret string) bool {
-	t := s.telegram
-	return t != nil && t.WebhookSecret != "" && hmac.Equal([]byte(secret), []byte(t.WebhookSecret))
-}
-
-// SetTelegramWebhook registers the bot's webhook: Telegram posts updates
-// to publicURL + TelegramWebhookPath with the secret.
-func (s *Service) SetTelegramWebhook(ctx context.Context, publicURL string) (string, error) {
-	t := s.telegram
-	if t == nil {
-		return "", ErrTelegramOff
-	}
-	hook := strings.TrimRight(publicURL, "/") + TelegramWebhookPath
-	err := t.bot.Call(ctx, "setWebhook", map[string]any{
-		"url": hook, "secret_token": t.WebhookSecret, "allowed_updates": []string{"message"}, "drop_pending_updates": true,
-	}, nil)
-	return hook, err
-}
-
-// logTelegram records a webhook problem without failing Telegram's delivery.
-func logTelegram(log *slog.Logger, err error) {
-	if err != nil {
-		log.Warn("telegram webhook", slog.Any("err", err))
-	}
-}
-
-func optText(s string) pgtype.Text { return pgtype.Text{String: s, Valid: s != ""} }

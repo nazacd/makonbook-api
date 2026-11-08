@@ -259,6 +259,7 @@ func (s *Service) idToken(token string) (GoogleAccount, error) {
 		Email         string          `json:"email"`
 		EmailVerified any             `json:"email_verified"` // true, or "true" in older tokens
 		GivenName     string          `json:"given_name"`
+		Picture       string          `json:"picture"`
 		FamilyName    string          `json:"family_name"`
 		Name          string          `json:"name"`
 	}
@@ -286,7 +287,11 @@ func (s *Service) idToken(token string) (GoogleAccount, error) {
 	if first == "" && last == "" {
 		first, last, _ = strings.Cut(strings.TrimSpace(c.Name), " ")
 	}
-	return GoogleAccount{Sub: c.Sub, Email: c.Email, FirstName: first, LastName: strings.TrimSpace(last)}, nil
+	acc := GoogleAccount{Sub: c.Sub, Email: strings.ToLower(c.Email), FirstName: first, LastName: strings.TrimSpace(last)}
+	if strings.HasPrefix(c.Picture, "https://") || strings.HasPrefix(c.Picture, "http://") { // copyPhoto takes https only
+		acc.PhotoURL = c.Picture
+	}
+	return acc, nil
 }
 
 func audience(raw json.RawMessage, clientID string) bool {
@@ -305,61 +310,75 @@ func audience(raw json.RawMessage, clientID string) bool {
 	return false
 }
 
-// GoogleResult is a Google ticket traded: a session when the Google account
-// is linked to someone active, else a ticket to sign up with (once a phone
-// is verified) and what Google says about the person.
-type GoogleResult struct {
-	SignedIn     *LoginResult
-	SignupTicket string
-	Account      GoogleAccount
-}
-
-// GoogleTicket trades the ticket the callback gave the web.
-func (s *Service) GoogleTicket(ctx context.Context, ticket, deviceID string) (GoogleResult, error) {
+// GoogleTicket signs in with the ticket the callback gave the web:
+//   - the Google account is linked to someone active: them;
+//   - else someone active has its (verified) email: Google is linked to them;
+//   - else a registered student is made with no phone: names, the email, the
+//     photo, Google linked.
+func (s *Service) GoogleTicket(ctx context.Context, ticket, deviceID string) (LoginResult, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return GoogleResult{}, err
+		return LoginResult{}, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	q := authdb.New(tx)
 	t, err := s.useTicket(ctx, q, ticket, ticketGoogle, s.now())
 	if err != nil {
-		return GoogleResult{}, err
+		return LoginResult{}, err
 	}
 	g := *t.google
+	dir := people.NewDirectory(tx)
 
-	link, err := q.GoogleLinkBySub(ctx, g.Sub)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return GoogleResult{}, fmt.Errorf("google link: %w", err)
-	}
-	if err == nil {
-		p, err := people.NewDirectory(tx).Get(ctx, link.PersonKind, link.PersonID)
+	var p people.Person
+	found := false
+	if link, err := q.GoogleLinkBySub(ctx, g.Sub); err == nil {
+		lp, err := dir.Get(ctx, link.PersonKind, link.PersonID)
 		if err != nil && !errors.Is(err, people.ErrNotFound) {
-			return GoogleResult{}, err
+			return LoginResult{}, err
 		}
-		if err == nil && p.Active {
-			if err := q.SetGoogleEmail(ctx, authdb.SetGoogleEmailParams{Sub: g.Sub, Email: g.Email}); err != nil {
-				return GoogleResult{}, err
-			}
-			c, err := q.GetCredential(ctx, authdb.GetCredentialParams{PersonKind: p.Kind, PersonID: p.ID})
-			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-				return GoogleResult{}, fmt.Errorf("get credential: %w", err)
-			}
-			_, custom := ownPassword(c.PasswordHash, c.PasswordChangedAt, p)
-			res, err := s.openSession(ctx, q, p, deviceID, usesDefault(p, custom))
+		if err == nil && lp.Active {
+			p, found = lp, true
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return LoginResult{}, fmt.Errorf("google link: %w", err)
+	}
+	newEmail := false
+	if !found {
+		o, active, err := emailOwner(ctx, q, dir, g.Email)
+		if err != nil {
+			return LoginResult{}, err
+		}
+		if active {
+			p = o
+		} else {
+			first, last := personNames(g.FirstName, g.LastName, strings.Split(g.Email, "@")[0])
+			id, err := people.CreateSelfStudent(ctx, tx, first, last, "")
 			if err != nil {
-				return GoogleResult{}, err
+				return LoginResult{}, err
 			}
-			return GoogleResult{SignedIn: &res, Account: g}, tx.Commit(ctx)
+			if p, err = dir.Get(ctx, people.KindStudent, id); err != nil {
+				return LoginResult{}, err
+			}
+			newEmail = true
 		}
 	}
-	// Not linked, or linked to someone who has left: they sign up (or into
-	// the account their phone has), and the link moves then (linkGoogle).
-	signup, err := s.newTicket(ctx, q, ticketData{purpose: ticketGoogleSignup, google: &g}, GoogleSignupTTL)
-	if err != nil {
-		return GoogleResult{}, err
+	if newEmail {
+		if err := linkEmail(ctx, q, dir, p, g.Email); err != nil {
+			return LoginResult{}, err
+		}
 	}
-	return GoogleResult{SignupTicket: signup, Account: g}, tx.Commit(ctx)
+	if err := s.linkGoogle(ctx, q, dir, p, g); err != nil {
+		return LoginResult{}, err
+	}
+	res, err := s.signInPerson(ctx, q, p, deviceID)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return LoginResult{}, err
+	}
+	s.ensurePhoto(ctx, p, g.PhotoURL)
+	return res, nil
 }
 
 // safeReturn keeps a return address that is a path on the web's own origin;

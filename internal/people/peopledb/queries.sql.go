@@ -180,6 +180,38 @@ func (q *Queries) DeleteScheduleItems(ctx context.Context) error {
 	return err
 }
 
+const deleteSelfStudent = `-- name: DeleteSelfStudent :execrows
+DELETE FROM students WHERE client_id = $1 AND source = 'self'
+`
+
+// The rest goes with them (foreign keys cascade).
+func (q *Queries) DeleteSelfStudent(ctx context.Context, clientID int32) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSelfStudent, clientID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteStudentAttempts = `-- name: DeleteStudentAttempts :exec
+DELETE FROM practice_attempts WHERE student_client_id = $1
+`
+
+// Rows a teacher can't take: removed with the student.
+func (q *Queries) DeleteStudentAttempts(ctx context.Context, clientID int32) error {
+	_, err := q.db.Exec(ctx, deleteStudentAttempts, clientID)
+	return err
+}
+
+const deleteStudentReviews = `-- name: DeleteStudentReviews :exec
+DELETE FROM vocab_reviews WHERE student_client_id = $1
+`
+
+func (q *Queries) DeleteStudentReviews(ctx context.Context, clientID int32) error {
+	_, err := q.db.Exec(ctx, deleteStudentReviews, clientID)
+	return err
+}
+
 const findByLoginPhone = `-- name: FindByLoginPhone :many
 
 SELECT 'student'::text AS kind, client_id AS id, coalesce(first_name_custom, first_name)::text AS first_name,
@@ -370,14 +402,14 @@ const insertSelfStudent = `-- name: InsertSelfStudent :one
 
 WITH n AS (SELECT nextval('self_student_ids')::int AS id)
 INSERT INTO students (client_id, hh_student_id, first_name, last_name, phone_raw, login_phone, hh_status_id, office_ids, source)
-SELECT n.id, n.id, $1, $2, $3::text, $3::text, NULL, '{}', 'self' FROM n
+SELECT n.id, n.id, $1, $2, coalesce($3::text, ''), $3::text, NULL, '{}', 'self' FROM n
 RETURNING client_id
 `
 
 type InsertSelfStudentParams struct {
 	FirstName string
 	LastName  string
-	Phone     string
+	Phone     pgtype.Text
 }
 
 // Accounts (spec 21) ------------------------------------------------------------
@@ -508,6 +540,82 @@ func (q *Queries) MarkStudentsMissing(ctx context.Context, presentIds []int32) (
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const moveStudentAttempts = `-- name: MoveStudentAttempts :exec
+UPDATE practice_attempts SET student_client_id = $1 WHERE student_client_id = $2
+`
+
+type MoveStudentAttemptsParams struct {
+	ToID   int32
+	FromID int32
+}
+
+// Merging a registered student into another person (spec 21.4): what they
+// did moves to a student (practice and vocabulary rows are keyed by the
+// student; the people feature owns the merge as it owns the enrolment
+// link), and then they are removed. Goals move only when the other has none.
+func (q *Queries) MoveStudentAttempts(ctx context.Context, arg MoveStudentAttemptsParams) error {
+	_, err := q.db.Exec(ctx, moveStudentAttempts, arg.ToID, arg.FromID)
+	return err
+}
+
+const moveStudentGoals = `-- name: MoveStudentGoals :exec
+UPDATE student_goals AS s SET student_client_id = $1::int
+WHERE s.student_client_id = $2::int
+  AND NOT EXISTS (SELECT 1 FROM student_goals g WHERE g.student_client_id = $1::int)
+`
+
+type MoveStudentGoalsParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentGoals(ctx context.Context, arg MoveStudentGoalsParams) error {
+	_, err := q.db.Exec(ctx, moveStudentGoals, arg.ToID, arg.FromID)
+	return err
+}
+
+const moveStudentParked = `-- name: MoveStudentParked :exec
+UPDATE parked_questions SET student_client_id = $1 WHERE student_client_id = $2
+`
+
+type MoveStudentParkedParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentParked(ctx context.Context, arg MoveStudentParkedParams) error {
+	_, err := q.db.Exec(ctx, moveStudentParked, arg.ToID, arg.FromID)
+	return err
+}
+
+const moveStudentReports = `-- name: MoveStudentReports :exec
+UPDATE practice_reports SET student_client_id = $1 WHERE student_client_id = $2
+`
+
+type MoveStudentReportsParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentReports(ctx context.Context, arg MoveStudentReportsParams) error {
+	_, err := q.db.Exec(ctx, moveStudentReports, arg.ToID, arg.FromID)
+	return err
+}
+
+const moveStudentReviews = `-- name: MoveStudentReviews :exec
+UPDATE vocab_reviews SET student_client_id = $1 WHERE student_client_id = $2
+`
+
+type MoveStudentReviewsParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentReviews(ctx context.Context, arg MoveStudentReviewsParams) error {
+	_, err := q.db.Exec(ctx, moveStudentReviews, arg.ToID, arg.FromID)
+	return err
 }
 
 const openIssues = `-- name: OpenIssues :many
@@ -738,6 +846,25 @@ func (q *Queries) SelfStudentPhones(ctx context.Context) ([]SelfStudentPhonesRow
 		return nil, err
 	}
 	return items, nil
+}
+
+const setSelfPhone = `-- name: SetSelfPhone :execrows
+UPDATE students SET login_phone = $1::text, phone_raw = $1::text
+WHERE client_id = $2 AND source = 'self' AND login_phone IS NULL
+`
+
+type SetSelfPhoneParams struct {
+	Phone    string
+	ClientID int32
+}
+
+// A registered student without a phone proves one (spec 21.4).
+func (q *Queries) SetSelfPhone(ctx context.Context, arg SetSelfPhoneParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setSelfPhone, arg.Phone, arg.ClientID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setStudentLoginPhones = `-- name: SetStudentLoginPhones :exec

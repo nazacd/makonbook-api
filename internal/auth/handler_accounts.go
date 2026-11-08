@@ -1,124 +1,79 @@
 package auth
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
-	"github.com/nazacd/makonbook-api/internal/platform/telegram"
 )
 
 // Error codes of accounts (spec 21; see api/openapi.yaml).
 //
 //nolint:gosec // G101: these are error codes, not credentials
 const (
-	CodeSMSUnavailable    = "sms_unavailable"
-	CodeInvalidPhone      = "invalid_phone"
-	CodeInvalidCode       = "invalid_code"
-	CodeCodeExpired       = "code_expired"
-	CodeTooManyTries      = "too_many_tries"
-	CodeInvalidTicket     = "invalid_ticket"
-	CodeInvalidProfile    = "invalid_profile"
-	CodeNoAccount         = "no_account"
-	CodeGoogleTaken       = "google_taken"
-	CodePhoneTaken        = "phone_taken"
-	CodeIdentitySpent     = "identity_spent"
-	CodeInvalidEmail      = "invalid_email"
-	CodeEmailTaken        = "email_taken"
-	CodeEmailUnavailable  = "email_unavailable"
-	CodeInvalidTelegram   = "invalid_telegram"
-	CodeTelegramTaken     = "telegram_taken"
-	CodeTelegramOff       = "telegram_unavailable"
-	CodeGoogleUnavailable = "google_unavailable"
+	CodeSMSUnavailable      = "sms_unavailable"
+	CodeInvalidPhone        = "invalid_phone"
+	CodeInvalidCode         = "invalid_code"
+	CodeCodeExpired         = "code_expired"
+	CodeTooManyTries        = "too_many_tries"
+	CodeInvalidTicket       = "invalid_ticket"
+	CodeInvalidProfile      = "invalid_profile"
+	CodeNoAccount           = "no_account"
+	CodeGoogleTaken         = "google_taken"
+	CodeGoogleUnavailable   = "google_unavailable"
+	CodeInvalidEmail        = "invalid_email"
+	CodeEmailTaken          = "email_taken"
+	CodeEmailUnavailable    = "email_unavailable"
+	CodeTelegramUnavailable = "telegram_unavailable"
+	CodeTelegramNoPhone     = "telegram_no_phone"
+	CodePhoneAlreadySet     = "phone_already_set"
+	CodePhoneRequired       = "phone_required"
 )
 
 func (h *Handler) registerAccounts(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/auth/email/start", h.emailStart)
 	mux.HandleFunc("POST /v1/auth/email/verify", h.emailVerify)
-	mux.HandleFunc("POST /v1/auth/phone/start", h.phoneStart)
-	mux.HandleFunc("POST /v1/auth/phone/telegram/start", h.telegramCheckStart)
-	mux.HandleFunc("POST /v1/auth/phone/telegram/check", h.telegramCheck)
-	mux.HandleFunc("POST /v1/auth/telegram", h.telegramSignIn)
-	mux.HandleFunc("POST "+TelegramWebhookPath, h.telegramWebhook)
-	mux.HandleFunc("POST /v1/auth/phone/verify", h.phoneVerify)
 	mux.HandleFunc("POST /v1/auth/signup", h.signup)
+	mux.HandleFunc("POST /v1/auth/phone/start", h.phoneStart)
+	mux.HandleFunc("POST /v1/auth/phone/verify", h.phoneVerify)
 	mux.HandleFunc("POST /v1/auth/reset", h.reset)
 	mux.HandleFunc("GET /v1/auth/google/start", h.googleStart)
 	mux.HandleFunc("GET "+GoogleCallbackPath, h.googleCallback)
 	mux.HandleFunc("POST /v1/auth/google/ticket", h.googleTicket)
+	mux.HandleFunc("POST /v1/auth/telegram/start", h.telegramStart)
+	mux.HandleFunc("GET "+TelegramCallbackPath, h.telegramCallback)
+	mux.HandleFunc("POST /v1/auth/telegram/ticket", h.telegramTicket)
+	mux.HandleFunc("POST /v1/me/phone/start", h.Require(h.myPhoneStart))
+	mux.HandleFunc("POST /v1/me/phone/verify", h.Require(h.myPhoneVerify))
+	mux.HandleFunc("POST /v1/me/phone/telegram", h.Require(h.myPhoneTelegram))
 	mux.HandleFunc("PUT /v1/me/profile", h.Require(h.setProfile))
+	mux.HandleFunc("GET "+photoPath+"{id}", h.servePhoto)
 }
 
-type phoneRequest struct {
-	Phone   string `json:"phone"`
-	Code    string `json:"code"`
-	Purpose string `json:"purpose"`
-	Identity
+// RequireContent is Require for the content (practice, vocabulary): a
+// registered student without a phone gets 403 phone_required until they add
+// one (spec 21.4). Enrolled people are never locked.
+func (h *Handler) RequireContent(next http.HandlerFunc) http.HandlerFunc {
+	return h.Require(func(w http.ResponseWriter, r *http.Request) {
+		if p, _ := PrincipalFrom(r.Context()); p.NeedsPhone {
+			httpx.WriteError(w, r, http.StatusForbidden, CodePhoneRequired, "add your phone number first")
+			return
+		}
+		next(w, r)
+	})
 }
 
-func (h *Handler) phoneRequest(w http.ResponseWriter, r *http.Request) (phoneRequest, bool) {
-	var req phoneRequest
-	if !httpx.DecodeJSON(w, r, &req) {
-		return req, false
-	}
-	if req.Purpose != PurposeSignup && req.Purpose != PurposeReset {
-		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, `purpose must be "signup" or "reset"`)
-		return req, false
-	}
-	if len(req.Code) > 20 {
-		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "code too long")
-		return req, false
-	}
-	if len(req.Phone) > 50 {
-		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidPhone, ErrInvalidPhone.Error())
-		return req, false
-	}
-	return req, true
-}
-
-func (h *Handler) phoneStart(w http.ResponseWriter, r *http.Request) {
-	req, ok := h.phoneRequest(w, r)
-	if !ok {
-		return
-	}
-	err := h.svc.StartPhone(r.Context(), req.Phone, req.Purpose, httpx.ClientIP(r, h.trustProxy))
-	var limited *RateLimitedError
-	switch {
-	case errors.As(err, &limited):
-		retryAfter(w, limited.RetryAfter)
-		httpx.WriteError(w, r, http.StatusTooManyRequests, httpx.CodeRateLimited, limited.Error())
-	case h.accountsError(w, r, "send code", err):
-	default:
-		httpx.WriteJSON(w, r, http.StatusOK, map[string]int{
-			"resend_in": int(ResendAfter.Seconds()), "expires_in": int(CodeTTL.Seconds()),
-		})
-	}
-}
-
-func (h *Handler) phoneVerify(w http.ResponseWriter, r *http.Request) {
-	req, ok := h.phoneRequest(w, r)
-	if !ok {
-		return
-	}
-	ticket, owner, err := h.svc.VerifyPhone(r.Context(), req.Phone, req.Code, req.Purpose, req.Identity)
-	switch {
-	case h.codeError(w, r, err):
-	case h.accountsError(w, r, "verify code", err):
-	case req.Purpose == PurposeSignup:
-		httpx.WriteJSON(w, r, http.StatusOK, verifySignupResponse{Ticket: ticket, Account: owner})
-	default:
-		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"ticket": ticket})
-	}
-}
+// --- Email ------------------------------------------------------------------------
 
 type emailRequest struct {
-	Email string `json:"email"`
-	Code  string `json:"code"`
+	Email    string `json:"email"`
+	Code     string `json:"code"`
+	DeviceID string `json:"device_id"`
 }
 
 func (h *Handler) emailRequest(w http.ResponseWriter, r *http.Request) (emailRequest, bool) {
@@ -126,8 +81,8 @@ func (h *Handler) emailRequest(w http.ResponseWriter, r *http.Request) (emailReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return req, false
 	}
-	if len(req.Code) > 20 {
-		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "code too long")
+	if len(req.Code) > 20 || len(req.DeviceID) > 100 {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "code or device_id too long")
 		return req, false
 	}
 	if len(req.Email) > 320 {
@@ -143,17 +98,15 @@ func (h *Handler) emailStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := h.svc.StartEmail(r.Context(), req.Email, httpx.ClientIP(r, h.trustProxy))
-	var limited *RateLimitedError
-	switch {
-	case errors.As(err, &limited):
-		retryAfter(w, limited.RetryAfter)
-		httpx.WriteError(w, r, http.StatusTooManyRequests, httpx.CodeRateLimited, limited.Error())
-	case h.accountsError(w, r, "send email code", err):
-	default:
-		httpx.WriteJSON(w, r, http.StatusOK, map[string]int{
-			"resend_in": int(ResendAfter.Seconds()), "expires_in": int(CodeTTL.Seconds()),
-		})
+	if h.limited(w, r, err) || h.accountsError(w, r, "send email code", err) {
+		return
 	}
+	httpx.WriteJSON(w, r, http.StatusOK, map[string]int{"resend_in": int(ResendAfter.Seconds()), "expires_in": int(CodeTTL.Seconds())})
+}
+
+type emailNew struct {
+	Status      string `json:"status"` // new
+	EmailTicket string `json:"email_ticket"`
 }
 
 func (h *Handler) emailVerify(w http.ResponseWriter, r *http.Request) {
@@ -161,44 +114,24 @@ func (h *Handler) emailVerify(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ticket, err := h.svc.VerifyEmail(r.Context(), req.Email, req.Code)
+	res, err := h.svc.VerifyEmail(r.Context(), req.Email, req.Code, req.DeviceID)
 	switch {
 	case h.codeError(w, r, err):
 	case h.accountsError(w, r, "verify email code", err):
+	case res.SignedIn != nil:
+		if resp, ok := h.loggedIn(w, r, *res.SignedIn); ok {
+			httpx.WriteJSON(w, r, http.StatusOK, signedIn{Status: "signed_in", loginResponse: resp})
+		}
 	default:
-		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"email_ticket": ticket})
+		httpx.WriteJSON(w, r, http.StatusOK, emailNew{Status: "new", EmailTicket: res.Ticket})
 	}
 }
 
-// codeError answers a wrong, spent or expired code; false (and nothing
-// written) for anything else.
-func (h *Handler) codeError(w http.ResponseWriter, r *http.Request, err error) bool {
-	var wrong *WrongCodeError
-	switch {
-	case errors.As(err, &wrong) && wrong.TriesLeft == 0:
-		retryAfter(w, wrong.RetryAfter)
-		httpx.WriteError(w, r, http.StatusTooManyRequests, CodeTooManyTries, wrong.Error())
-	case errors.As(err, &wrong):
-		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidCode, wrong.Error())
-	case errors.Is(err, ErrCodeExpired):
-		httpx.WriteError(w, r, http.StatusGone, CodeCodeExpired, err.Error())
-	default:
-		return false
-	}
-	return true
-}
-
-// verifySignupResponse: the ticket, and who already signs in with the phone
-// (null: nobody).
-type verifySignupResponse struct {
-	Ticket  string      `json:"ticket"`
-	Account *PhoneOwner `json:"account"`
-}
-
-// signupResponse is loginResponse with whether the phone had an account.
-type signupResponse struct {
+// signedIn is a login answer with a status, where an endpoint answers more
+// than one shape.
+type signedIn struct {
+	Status string `json:"status"` // signed_in
 	loginResponse
-	Existing bool `json:"existing"`
 }
 
 func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
@@ -206,16 +139,66 @@ func (h *Handler) signup(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.Password != nil && len(*req.Password) > 256 || len(req.DeviceID) > 100 {
+	if len(req.Password) > 256 || len(req.DeviceID) > 100 {
 		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "password or device_id too long")
 		return
 	}
-	res, existing, err := h.svc.Signup(r.Context(), req)
-	if h.accountsError(w, r, "sign up", err) {
+	res, err := h.svc.Signup(r.Context(), req)
+	h.answerLogin(w, r, "sign up", res, err)
+}
+
+// --- Phone: password reset ---------------------------------------------------------
+
+type phoneRequest struct {
+	Phone    string `json:"phone"`
+	Code     string `json:"code"`
+	Purpose  string `json:"purpose"`
+	DeviceID string `json:"device_id"`
+}
+
+func (h *Handler) phoneRequest(w http.ResponseWriter, r *http.Request, purposeNeeded bool) (phoneRequest, bool) {
+	var req phoneRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return req, false
+	}
+	if purposeNeeded && req.Purpose != PurposeReset {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, `purpose must be "reset"`)
+		return req, false
+	}
+	if len(req.Code) > 20 || len(req.DeviceID) > 100 {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "code or device_id too long")
+		return req, false
+	}
+	if len(req.Phone) > 50 {
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidPhone, ErrInvalidPhone.Error())
+		return req, false
+	}
+	return req, true
+}
+
+func (h *Handler) phoneStart(w http.ResponseWriter, r *http.Request) {
+	req, ok := h.phoneRequest(w, r, true)
+	if !ok {
 		return
 	}
-	if resp, ok := h.loggedIn(w, r, res); ok {
-		httpx.WriteJSON(w, r, http.StatusOK, signupResponse{loginResponse: resp, Existing: existing})
+	err := h.svc.StartPhone(r.Context(), req.Phone, req.Purpose, httpx.ClientIP(r, h.trustProxy))
+	if h.limited(w, r, err) || h.accountsError(w, r, "send code", err) {
+		return
+	}
+	httpx.WriteJSON(w, r, http.StatusOK, map[string]int{"resend_in": int(ResendAfter.Seconds()), "expires_in": int(CodeTTL.Seconds())})
+}
+
+func (h *Handler) phoneVerify(w http.ResponseWriter, r *http.Request) {
+	req, ok := h.phoneRequest(w, r, true)
+	if !ok {
+		return
+	}
+	ticket, err := h.svc.VerifyPhone(r.Context(), req.Phone, req.Code)
+	switch {
+	case h.codeError(w, r, err):
+	case h.accountsError(w, r, "verify code", err):
+	default:
+		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"ticket": ticket})
 	}
 }
 
@@ -235,13 +218,65 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := h.svc.Reset(r.Context(), req.Ticket, req.Password, req.DeviceID)
-	if h.accountsError(w, r, "reset password", err) {
+	h.answerLogin(w, r, "reset password", res, err)
+}
+
+// --- Phone: a signed-in person adding theirs ---------------------------------------
+
+func (h *Handler) myPhoneStart(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r.Context())
+	req, ok := h.phoneRequest(w, r, false)
+	if !ok {
 		return
 	}
-	if resp, ok := h.loggedIn(w, r, res); ok {
-		httpx.WriteJSON(w, r, http.StatusOK, resp)
+	err := h.svc.StartMyPhone(r.Context(), p, req.Phone, httpx.ClientIP(r, h.trustProxy))
+	if h.limited(w, r, err) || h.accountsError(w, r, "send code", err) {
+		return
 	}
+	httpx.WriteJSON(w, r, http.StatusOK, map[string]int{"resend_in": int(ResendAfter.Seconds()), "expires_in": int(CodeTTL.Seconds())})
 }
+
+func (h *Handler) myPhoneVerify(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r.Context())
+	req, ok := h.phoneRequest(w, r, false)
+	if !ok {
+		return
+	}
+	res, err := h.svc.VerifyMyPhone(r.Context(), p, req.Phone, req.Code, req.DeviceID)
+	if h.codeError(w, r, err) {
+		return
+	}
+	h.answerLogin(w, r, "verify phone", res, err)
+}
+
+type ticketRequest struct {
+	Ticket   string `json:"ticket"`
+	DeviceID string `json:"device_id"`
+}
+
+func (h *Handler) ticketRequest(w http.ResponseWriter, r *http.Request) (ticketRequest, bool) {
+	var req ticketRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return req, false
+	}
+	if len(req.DeviceID) > 100 {
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "device_id too long")
+		return req, false
+	}
+	return req, true
+}
+
+func (h *Handler) myPhoneTelegram(w http.ResponseWriter, r *http.Request) {
+	p, _ := PrincipalFrom(r.Context())
+	req, ok := h.ticketRequest(w, r)
+	if !ok {
+		return
+	}
+	res, err := h.svc.MyPhoneTelegram(r.Context(), p, req.Ticket, req.DeviceID)
+	h.answerLogin(w, r, "telegram phone", res, err)
+}
+
+// --- Google -----------------------------------------------------------------------
 
 func (h *Handler) googleStart(w http.ResponseWriter, r *http.Request) {
 	redirect, cookie, err := h.svc.GoogleStart(r.URL.Query().Get("return"))
@@ -288,47 +323,80 @@ func googleCookieFor(value string, maxAge int) *http.Cookie {
 	}
 }
 
-type googleTicketRequest struct {
-	Ticket   string `json:"ticket"`
-	DeviceID string `json:"device_id"`
-}
-
-type googleSignedIn struct {
-	Status string `json:"status"` // signed_in
-	loginResponse
-}
-
-type googleNeedsPhone struct {
-	Status       string `json:"status"` // needs_phone
-	GoogleTicket string `json:"google_ticket"`
-	FirstName    string `json:"first_name"`
-	LastName     string `json:"last_name"`
-	Email        string `json:"email"`
-}
-
 func (h *Handler) googleTicket(w http.ResponseWriter, r *http.Request) {
-	var req googleTicketRequest
-	if !httpx.DecodeJSON(w, r, &req) {
-		return
-	}
-	if len(req.DeviceID) > 100 {
-		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "device_id too long")
+	req, ok := h.ticketRequest(w, r)
+	if !ok {
 		return
 	}
 	res, err := h.svc.GoogleTicket(r.Context(), req.Ticket, req.DeviceID)
-	if h.accountsError(w, r, "google ticket", err) {
-		return
-	}
-	if res.SignedIn == nil {
-		a := res.Account
-		httpx.WriteJSON(w, r, http.StatusOK, googleNeedsPhone{Status: "needs_phone", GoogleTicket: res.SignupTicket,
-			FirstName: a.FirstName, LastName: a.LastName, Email: a.Email})
-		return
-	}
-	if resp, ok := h.loggedIn(w, r, *res.SignedIn); ok {
-		httpx.WriteJSON(w, r, http.StatusOK, googleSignedIn{Status: "signed_in", loginResponse: resp})
-	}
+	h.answerLogin(w, r, "google ticket", res, err)
 }
+
+// --- Telegram ---------------------------------------------------------------------
+
+type telegramStartRequest struct {
+	Purpose string `json:"purpose"`
+	Return  string `json:"return"`
+}
+
+func (h *Handler) telegramStart(w http.ResponseWriter, r *http.Request) {
+	var req telegramStartRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	var pr *Principal
+	switch req.Purpose {
+	case TelegramSignIn:
+	case TelegramVerify:
+		token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		p, err := h.svc.Authenticate(r.Context(), strings.TrimSpace(token))
+		if errors.Is(err, ErrUnauthenticated) {
+			httpx.WriteError(w, r, http.StatusUnauthorized, httpx.CodeUnauthorized, "log in again")
+			return
+		}
+		if err != nil {
+			h.internal(w, r, "authenticate", err)
+			return
+		}
+		if _, err := h.svc.phoneless(r.Context(), p); h.accountsError(w, r, "telegram start", err) {
+			return
+		}
+		pr = &p
+	default:
+		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, `purpose must be "signin" or "verify"`)
+		return
+	}
+	u, err := h.svc.TelegramStart(r.Context(), req.Purpose, pr, req.Return)
+	if h.accountsError(w, r, "telegram start", err) {
+		return
+	}
+	httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"url": u})
+}
+
+func (h *Handler) telegramCallback(w http.ResponseWriter, r *http.Request) {
+	if !h.svc.TelegramEnabled() {
+		h.accountsError(w, r, "telegram callback", ErrTelegramOff)
+		return
+	}
+	location, reason := h.svc.TelegramCallback(r.Context(), r.URL.Query())
+	if reason != nil {
+		httpx.Logger(r.Context()).Warn("telegram sign-in failed", slog.Any("err", reason))
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	http.Redirect(w, r, location, http.StatusFound) //nolint:gosec // G710: always WEB_ORIGIN's page; the return path is checked by safeReturn
+}
+
+func (h *Handler) telegramTicket(w http.ResponseWriter, r *http.Request) {
+	req, ok := h.ticketRequest(w, r)
+	if !ok {
+		return
+	}
+	res, err := h.svc.TelegramTicket(r.Context(), req.Ticket, req.DeviceID)
+	h.answerLogin(w, r, "telegram ticket", res, err)
+}
+
+// --- Profile ----------------------------------------------------------------------
 
 type profileRequest struct {
 	FirstName *string `json:"first_name"`
@@ -347,6 +415,18 @@ func (h *Handler) setProfile(w http.ResponseWriter, r *http.Request) {
 	h.me(w, r)
 }
 
+// --- Shared -----------------------------------------------------------------------
+
+// answerLogin answers a new session (LoginResponse), or the error.
+func (h *Handler) answerLogin(w http.ResponseWriter, r *http.Request, what string, res LoginResult, err error) {
+	if h.accountsError(w, r, what, err) {
+		return
+	}
+	if resp, ok := h.loggedIn(w, r, res); ok {
+		httpx.WriteJSON(w, r, http.StatusOK, resp)
+	}
+}
+
 // loggedIn is the login answer for a new session.
 func (h *Handler) loggedIn(w http.ResponseWriter, r *http.Request, res LoginResult) (loginResponse, bool) {
 	prof, err := h.svc.Profile(r.Context(), res.Principal, h.today())
@@ -355,6 +435,36 @@ func (h *Handler) loggedIn(w http.ResponseWriter, r *http.Request, res LoginResu
 		return loginResponse{}, false
 	}
 	return loginResponse{Token: res.Token, ExpiresAt: res.ExpiresAt, User: prof}, true
+}
+
+// limited answers 429 for too many codes; false (and nothing written)
+// otherwise.
+func (h *Handler) limited(w http.ResponseWriter, r *http.Request, err error) bool {
+	var limited *RateLimitedError
+	if !errors.As(err, &limited) {
+		return false
+	}
+	retryAfter(w, limited.RetryAfter)
+	httpx.WriteError(w, r, http.StatusTooManyRequests, httpx.CodeRateLimited, limited.Error())
+	return true
+}
+
+// codeError answers a wrong, spent or expired code; false (and nothing
+// written) for anything else.
+func (h *Handler) codeError(w http.ResponseWriter, r *http.Request, err error) bool {
+	var wrong *WrongCodeError
+	switch {
+	case errors.As(err, &wrong) && wrong.TriesLeft == 0:
+		retryAfter(w, wrong.RetryAfter)
+		httpx.WriteError(w, r, http.StatusTooManyRequests, CodeTooManyTries, wrong.Error())
+	case errors.As(err, &wrong):
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidCode, wrong.Error())
+	case errors.Is(err, ErrCodeExpired):
+		httpx.WriteError(w, r, http.StatusGone, CodeCodeExpired, err.Error())
+	default:
+		return false
+	}
+	return true
 }
 
 // accountsError answers the errors the accounts endpoints share; false (and
@@ -372,10 +482,21 @@ func (h *Handler) accountsError(w http.ResponseWriter, r *http.Request, what str
 		httpx.WriteError(w, r, http.StatusServiceUnavailable, CodeSMSUnavailable, ErrSMSFailed.Error())
 	case errors.Is(err, ErrGoogleOff):
 		httpx.WriteError(w, r, http.StatusServiceUnavailable, CodeGoogleUnavailable, err.Error())
+	case errors.Is(err, ErrTelegramOff):
+		httpx.WriteError(w, r, http.StatusServiceUnavailable, CodeTelegramUnavailable, err.Error())
+	case errors.Is(err, ErrMailOff):
+		httpx.WriteError(w, r, http.StatusServiceUnavailable, CodeEmailUnavailable, err.Error())
+	case errors.Is(err, ErrMailFailed):
+		httpx.Logger(r.Context()).Error(what, slog.Any("err", err))
+		httpx.WriteError(w, r, http.StatusServiceUnavailable, CodeEmailUnavailable, ErrMailFailed.Error())
 	case errors.Is(err, ErrInvalidPhone):
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidPhone, err.Error())
+	case errors.Is(err, ErrInvalidEmail):
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidEmail, err.Error())
 	case errors.Is(err, ErrInvalidTicket):
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidTicket, err.Error())
+	case errors.Is(err, ErrNoTelegramPhone):
+		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeTelegramNoPhone, err.Error())
 	case errors.As(err, &invalid):
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeWeakPassword, invalid.Error())
 	case errors.As(err, &profile):
@@ -384,25 +505,10 @@ func (h *Handler) accountsError(w http.ResponseWriter, r *http.Request, what str
 		httpx.WriteError(w, r, http.StatusNotFound, CodeNoAccount, err.Error())
 	case errors.Is(err, ErrGoogleTaken):
 		httpx.WriteError(w, r, http.StatusConflict, CodeGoogleTaken, err.Error())
-	case errors.Is(err, ErrPhoneTaken):
-		httpx.WriteError(w, r, http.StatusConflict, CodePhoneTaken, err.Error())
-	case errors.Is(err, ErrIdentitySpent):
-		httpx.WriteError(w, r, http.StatusConflict, CodeIdentitySpent, err.Error())
 	case errors.Is(err, ErrEmailTaken):
 		httpx.WriteError(w, r, http.StatusConflict, CodeEmailTaken, err.Error())
-	case errors.Is(err, ErrInvalidEmail):
-		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidEmail, err.Error())
-	case errors.Is(err, ErrTelegramOff):
-		httpx.WriteError(w, r, http.StatusServiceUnavailable, CodeTelegramOff, err.Error())
-	case errors.Is(err, ErrInvalidTelegram):
-		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidTelegram, err.Error())
-	case errors.Is(err, ErrTelegramTaken):
-		httpx.WriteError(w, r, http.StatusConflict, CodeTelegramTaken, err.Error())
-	case errors.Is(err, ErrMailOff):
-		httpx.WriteError(w, r, http.StatusServiceUnavailable, CodeEmailUnavailable, err.Error())
-	case errors.Is(err, ErrMailFailed):
-		httpx.Logger(r.Context()).Error(what, slog.Any("err", err))
-		httpx.WriteError(w, r, http.StatusServiceUnavailable, CodeEmailUnavailable, ErrMailFailed.Error())
+	case errors.Is(err, ErrPhoneSet):
+		httpx.WriteError(w, r, http.StatusConflict, CodePhoneAlreadySet, err.Error())
 	default:
 		h.internal(w, r, what, err)
 	}
@@ -411,117 +517,4 @@ func (h *Handler) accountsError(w http.ResponseWriter, r *http.Request, what str
 
 func retryAfter(w http.ResponseWriter, d time.Duration) {
 	w.Header().Set("Retry-After", strconv.Itoa(max(int(math.Ceil(d.Seconds())), 1)))
-}
-
-type telegramSignInRequest struct {
-	Auth     json.RawMessage `json:"auth"`
-	DeviceID string          `json:"device_id"`
-}
-
-type telegramNeedsPhone struct {
-	Status         string `json:"status"` // needs_phone
-	TelegramTicket string `json:"telegram_ticket"`
-	FirstName      string `json:"first_name"`
-	LastName       string `json:"last_name"`
-}
-
-func (h *Handler) telegramSignIn(w http.ResponseWriter, r *http.Request) {
-	var req telegramSignInRequest
-	if !httpx.DecodeJSON(w, r, &req) {
-		return
-	}
-	if len(req.DeviceID) > 100 {
-		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "device_id too long")
-		return
-	}
-	res, err := h.svc.TelegramSignIn(r.Context(), req.Auth, req.DeviceID)
-	if h.accountsError(w, r, "telegram sign-in", err) {
-		return
-	}
-	if res.SignedIn == nil {
-		httpx.WriteJSON(w, r, http.StatusOK, telegramNeedsPhone{Status: "needs_phone", TelegramTicket: res.SignupTicket,
-			FirstName: res.Account.FirstName, LastName: res.Account.LastName})
-		return
-	}
-	if resp, ok := h.loggedIn(w, r, *res.SignedIn); ok {
-		httpx.WriteJSON(w, r, http.StatusOK, googleSignedIn{Status: "signed_in", loginResponse: resp})
-	}
-}
-
-type telegramCheckStartRequest struct {
-	Purpose string `json:"purpose"`
-	Identity
-}
-
-func (h *Handler) telegramCheckStart(w http.ResponseWriter, r *http.Request) {
-	var req telegramCheckStartRequest
-	if !httpx.DecodeJSON(w, r, &req) {
-		return
-	}
-	if req.Purpose != PurposeSignup && req.Purpose != PurposeReset {
-		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, `purpose must be "signup" or "reset"`)
-		return
-	}
-	c, err := h.svc.StartTelegramCheck(r.Context(), req.Purpose, req.Identity, httpx.ClientIP(r, h.trustProxy))
-	var limited *RateLimitedError
-	switch {
-	case errors.As(err, &limited):
-		retryAfter(w, limited.RetryAfter)
-		httpx.WriteError(w, r, http.StatusTooManyRequests, httpx.CodeRateLimited, "too many phone checks from this network; try again later")
-	case h.accountsError(w, r, "telegram check", err):
-	default:
-		httpx.WriteJSON(w, r, http.StatusOK, c)
-	}
-}
-
-func (h *Handler) telegramCheck(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Nonce    string `json:"nonce"`
-		DeviceID string `json:"device_id"`
-	}
-	if !httpx.DecodeJSON(w, r, &req) {
-		return
-	}
-	if len(req.DeviceID) > 100 {
-		httpx.WriteError(w, r, http.StatusBadRequest, httpx.CodeBadRequest, "device_id too long")
-		return
-	}
-	res, err := h.svc.CheckTelegram(r.Context(), req.Nonce, req.DeviceID)
-	switch {
-	case h.codeError(w, r, err):
-	case h.accountsError(w, r, "telegram check", err):
-	case res.SignedIn != nil:
-		if resp, ok := h.loggedIn(w, r, *res.SignedIn); ok {
-			httpx.WriteJSON(w, r, http.StatusOK, googleSignedIn{Status: "signed_in", loginResponse: resp})
-		}
-	case !res.Verified:
-		httpx.WriteJSON(w, r, http.StatusOK, map[string]string{"status": "pending"})
-	default:
-		body := map[string]any{"status": "verified", "phone": res.Phone, "ticket": res.Ticket}
-		if res.Purpose == PurposeSignup {
-			body["account"] = res.Owner
-		}
-		httpx.WriteJSON(w, r, http.StatusOK, body)
-	}
-}
-
-// telegramWebhook takes the sign-in bot's updates. It answers 200 to
-// anything from Telegram (a failed reply is only logged, so Telegram doesn't
-// retry), 403 to anyone without the secret.
-func (h *Handler) telegramWebhook(w http.ResponseWriter, r *http.Request) {
-	if !h.svc.telegramOn() {
-		httpx.WriteError(w, r, http.StatusServiceUnavailable, CodeTelegramOff, ErrTelegramOff.Error())
-		return
-	}
-	var u telegram.Update
-	secret := r.Header.Get("X-Telegram-Bot-Api-Secret-Token")
-	if !h.svc.telegramSecret(secret) {
-		httpx.WriteError(w, r, http.StatusForbidden, httpx.CodeForbidden, ErrBadWebhook.Error())
-		return
-	}
-	if !httpx.DecodeJSON(w, r, &u) {
-		return
-	}
-	logTelegram(httpx.Logger(r.Context()), h.svc.HandleTelegramUpdate(r.Context(), secret, u))
-	w.WriteHeader(http.StatusOK)
 }

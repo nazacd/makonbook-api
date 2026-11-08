@@ -58,6 +58,7 @@ enrol).
 | D28 | **Sign-up starts with an identity**: an **email** proved by a 6-digit code sent to it, or **Google**. The **phone** (SMS code) comes second, verified *with* that identity, and only then is the account made or linked. Each identity can show the owner of **one phone at most** (`identity_spent` after). People can sign in with their email too. Phone-first sign-up is gone. | 2026-11-06. Stops a phone number from being looked up without an email or Google account behind it; only the web used phone-first sign-up. |
 | D29 | **Telegram** is a third identity (the Login Widget) and a **free way to prove the phone** next to SMS: the sign-in bot (its own bot) asks for the person's **own contact**; only +998 numbers. | 2026-11-06. Saves SMS costs; Telegram is widespread in Uzbekistan. |
 | D30 | **A phone shared through the bot links that Telegram account** to whoever signs up or resets with it (never taken from someone else active, never replacing another link). A sign-up whose Telegram identity is the **same Telegram account that shared the phone** signs straight into the phone's owner, registered or enrolled. | 2026-11-07, after a free account owner coming back with Telegram was told "already exists". |
+| D31 | **Accounts reworked** (supersedes D24, D28–D30): sign in or sign up with an **email code**, **Google** or **Telegram** (its OpenID Connect flow, which can share a **verified phone**) — no phone step at sign-up. An account without a phone is **locked** from the content until it adds one (SMS code or Telegram). **Proving a number someone else has merges the phoneless account into theirs** (no "Is this you?", no "already exists"). Photos are copied, never hotlinked. Telegram's old hash widget and the "share my number" bot are gone. | 2026-11-08, decided by the product owner: proving the number is proof enough. |
 
 ## 3. System overview
 
@@ -126,7 +127,7 @@ Verified against the live account (read-only) on 2026-10-09/10 and the
 | Rule | Definition |
 |---|---|
 | **Active student** (may log in) | HolliHop status `Занимается` (StatusId 2) **and** valid, unique normalised phone. Only students who are or have been active are stored. |
-| **Registered student** (section 21) | Signed up themselves with a verified Uzbek phone (`students.source = 'self'`, ids −1000001 and down); not in HolliHop, no branch, no groups. Always active. Becomes the HolliHop student (**enrolled**) when the sync stores them (D23). |
+| **Registered student** (section 21) | Signed up themselves (`students.source = 'self'`, ids −1000001 and down), with a verified phone or none yet (then locked from the content, D31); not in HolliHop, no branch, no groups. Always active. Becomes the HolliHop student (**enrolled**) when the sync stores them with the same phone (D23). |
 | **Group roster** | Enrollments current on that date (dates + weekday mask) **∩** active students. |
 | **Active teacher** (may log in) | `Fired = false` **and** listed in `TeacherIds` of a current schedule item **and** valid unique phone. "Current" allows a margin: the item starts within 14 days and ended no more than 7 days ago, so teachers aren't logged out between one group ending and the next starting. |
 | **Attendance-enabled group** | `LearningType = GROUP` and office ≠ `ONLINE` (configurable). |
@@ -624,8 +625,11 @@ email_codes(id, email, salt, code_hash, ip, tries, created_at, expires_at, used_
 credentials.email UNIQUE NULL                        -- lower case; sign-in identifier
 auth_tickets.identity (a phone ticket's identity ticket hash), revealed_phone (an identity's one shown phone)
 telegram_links(telegram_id PK, person_kind, person_id, username, created_at, UNIQUE(person_kind, person_id))
-telegram_phone_checks(nonce_hash PK, purpose, identity, identity_purpose, ip, telegram_user_id, phone, created_at,
-                      expires_at, verified_at, used_at)
+telegram_phone_checks(…)                             -- unused since D31
+photos(id PK, content_type, data, created_at); credentials.photo_id
+oauth_states(state_hash PK, purpose (signin|verify), verifier, person_kind, person_id, return_path, created_at,
+             expires_at, used_at)                    -- Telegram's OpenID Connect flow
+google_links: several per person (D31)
 auth_tickets(token_hash PK, purpose (signup|reset|google|google_signup), phone NULL, google_sub NULL, email,
              first_name, last_name, created_at, expires_at, used_at)
 google_links(sub PK, person_kind, person_id, email, created_at, UNIQUE(person_kind, person_id))
@@ -660,19 +664,22 @@ GET  /v1/me                            profile, role, groups
 PUT  /v1/me/profile                    {first_name, last_name} — own names (21)
 
 # accounts (21)
-POST /v1/auth/email/start              {email} → {resend_in, expires_in}; a code by email (sign-up's first step)
-POST /v1/auth/email/verify             {email, code} → {email_ticket} | 409 email_taken
-POST /v1/auth/phone/start              {phone, purpose: signup|reset} → {resend_in, expires_in}; SMS code
-POST /v1/auth/phone/verify             {phone, code, purpose, email_ticket|google_ticket} → {ticket, account}
-POST /v1/auth/signup                   {ticket, email_ticket|google_ticket|telegram_ticket, first_name, last_name, password|null} → login + existing
-POST /v1/auth/telegram                 {auth (Login Widget data)} → signed_in (login) | needs_phone {telegram_ticket, names}
-POST /v1/auth/phone/telegram/start     {purpose, identity (signup)} → {nonce, link, expires_in}
-POST /v1/auth/phone/telegram/check     {nonce} → {status: pending} | {status: verified, phone, ticket, account}
-POST /v1/telegram/webhook              the sign-in bot's updates (secret header)
-POST /v1/auth/reset                    {ticket, password} → login
+POST /v1/auth/email/start              {email} → {resend_in, expires_in}; a code by email
+POST /v1/auth/email/verify             {email, code} → {status: signed_in, token, expires_at, user} | {status: new, email_ticket}
+POST /v1/auth/signup                   {email_ticket, first_name, last_name, password} → login (no phone yet)
 GET  /v1/auth/google/start?return=     302 to Google (PKCE, state cookie)
 GET  /v1/auth/google/callback          302 to WEB_ORIGIN/auth/google#ticket=…&return=… or #error=…
-POST /v1/auth/google/ticket            {ticket} → signed_in (login) | needs_phone {google_ticket, names, email}
+POST /v1/auth/google/ticket            {ticket} → login (linked, by email, or a new account)
+POST /v1/auth/telegram/start           {purpose: signin|verify, return?} → {url} (verify: bearer)
+GET  /v1/auth/telegram/callback        302 to WEB_ORIGIN/auth/telegram?ticket=…&purpose=…&return=… or ?error=…
+POST /v1/auth/telegram/ticket          {ticket} → login (linked, by phone, or a new account)
+POST /v1/me/phone/start                {phone} → {resend_in} (no phone yet)
+POST /v1/me/phone/verify               {phone, code} → login (the phone set, or merged into its owner)
+POST /v1/me/phone/telegram             {ticket (verify)} → login (as /v1/me/phone/verify)
+POST /v1/auth/phone/start              {phone, purpose: reset} → {resend_in, expires_in}; SMS code
+POST /v1/auth/phone/verify             {phone, code, purpose: reset} → {ticket}
+POST /v1/auth/reset                    {ticket, password} → login
+GET  /v1/photos/{id}                   a profile photo (no token, long cache)
 
 # teacher
 GET  /v1/teacher/lessons?date=         lesson days for the teacher
@@ -765,149 +772,108 @@ Lesson days, sessions, QR, scanning, overrides, outbox write-back (dry-run until
 
 Deferred on purpose: stricter device policy (D14), substitute-teacher handling without a HolliHop change (D12), Telegram, push notifications.
 
-## 21. Accounts (built)
+## 21. Accounts (built; reworked by D31)
 
 Sign-up is open to everyone, for **student accounts only** (D22); teachers and support teachers come only
-from HolliHop. Phone + password login (section 7) is unchanged. Built in `internal/auth` (codes, tickets,
-sign-up, reset, Google, own names), `internal/people` (self-registered students, the enrolment link),
-`internal/platform/sms` (the SMS gateway) and `internal/platform/mail` (SMTP).
+from HolliHop. Phone + password login (section 7) is unchanged, and also takes a username or an email. Built
+in `internal/auth` (codes, tickets, email, Google, Telegram, adding a phone and merging, photos, own names),
+`internal/people` (registered students, the enrolment link, the merge's rows), `internal/platform/sms` (the SMS
+gateway) and `internal/platform/mail` (SMTP).
 
-**Order of a sign-up (D28, D29):** (1) an identity: an email (`/v1/auth/email/start`, `/v1/auth/email/verify` →
-`email_ticket`), Google (`/v1/auth/google/*` → `google_ticket`) or Telegram (`/v1/auth/telegram` →
-`telegram_ticket`); (2) the phone, by SMS code (`/v1/auth/phone/start`, `/v1/auth/phone/verify`) or through the
-Telegram bot (`/v1/auth/phone/telegram/start`, `/check`), with that identity → `ticket` and whose the number
-is; (3) `/v1/auth/signup` with the phone ticket and the same identity.
+**Ways in (D31):** an email code (`/v1/auth/email/*` → signed in, or `new` → `/v1/auth/signup`), Google
+(`/v1/auth/google/*`) or Telegram (`/v1/auth/telegram/*`). Google and Telegram always answer a session: the
+linked account, else a match (Google by verified email, Telegram by the shared phone), else a new registered
+student. A phone is added afterwards (21.4) unless Telegram shared it.
 
 ### 21.1 Who is who
 - **Registered** student (`Profile.status = "registered"`): signed up themselves; a row in `students` with
   `source = 'self'`, an id from the sequence `self_student_ids` (−1000001 and down, clear of HolliHop's
-  positive ClientIds and of the demo's −1 … −999999), `phone_raw` = `login_phone` = the verified E.164 phone,
-  `hh_student_id` = the same negative id, no branch, no HolliHop status. Always active; no groups, so no
-  classes, attendance or parents' classes.
+  positive ClientIds and of the demo's −1 … −999999), `phone_raw` = `login_phone` = the verified E.164 phone
+  (or NULL until they add one), `hh_student_id` = the same negative id, no branch, no HolliHop status. Always
+  active; no groups.
+- **No phone yet** (`Profile.phone = null`): the content answers **`403 phone_required`** — practice catalog,
+  packages, attempts, statistics, Ask later, reports, goals, the vocabulary deck and reviews
+  (`auth.RequireContent`). `/v1/me`, profile, password, username, logout, adding a phone and the app config
+  work. Enrolled people are never locked (a HolliHop person whose phone is unusable still has the app).
 - **Enrolled**: everyone in HolliHop, teachers too. A registered student becomes enrolled at the first sync
   that stores them from HolliHop with the same verified phone (D23, 6.2): same account, same password,
-  username, Google link, sessions, attempts, vocabulary, Ask later, reports and goals.
-- Practice for registered students (D26): `practice_tests.open_to_all` (DAY1–DAY10; the importer opens new
-  tests with those codes). The catalog shows the others locked (`version`, `bytes`, `published_at` null, as an
-  unpublished test, so the phone app shows them locked) with `enrolled_only: true`; their package and
-  attempts answer `403 enrolled_only`. Statistics stay open; everything else in practice and vocabulary is
-  open. Enrolled students and teachers: no change.
+  username, Google and Telegram links, sessions, attempts, vocabulary, Ask later, reports and goals.
+- Practice for registered students with a phone (D26): `practice_tests.open_to_all` (DAY1–DAY10). The
+  catalog shows the others locked with `enrolled_only: true`; their package and attempts answer `403
+  enrolled_only`. Enrolled students and teachers: no change.
 - They may sign in to the phone app (D27).
 
 ### 21.2 Codes by email and SMS
-- `POST /v1/auth/email/start {email}` → `{resend_in: 60, expires_in: 600}`. The address is trimmed and
-  lower-cased and must be a plain `name@domain.tld` (else `422 invalid_email`). Codes follow the SMS rules below
-  (`email_codes`: hashed, 10 minutes, 5 tries, per address one a minute and 5 a day, per network 20 an hour).
-  Sent by SMTP (`SMTP_HOST`, `SMTP_PORT` 587 with STARTTLS or 465 with TLS, `SMTP_USERNAME`, `SMTP_PASSWORD`,
-  `MAIL_FROM`); `SMTP_HOST=log` writes the code to the log (development; refused in production); empty is off
-  (`503 email_unavailable`, also when sending fails).
-- `POST /v1/auth/email/verify {email, code}` → `{email_ticket}` (single-use, **30 minutes**: the identity for the
-  phone step), or `409 email_taken` when an active account already has the address (the code proved it, so
-  saying so is fine). Errors as for the phone code.
-- The email is kept in `credentials.email` (unique, lower case); someone who left gives theirs up when another
-  person proves it. `POST /v1/auth/login` takes an email as the identifier too (anything with `@`).
-- `POST /v1/auth/phone/start {phone, purpose: signup|reset}` → `{resend_in: 60, expires_in: 600}`. Uzbek numbers
-  only (`+998`, normalised as in section 5), else `422 invalid_phone`. A **6-digit** code from `crypto/rand`,
-  stored as SHA-256 with a random salt (`phone_codes`), good for **10 minutes and 5 tries**; only a phone's
-  latest code for the purpose counts. Limits: **per phone one code a minute and 5 a day; per network 20 an
-  hour** (`429 rate_limited` with `Retry-After`), checked under an advisory lock on the phone. For `reset` the
-  answer is the same whether or not anyone signs in with the number (a row without a code is stored, so the
-  limits behave the same too), and the SMS goes only to a number that has an account, in the background, so
-  the time taken says nothing either. A sign-up SMS that fails answers `503 sms_unavailable`.
-- `POST /v1/auth/phone/verify {phone, code, purpose, email_ticket|google_ticket}` → `{ticket}`: single-use,
-  **15 minutes**, for that purpose. For `signup` exactly one identity is required (`422 invalid_ticket`
-  otherwise, before the code is tried), and the phone ticket is good for sign-up with that identity only. An
-  identity shows the owner of **one phone at most**: once a verify showed a non-null `account`, verifying any
-  other phone with it is `409 identity_spent` (the same phone again is fine; while every phone it verified had
-  nobody, it isn't spent). For `signup` it also says whose the number is (`account`, D24): `null` (nobody), `{"status": "registered"}`
-  (a registered student), or `{"status": "enrolled", "kind": "student"|"teacher", "name": "Diyora A."}` (first
-  name and the last name's initial, their own name if they set one). Proving the phone is what earns this. A
-  `reset` answer has `ticket` only.
-  Wrong: `422 invalid_code` (the message says how many tries are left); the 5th wrong one spends the code:
-  `429 too_many_tries` (`Retry-After`: when a new code can be sent); expired, used, replaced or never sent:
-  `410 code_expired`.
-- Tickets (`auth_tickets`) are 32 random bytes, stored as SHA-256, spent in the same transaction as what they
-  allow; a request that is turned down (weak password, bad name, phone or Google taken) spends nothing.
-- Gateway: `SMS_PROVIDER=eskiz` — Eskiz.uz (`POST notify.eskiz.uz/api/auth/login` with the account's email and
-  password gives a JWT, kept and renewed an hour before it expires or on a 401; `POST /api/message/sms/send`
-  with `mobile_phone` (digits), `message`, `from`). Eskiz sends only texts it has approved: `SMS_TEXT`
-  (default `SATMAKON: your code is {code}`) must match an approved template; `ESKIZ_FROM` is the sender name
-  (default `4546`, Eskiz's own). `SMS_PROVIDER=log` writes the code to the log (development; refused in
-  production); empty turns sign-up and reset off (`503 sms_unavailable`, and `/v1/app/config` says
-  `signup: false`).
+- **Rules** (both): 6 digits from `crypto/rand`, stored as SHA-256 with a random salt, good for **10 minutes
+  and 5 tries**; only the latest code for an address or phone (and purpose) counts; per address or phone
+  **one a minute and 5 a day**, per network **20 an hour** (`429 rate_limited`, `Retry-After`). Wrong: `422
+  invalid_code` (tries left in the message); the 5th wrong one spends the code (`429 too_many_tries`);
+  expired, used, replaced or never sent: `410 code_expired`.
+- `POST /v1/auth/email/start {email}` → `{resend_in: 60, expires_in: 600}` (trimmed, lower-cased, a plain
+  `name@domain.tld`, else `422 invalid_email`; SMTP: `SMTP_HOST` (`log` in development), `SMTP_PORT` 587/465,
+  `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM`; off: `503 email_unavailable`).
+- `POST /v1/auth/email/verify {email, code}` → `{status: "signed_in", token, expires_at, user}` when someone
+  active has the address (also the way back from a forgotten password), else `{status: "new", email_ticket}`
+  (single-use, 30 minutes). The email is kept in `credentials.email` (unique, lower case).
+- `POST /v1/auth/signup {email_ticket, first_name, last_name, password}` → a login: a registered student with
+  the email, names (1–60 characters, `422 invalid_profile`) and password (section 7, `422 weak_password`), no
+  phone. `409 email_taken` if someone took the address meanwhile.
+- SMS (Eskiz.uz, `SMS_PROVIDER`, `SMS_TEXT` with `{code}`, `ESKIZ_*`): Uzbek numbers only (`422
+  invalid_phone`). **Reset**: `POST /v1/auth/phone/start {phone, purpose: "reset"}` answers the same whether or
+  not anyone signs in with the number (the code goes only to a number that has an account, in the
+  background); `POST /v1/auth/phone/verify {phone, code, purpose: "reset"}` → `{ticket}` (15 minutes);
+  `POST /v1/auth/reset {ticket, password}` sets the password, unlocks, ends other sessions and signs in (`404
+  no_account` if nobody has the number any more). `purpose: "signup"` is gone (`400`).
 
-### 21.3 Sign-up and reset
-- `POST /v1/auth/signup {ticket, email_ticket|null, google_ticket|null, first_name|null, last_name|null,
-  password|null}` (a `signup` ticket and the identity it was verified with, exactly one, else `422
-  invalid_ticket`; the password follows section 7, else `422 weak_password`; required with an email, may be null
-  with Google):
-  - the phone signs in an **enrolled** person, a HolliHop student or teacher (D24; the client asked "is this
-    you?"): no account is made; it signs into theirs, sets the password if given (their other sessions end, as
-    after a password change; the lockout clears), adds the email if no other active account has it (else
-    leaves it out), or links the Google account; the names are ignored and may be null;
-  - the phone signs in a **registered** student: `409 phone_taken`, and nothing changes (no session, no email
-    or Google link, the same password);
-  - nobody's: a registered student is made with the phone, the email (`409 email_taken` if another account took
-    it meanwhile) or Google account, the password, and these names (required: 1–60 characters after trimming, no
-    control characters, else `422 invalid_profile`; stored as the names, not as overrides: at enrolment
-    HolliHop's names replace them, unless they set their own since) and signed in.
-  - Answers as a login plus `existing`. `409 google_taken` if the Google account is linked to someone else who
-    is active (a link to someone who left moves).
-- `POST /v1/auth/reset {ticket, password}` (a `reset` ticket): sets the password of whoever signs in with that
-  phone, clears the lockout, ends every other session and signs in; `404 no_account` if nobody does any more.
-  It is also how a Google-only account sets its first password. Both clear `must_change_password`.
+### 21.3 Google and Telegram
+- **Google** (OAuth code flow with PKCE, run by the API; `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+  `WEB_ORIGIN`): `GET /v1/auth/google/start?return=` (state in a signed HttpOnly cookie) → Google →
+  `GET /v1/auth/google/callback` (claims: issuer, audience, expiry, a verified email; the token comes straight
+  from Google over TLS) → `${WEB_ORIGIN}/auth/google#ticket=…&return=…` (10 minutes) or `#error=google_denied |
+  google_failed` → `POST /v1/auth/google/ticket {ticket}` → a login: the linked account; else whoever active has
+  the email, with Google linked; else a new registered student with no phone (names, the email, the photo,
+  Google linked). Several Google accounts per person (`google_links`).
+- **Telegram** (OpenID Connect, https://core.telegram.org/bots/telegram-login; `TELEGRAM_CLIENT_ID`,
+  `TELEGRAM_CLIENT_SECRET` from @BotFather → the bot → Login Widget, `WEB_ORIGIN`):
+  - `POST /v1/auth/telegram/start {purpose: "signin"|"verify", return?}` → `{url}` at oauth.telegram.org
+    (scope `openid profile phone`, PKCE S256). `verify` needs the bearer of a person without a phone (`409
+    phone_already_set`). State, verifier, return path and (verify) the person are kept server-side
+    (`oauth_states`, by the state's SHA-256, 10 minutes, single use).
+  - `GET /v1/auth/telegram/callback`: trades the code at `oauth.telegram.org/token` (Basic auth with the
+    client id and secret, the verifier), checks the ID token's signature with Telegram's JWKS (RS256 or ES256),
+    issuer `https://oauth.telegram.org`, audience (the client id), expiry; reads `id` (the Telegram user id),
+    names, `preferred_username`, `picture` and `phone_number` (digits → E.164, any country; absent when the
+    person declined). The claims go under a single-use 5-minute ticket; 302 to
+    `${WEB_ORIGIN}/auth/telegram?ticket=…&purpose=…&return=…`, or `?error=telegram_denied | telegram_failed`.
+  - `POST /v1/auth/telegram/ticket {ticket}` (signin) → a login: (a) the linked account (and the shared phone
+    becomes theirs if they have none and nobody else has it); (b) else whoever active has the shared phone
+    (registered or enrolled, student or teacher), Telegram linked if they have none; (c) else a new registered
+    student (names, the phone if shared, the photo, Telegram linked). `must_change_password` as at any login.
+  - `POST /v1/me/phone/telegram {ticket}` (verify, the same person's) applies the shared phone (21.4); no phone
+    shared: `422 telegram_no_phone`.
+  - Links (`telegram_links`, one each way) are never taken from someone else active or replace another.
 
-### 21.4 Google
-- OAuth authorization code flow with **PKCE**, run by the API: the web's pages load nothing from Google.
-  `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (empty = off: `503 google_unavailable`, `google: false` in the app
-  config) and `WEB_ORIGIN` (`https://sat.makonbook.uz`; its `/v1/` is this API, so the redirect URI
-  `${WEB_ORIGIN}/v1/auth/google/callback` is the web's own origin).
-- `GET /v1/auth/google/start?return=<path>` → 302 to Google (`openid email profile`, `prompt=select_account`).
-  The state, the PKCE verifier and the return path (a path on the web's origin, else `/`) go in a 10-minute
-  cookie `mb_google` (HttpOnly, Secure, SameSite=Lax, path `/v1/auth/google/`), signed with HMAC-SHA256 under a
-  key derived from the client secret.
-- `GET /v1/auth/google/callback`: checks the state against the cookie, trades the code at Google's token
-  endpoint (with the secret and the verifier) and reads the ID token's claims: issuer, audience, expiry and
-  `email_verified`. The token comes straight from Google over TLS, so its signature isn't checked (OpenID
-  Connect Core 3.1.3.7; the repo has no JWKS code). Then 302 to `${WEB_ORIGIN}/auth/google#ticket=<t>&return=<path>`
-  (a 10-minute single-use ticket) or `#error=google_denied` (cancelled at Google) / `#error=google_failed`.
-- `POST /v1/auth/google/ticket {ticket}`: a Google account linked to someone active →
-  `{status: "signed_in", token, expires_at, user}` (a HolliHop person still on the default password gets
-  `must_change_password: true`, as at a login); otherwise → `{status: "needs_phone", google_ticket, first_name,
-  last_name, email}`, the `google_ticket` (30 minutes) going to `/v1/auth/signup` once a phone is verified.
-- `google_links(sub PK, person_kind, person_id, email)`: one Google account per person and per account; it
-  follows a student who enrols. Someone who signed in with Google can also sign in with phone + password once
-  they set one.
+### 21.4 Adding a phone, and merging
+- `POST /v1/me/phone/start {phone}` → `{resend_in}`; `POST /v1/me/phone/verify {phone, code}` → a login; or
+  Telegram (21.3). Only a registered student without a phone; anyone else: `409 phone_already_set`.
+- **Applying phone P for person U** (with Telegram account T for the Telegram way), in one transaction:
+  - nobody else active has P → it becomes U's; T is linked to U if free and U has none;
+  - an active person O ≠ U has P (registered or enrolled, student or teacher) → **U is merged into O**: U's
+    Google accounts move to O; U's email replaces O's; U's Telegram link moves if O has none (else goes); T is
+    linked to O if free and O has none; U's photo goes to O if O has none; U's attempts, reviews, parked
+    questions, reports and (if O has none) goals move to O when O is a student (deleted when a teacher); U's
+    credentials and sessions end and U is deleted. The answer is a login for O (`must_change_password` as at
+    any login: an enrolled O still on the default password must replace it).
+  - No "Is this you?" and no "already exists" (D31): proving the number is proof enough.
+- **Passwords**: `POST /v1/auth/password` takes an empty or missing `current_password` when `has_password` is
+  false (Google, Telegram, or never set), so passwordless people set one in Profile.
 
-### 21.5 Telegram (D29)
-- **The sign-in bot**: its own bot (`TELEGRAM_LOGIN_BOT_TOKEN`, `TELEGRAM_LOGIN_BOT_USERNAME`,
-  `TELEGRAM_LOGIN_WEBHOOK_SECRET`; empty token = off), not the alerts' (`TELEGRAM_BOT_TOKEN`) or the review
-  bot's. `GET /v1/app/config` gives `telegram: {bot_id, bot_username}` (the token's number is public) or null.
-- **Sign-in**: the web sends people to oauth.telegram.org (the Login Widget's redirect flow) and posts
-  `#tgAuthResult` to `POST /v1/auth/telegram {auth}`. The hash is checked as Telegram specifies (HMAC-SHA256 of
-  the other fields, sorted, `key=value` joined with `\n`, keyed with SHA-256 of the token; constant-time) and
-  `auth_date` must be within 24 hours, else `422 invalid_telegram`. Linked to someone active → signed in;
-  otherwise `needs_phone` with a `telegram_ticket` (30 minutes), an identity exactly like Google's (password
-  optional; `409 telegram_taken` when linking an account linked to someone else active). `telegram_links`
-  (Telegram id unique, the person, username) follows a student who enrols. `Profile.telegram` says whether one
-  is linked.
-- **Phone through the bot** (instead of an SMS code, for `signup` and `reset`):
-  `POST /v1/auth/phone/telegram/start {purpose, identity (signup)}` → `{nonce, link: https://t.me/<bot>?start=<nonce>,
-  expires_in: 600}` (20 an hour per network). In the bot, `/start <nonce>` ties the check to that Telegram
-  account and shows a *Share my number* button (`request_contact`); a contact counts only if it is the sender's
-  own (`contact.user_id == from.id`) and an Uzbek number. `POST /v1/auth/phone/telegram/check {nonce}` →
-  `{status: "pending"}` or, once, `{status: "verified", phone, ticket, account}` — the same phone ticket as an
-  SMS verify, `account` for `signup` only (and it spends the identity the same way); `410 code_expired` after
-  10 minutes or once traded. A reset answers the same whether or not the number has an account.
-- **Same Telegram on both sides (D30)**: a `signup` check whose identity is a `telegram_ticket` of the
-  Telegram account that shared the phone, for a phone someone active has (registered or enrolled), answers
-  `{status: "signed_in", token, expires_at, user}` instead: signed into the owner, the tickets spent, the
-  Telegram account linked if free (no `phone_taken`). Other identities and SMS checks are as above.
-- **Links from bot checks (D30)**: the phone ticket of a bot check remembers the Telegram account
-  (`auth_tickets.checked_telegram_id`); `/v1/auth/signup` and `/v1/auth/reset` link it to the person they sign
-  in, unless it is linked to someone else active or the person has another Telegram account (then nothing).
-- **Webhook**: `POST /v1/telegram/webhook`, refused (403) without `X-Telegram-Bot-Api-Secret-Token` =
-  the secret. Registered with `makonbook telegram webhook <public API URL>` (`setWebhook`, updates: messages).
+### 21.5 Photos
+- On Google or Telegram sign-in or creation, a person without a photo gets a copy of the picture (https,
+  at most 512 KB, JPEG/PNG/WebP by its bytes; skipped on any failure), kept in `photos` (the database; R2 would
+  still need the API to serve it, as pages load images from their own origin only) and served at
+  `GET /v1/photos/{id}` (random id, no token, `Cache-Control: public, max-age=31536000, immutable`).
+  `Profile.photo_url` is that path, or null. The providers' CDNs are never hotlinked.
 
 ### 21.6 Own names
 - `PUT /v1/me/profile {first_name, last_name}` (students and teachers): the names the person sees for
@@ -916,7 +882,7 @@ is; (3) `/v1/auth/signup` with the phone ticket and the same identity.
   HolliHop's — for HolliHop people only; a registered student needs both. Teachers', admins' and parents'
   views, and Telegram messages, keep HolliHop's names (staff work from HolliHop).
 - `Profile` gains `status` (`enrolled` | `registered`), `phone` (the login phone, E.164, or null), `email`
-  (theirs, or null), `google` (a Google account is linked) and `has_password` (their own password, not the
-  default one).
-- `GET /v1/app/config` gains `signup` (SMS and an identity, email or Google, are configured), `reset` (SMS),
-  `email` and `google`; the web shows those options only when true.
+  (theirs, or null), `google` and `telegram` (an account is linked), `has_password` (their own password, not
+  the default one) and `photo_url`.
+- `GET /v1/app/config` gains `signup` (email codes), `reset` (SMS), `email`, `google` and `telegram`
+  (booleans); the web shows those options only when true.

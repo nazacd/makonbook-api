@@ -106,6 +106,10 @@ type AuthTicket struct {
 	TelegramID        pgtype.Int8
 	TelegramUsername  pgtype.Text
 	CheckedTelegramID pgtype.Int8
+	SharedPhone       pgtype.Text
+	PhotoUrl          pgtype.Text
+	PersonKind        pgtype.Text
+	PersonID          pgtype.Int4
 }
 
 type Credential struct {
@@ -117,6 +121,7 @@ type Credential struct {
 	FailedAttempts    int32
 	LockedUntil       pgtype.Timestamptz
 	Email             pgtype.Text
+	PhotoID           pgtype.Text
 }
 
 type DataQualityIssue struct {
@@ -237,6 +242,18 @@ type LessonDay struct {
 	ScheduleItemIds []int32
 }
 
+type OauthState struct {
+	StateHash  []byte
+	Purpose    string
+	Verifier   string
+	PersonKind pgtype.Text
+	PersonID   pgtype.Int4
+	ReturnPath string
+	CreatedAt  pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+	UsedAt     pgtype.Timestamptz
+}
+
 type Office struct {
 	ID        int32
 	Name      string
@@ -303,6 +320,13 @@ type PhoneCode struct {
 	CreatedAt pgtype.Timestamptz
 	ExpiresAt pgtype.Timestamptz
 	UsedAt    pgtype.Timestamptz
+}
+
+type Photo struct {
+	ID          string
+	ContentType string
+	Data        []byte
+	CreatedAt   pgtype.Timestamptz
 }
 
 type PracticeAttempt struct {

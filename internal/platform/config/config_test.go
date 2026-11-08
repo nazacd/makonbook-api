@@ -142,15 +142,14 @@ func TestMail(t *testing.T) {
 }
 
 func TestTelegramLogin(t *testing.T) {
-	cfg, err := Load(env(map[string]string{"DATABASE_URL": "x", "TELEGRAM_LOGIN_BOT_TOKEN": "123456:AAbb", "TELEGRAM_LOGIN_BOT_USERNAME": "@SatMakonBot",
-		"TELEGRAM_LOGIN_WEBHOOK_SECRET": "a-long-enough-secret_1"}))
-	if err != nil || cfg.TelegramLoginUsername != "SatMakonBot" {
+	cfg, err := Load(env(map[string]string{"DATABASE_URL": "x", "TELEGRAM_CLIENT_ID": "8123456789", "TELEGRAM_CLIENT_SECRET": "s",
+		"WEB_ORIGIN": "https://sat.makonbook.uz"}))
+	if err != nil || cfg.TelegramClientID != "8123456789" {
 		t.Errorf("set: %+v %v", cfg, err)
 	}
 	for _, bad := range []map[string]string{
-		{"TELEGRAM_LOGIN_BOT_TOKEN": "nonsense", "TELEGRAM_LOGIN_BOT_USERNAME": "b", "TELEGRAM_LOGIN_WEBHOOK_SECRET": "a-long-enough-secret_1"},
-		{"TELEGRAM_LOGIN_BOT_TOKEN": "1:a", "TELEGRAM_LOGIN_WEBHOOK_SECRET": "a-long-enough-secret_1"},
-		{"TELEGRAM_LOGIN_BOT_TOKEN": "1:a", "TELEGRAM_LOGIN_BOT_USERNAME": "b", "TELEGRAM_LOGIN_WEBHOOK_SECRET": "short"},
+		{"TELEGRAM_CLIENT_ID": "1", "WEB_ORIGIN": "https://sat.makonbook.uz"},
+		{"TELEGRAM_CLIENT_ID": "1", "TELEGRAM_CLIENT_SECRET": "s"},
 	} {
 		bad["DATABASE_URL"] = "x"
 		if _, err := Load(env(bad)); err == nil {

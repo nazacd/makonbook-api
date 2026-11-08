@@ -522,26 +522,33 @@ The edge nginx block of sat.makonbook.uz (in makonbook-web's `deploy/`) sends
 `/v1/` to this API, so the callback is on the web's own origin. To turn Google
 off, empty the two `GOOGLE_*` settings.
 
-**Telegram (sign-in bot).** A third way to start a sign-up (and to sign in),
-and a free way to prove the phone instead of an SMS code. It is a bot of its
-own, not the alerts' bot (`TELEGRAM_BOT_TOKEN`) or the review bot.
+**Telegram sign-in** (Telegram's OpenID Connect login; it can share the
+person's verified phone, so no SMS is needed). A bot of its own, not the
+alerts' bot (`TELEGRAM_BOT_TOKEN`) or the review bot.
 
 1. In Telegram, @BotFather → `/newbot`: name **SATMAKON**, a username such as
-   `SatMakonBot`. Copy the token.
-2. Still in @BotFather: `/setdomain` → the bot → `sat.makonbook.uz` (the Login
-   Widget works only on that domain). Optionally `/setuserpic` and
-   `/setdescription`.
-3. In `.env`: `TELEGRAM_LOGIN_BOT_TOKEN=<token>`,
-   `TELEGRAM_LOGIN_BOT_USERNAME=SatMakonBot` (without @),
-   `TELEGRAM_LOGIN_WEBHOOK_SECRET=<random>` (e.g. `openssl rand -hex 32`; both
-   are secrets). `docker compose up -d`.
-4. Register the webhook (once, and again if the token, the secret or the host
-   changes): `docker compose run --rm api telegram webhook https://api.makonbook.uz`.
-   Telegram then posts to `https://api.makonbook.uz/v1/telegram/webhook`
-   (the API's public host, through the edge nginx; the secret header keeps
-   others out).
-5. Try it: on the web, start a sign-up, choose *Verify with Telegram*, open
-   the bot and share your number.
+   `SatMakonBot`; give it the SATMAKON logo (`/setuserpic`): people see the
+   bot's name and picture when they approve the login.
+2. Open the **@BotFather mini app** → the bot → **Login Widget**. Add the
+   **Allowed URLs** `https://sat.makonbook.uz` and
+   `https://sat.makonbook.uz/v1/auth/telegram/callback` (exactly). Copy the
+   **Client ID** and **Client Secret** shown there. Leave the signing
+   algorithm at RS256 (ES256 works too; EdDSA/ES256K don't allow the phone).
+3. In `.env`: `TELEGRAM_CLIENT_ID=<client id>`,
+   `TELEGRAM_CLIENT_SECRET=<client secret>` (a secret), and `WEB_ORIGIN`
+   (`https://sat.makonbook.uz`, as for Google). `docker compose up -d`.
+4. Try it: *Continue with Telegram* on the web.
+
+The old settings `TELEGRAM_LOGIN_BOT_TOKEN`, `TELEGRAM_LOGIN_BOT_USERNAME` and
+`TELEGRAM_LOGIN_WEBHOOK_SECRET` (the hash widget and the "share my number"
+bot) aren't read any more: remove them from `.env`. If a webhook was
+registered for that bot, remove it once with
+`curl "https://api.telegram.org/bot<token>/deleteWebhook"`.
+
+**Accounts without a phone.** People who sign up with an email or Google, or
+decline sharing the phone in Telegram, have no phone until they add one (SMS
+code or Telegram); until then practice and vocabulary answer
+`phone_required`. Adding a number someone else has merges the two accounts.
 
 **Who signed up.** Self-registered students are rows of `students` with
 `source = 'self'` (ids −1000001 and down). When the office adds one of them in

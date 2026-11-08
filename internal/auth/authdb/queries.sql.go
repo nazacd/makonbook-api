@@ -79,6 +79,20 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (C
 	return i, err
 }
 
+const deleteCredential = `-- name: DeleteCredential :exec
+DELETE FROM credentials WHERE person_kind = $1 AND person_id = $2
+`
+
+type DeleteCredentialParams struct {
+	PersonKind string
+	PersonID   int32
+}
+
+func (q *Queries) DeleteCredential(ctx context.Context, arg DeleteCredentialParams) error {
+	_, err := q.db.Exec(ctx, deleteCredential, arg.PersonKind, arg.PersonID)
+	return err
+}
+
 const deleteGoogleLink = `-- name: DeleteGoogleLink :exec
 DELETE FROM google_links WHERE sub = $1
 `
@@ -100,24 +114,24 @@ func (q *Queries) DeleteOldEmailCodes(ctx context.Context, before pgtype.Timesta
 	return result.RowsAffected(), nil
 }
 
-const deleteOldPhoneCodes = `-- name: DeleteOldPhoneCodes :execrows
-DELETE FROM phone_codes WHERE created_at < $1::timestamptz
+const deleteOldOAuthStates = `-- name: DeleteOldOAuthStates :execrows
+DELETE FROM oauth_states WHERE expires_at < $1::timestamptz
 `
 
-func (q *Queries) DeleteOldPhoneCodes(ctx context.Context, before pgtype.Timestamptz) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteOldPhoneCodes, before)
+func (q *Queries) DeleteOldOAuthStates(ctx context.Context, before pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOldOAuthStates, before)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
 }
 
-const deleteOldTelegramChecks = `-- name: DeleteOldTelegramChecks :execrows
-DELETE FROM telegram_phone_checks WHERE created_at < $1::timestamptz
+const deleteOldPhoneCodes = `-- name: DeleteOldPhoneCodes :execrows
+DELETE FROM phone_codes WHERE created_at < $1::timestamptz
 `
 
-func (q *Queries) DeleteOldTelegramChecks(ctx context.Context, before pgtype.Timestamptz) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteOldTelegramChecks, before)
+func (q *Queries) DeleteOldPhoneCodes(ctx context.Context, before pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOldPhoneCodes, before)
 	if err != nil {
 		return 0, err
 	}
@@ -134,6 +148,20 @@ func (q *Queries) DeleteOldTickets(ctx context.Context, before pgtype.Timestampt
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deletePersonTelegram = `-- name: DeletePersonTelegram :exec
+DELETE FROM telegram_links WHERE person_kind = $1 AND person_id = $2
+`
+
+type DeletePersonTelegramParams struct {
+	PersonKind string
+	PersonID   int32
+}
+
+func (q *Queries) DeletePersonTelegram(ctx context.Context, arg DeletePersonTelegramParams) error {
+	_, err := q.db.Exec(ctx, deletePersonTelegram, arg.PersonKind, arg.PersonID)
+	return err
 }
 
 const deleteTelegramLink = `-- name: DeleteTelegramLink :exec
@@ -194,7 +222,7 @@ func (q *Queries) EmailOwner(ctx context.Context, email pgtype.Text) (EmailOwner
 }
 
 const getCredential = `-- name: GetCredential :one
-SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email
+SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email, photo_id
 FROM credentials
 WHERE person_kind = $1 AND person_id = $2
 `
@@ -216,12 +244,13 @@ func (q *Queries) GetCredential(ctx context.Context, arg GetCredentialParams) (C
 		&i.FailedAttempts,
 		&i.LockedUntil,
 		&i.Email,
+		&i.PhotoID,
 	)
 	return i, err
 }
 
 const getCredentialByUsername = `-- name: GetCredentialByUsername :one
-SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email
+SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email, photo_id
 FROM credentials
 WHERE username = $1
 `
@@ -238,6 +267,7 @@ func (q *Queries) GetCredentialByUsername(ctx context.Context, username pgtype.T
 		&i.FailedAttempts,
 		&i.LockedUntil,
 		&i.Email,
+		&i.PhotoID,
 	)
 	return i, err
 }
@@ -279,35 +309,19 @@ func (q *Queries) GetLiveSession(ctx context.Context, tokenHash []byte) (GetLive
 	return i, err
 }
 
-const getTelegramCheck = `-- name: GetTelegramCheck :one
-SELECT purpose, identity, identity_purpose, phone, telegram_user_id, expires_at, verified_at, used_at
-FROM telegram_phone_checks WHERE nonce_hash = $1
+const getPhoto = `-- name: GetPhoto :one
+SELECT content_type, data FROM photos WHERE id = $1
 `
 
-type GetTelegramCheckRow struct {
-	Purpose         string
-	Identity        []byte
-	IdentityPurpose pgtype.Text
-	Phone           pgtype.Text
-	TelegramUserID  pgtype.Int8
-	ExpiresAt       pgtype.Timestamptz
-	VerifiedAt      pgtype.Timestamptz
-	UsedAt          pgtype.Timestamptz
+type GetPhotoRow struct {
+	ContentType string
+	Data        []byte
 }
 
-func (q *Queries) GetTelegramCheck(ctx context.Context, nonceHash []byte) (GetTelegramCheckRow, error) {
-	row := q.db.QueryRow(ctx, getTelegramCheck, nonceHash)
-	var i GetTelegramCheckRow
-	err := row.Scan(
-		&i.Purpose,
-		&i.Identity,
-		&i.IdentityPurpose,
-		&i.Phone,
-		&i.TelegramUserID,
-		&i.ExpiresAt,
-		&i.VerifiedAt,
-		&i.UsedAt,
-	)
+func (q *Queries) GetPhoto(ctx context.Context, id string) (GetPhotoRow, error) {
+	row := q.db.QueryRow(ctx, getPhoto, id)
+	var i GetPhotoRow
+	err := row.Scan(&i.ContentType, &i.Data)
 	return i, err
 }
 
@@ -408,6 +422,38 @@ func (q *Queries) InsertGoogleLink(ctx context.Context, arg InsertGoogleLinkPara
 	return err
 }
 
+const insertOAuthState = `-- name: InsertOAuthState :exec
+
+INSERT INTO oauth_states (state_hash, purpose, verifier, person_kind, person_id, return_path, created_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+`
+
+type InsertOAuthStateParams struct {
+	StateHash  []byte
+	Purpose    string
+	Verifier   string
+	PersonKind pgtype.Text
+	PersonID   pgtype.Int4
+	ReturnPath string
+	CreatedAt  pgtype.Timestamptz
+	ExpiresAt  pgtype.Timestamptz
+}
+
+// Telegram's OpenID Connect flow ---------------------------------------------------
+func (q *Queries) InsertOAuthState(ctx context.Context, arg InsertOAuthStateParams) error {
+	_, err := q.db.Exec(ctx, insertOAuthState,
+		arg.StateHash,
+		arg.Purpose,
+		arg.Verifier,
+		arg.PersonKind,
+		arg.PersonID,
+		arg.ReturnPath,
+		arg.CreatedAt,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
 const insertPhoneCode = `-- name: InsertPhoneCode :exec
 INSERT INTO phone_codes (phone, purpose, salt, code_hash, ip, created_at, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -436,31 +482,20 @@ func (q *Queries) InsertPhoneCode(ctx context.Context, arg InsertPhoneCodeParams
 	return err
 }
 
-const insertTelegramCheck = `-- name: InsertTelegramCheck :exec
-INSERT INTO telegram_phone_checks (nonce_hash, purpose, identity, identity_purpose, ip, created_at, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+const insertPhoto = `-- name: InsertPhoto :exec
+
+INSERT INTO photos (id, content_type, data) VALUES ($1, $2, $3)
 `
 
-type InsertTelegramCheckParams struct {
-	NonceHash       []byte
-	Purpose         string
-	Identity        []byte
-	IdentityPurpose pgtype.Text
-	Ip              string
-	CreatedAt       pgtype.Timestamptz
-	ExpiresAt       pgtype.Timestamptz
+type InsertPhotoParams struct {
+	ID          string
+	ContentType string
+	Data        []byte
 }
 
-func (q *Queries) InsertTelegramCheck(ctx context.Context, arg InsertTelegramCheckParams) error {
-	_, err := q.db.Exec(ctx, insertTelegramCheck,
-		arg.NonceHash,
-		arg.Purpose,
-		arg.Identity,
-		arg.IdentityPurpose,
-		arg.Ip,
-		arg.CreatedAt,
-		arg.ExpiresAt,
-	)
+// Photos ---------------------------------------------------------------------------
+func (q *Queries) InsertPhoto(ctx context.Context, arg InsertPhotoParams) error {
+	_, err := q.db.Exec(ctx, insertPhoto, arg.ID, arg.ContentType, arg.Data)
 	return err
 }
 
@@ -487,26 +522,28 @@ func (q *Queries) InsertTelegramLink(ctx context.Context, arg InsertTelegramLink
 }
 
 const insertTicket = `-- name: InsertTicket :exec
-INSERT INTO auth_tickets (token_hash, purpose, phone, google_sub, email, first_name, last_name, identity,
-                          telegram_id, telegram_username, checked_telegram_id, created_at, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10, $11, $12, $13)
+INSERT INTO auth_tickets (token_hash, purpose, phone, google_sub, email, first_name, last_name,
+                          telegram_id, telegram_username, shared_phone, photo_url, person_kind, person_id, created_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10, $11, $12, $13, $14, $15)
 `
 
 type InsertTicketParams struct {
-	TokenHash         []byte
-	Purpose           string
-	Phone             pgtype.Text
-	GoogleSub         pgtype.Text
-	Email             pgtype.Text
-	FirstName         pgtype.Text
-	LastName          pgtype.Text
-	Identity          []byte
-	TelegramID        pgtype.Int8
-	TelegramUsername  pgtype.Text
-	CheckedTelegramID pgtype.Int8
-	CreatedAt         pgtype.Timestamptz
-	ExpiresAt         pgtype.Timestamptz
+	TokenHash        []byte
+	Purpose          string
+	Phone            pgtype.Text
+	GoogleSub        pgtype.Text
+	Email            pgtype.Text
+	FirstName        pgtype.Text
+	LastName         pgtype.Text
+	TelegramID       pgtype.Int8
+	TelegramUsername pgtype.Text
+	SharedPhone      pgtype.Text
+	PhotoUrl         pgtype.Text
+	PersonKind       pgtype.Text
+	PersonID         pgtype.Int4
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
 }
 
 func (q *Queries) InsertTicket(ctx context.Context, arg InsertTicketParams) error {
@@ -518,10 +555,12 @@ func (q *Queries) InsertTicket(ctx context.Context, arg InsertTicketParams) erro
 		arg.Email,
 		arg.FirstName,
 		arg.LastName,
-		arg.Identity,
 		arg.TelegramID,
 		arg.TelegramUsername,
-		arg.CheckedTelegramID,
+		arg.SharedPhone,
+		arg.PhotoUrl,
+		arg.PersonKind,
+		arg.PersonID,
 		arg.CreatedAt,
 		arg.ExpiresAt,
 	)
@@ -623,6 +662,30 @@ func (q *Queries) LockPhone(ctx context.Context, phone string) error {
 	return err
 }
 
+const moveGoogleLinks = `-- name: MoveGoogleLinks :exec
+
+UPDATE google_links SET person_kind = $1, person_id = $2
+WHERE person_kind = $3 AND person_id = $4
+`
+
+type MoveGoogleLinksParams struct {
+	ToKind   string
+	ToID     int32
+	FromKind string
+	FromID   int32
+}
+
+// Merging an account into another (spec 21.4) ------------------------------------
+func (q *Queries) MoveGoogleLinks(ctx context.Context, arg MoveGoogleLinksParams) error {
+	_, err := q.db.Exec(ctx, moveGoogleLinks,
+		arg.ToKind,
+		arg.ToID,
+		arg.FromKind,
+		arg.FromID,
+	)
+	return err
+}
+
 const moveStudentCredentials = `-- name: MoveStudentCredentials :exec
 UPDATE credentials SET person_id = $1
 WHERE person_kind = 'student' AND person_id = $2
@@ -684,6 +747,28 @@ type MoveStudentTelegramParams struct {
 // Telegram ------------------------------------------------------------------------
 func (q *Queries) MoveStudentTelegram(ctx context.Context, arg MoveStudentTelegramParams) error {
 	_, err := q.db.Exec(ctx, moveStudentTelegram, arg.ToID, arg.FromID)
+	return err
+}
+
+const moveTelegramLink = `-- name: MoveTelegramLink :exec
+UPDATE telegram_links SET person_kind = $1, person_id = $2
+WHERE person_kind = $3 AND person_id = $4
+`
+
+type MoveTelegramLinkParams struct {
+	ToKind   string
+	ToID     int32
+	FromKind string
+	FromID   int32
+}
+
+func (q *Queries) MoveTelegramLink(ctx context.Context, arg MoveTelegramLinkParams) error {
+	_, err := q.db.Exec(ctx, moveTelegramLink,
+		arg.ToKind,
+		arg.ToID,
+		arg.FromKind,
+		arg.FromID,
+	)
 	return err
 }
 
@@ -750,45 +835,9 @@ func (q *Queries) NetworkEmailCodesSince(ctx context.Context, arg NetworkEmailCo
 	return items, nil
 }
 
-const networkTelegramChecksSince = `-- name: NetworkTelegramChecksSince :one
-SELECT count(*)::int FROM telegram_phone_checks WHERE ip = $1 AND created_at > $2::timestamptz
-`
-
-type NetworkTelegramChecksSinceParams struct {
-	Ip    string
-	Since pgtype.Timestamptz
-}
-
-func (q *Queries) NetworkTelegramChecksSince(ctx context.Context, arg NetworkTelegramChecksSinceParams) (int32, error) {
-	row := q.db.QueryRow(ctx, networkTelegramChecksSince, arg.Ip, arg.Since)
-	var column_1 int32
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
-const openTelegramCheck = `-- name: OpenTelegramCheck :execrows
-UPDATE telegram_phone_checks SET telegram_user_id = $1
-WHERE nonce_hash = $2 AND verified_at IS NULL AND used_at IS NULL AND expires_at > $3::timestamptz
-`
-
-type OpenTelegramCheckParams struct {
-	TelegramUserID pgtype.Int8
-	NonceHash      []byte
-	Now            pgtype.Timestamptz
-}
-
-// /start <nonce>: the check now belongs to this Telegram account.
-func (q *Queries) OpenTelegramCheck(ctx context.Context, arg OpenTelegramCheckParams) (int64, error) {
-	result, err := q.db.Exec(ctx, openTelegramCheck, arg.TelegramUserID, arg.NonceHash, arg.Now)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const peekTicket = `-- name: PeekTicket :one
-SELECT phone, google_sub, email, first_name, last_name, identity, revealed_phone, telegram_id, telegram_username,
-       checked_telegram_id
+SELECT phone, google_sub, email, first_name, last_name, telegram_id, telegram_username, shared_phone, photo_url,
+       person_kind, person_id
 FROM auth_tickets
 WHERE token_hash = $1 AND purpose = $2 AND used_at IS NULL AND expires_at > $3::timestamptz
 `
@@ -800,16 +849,17 @@ type PeekTicketParams struct {
 }
 
 type PeekTicketRow struct {
-	Phone             pgtype.Text
-	GoogleSub         pgtype.Text
-	Email             pgtype.Text
-	FirstName         pgtype.Text
-	LastName          pgtype.Text
-	Identity          []byte
-	RevealedPhone     pgtype.Text
-	TelegramID        pgtype.Int8
-	TelegramUsername  pgtype.Text
-	CheckedTelegramID pgtype.Int8
+	Phone            pgtype.Text
+	GoogleSub        pgtype.Text
+	Email            pgtype.Text
+	FirstName        pgtype.Text
+	LastName         pgtype.Text
+	TelegramID       pgtype.Int8
+	TelegramUsername pgtype.Text
+	SharedPhone      pgtype.Text
+	PhotoUrl         pgtype.Text
+	PersonKind       pgtype.Text
+	PersonID         pgtype.Int4
 }
 
 // A ticket that can still be used, without using it (to check a request
@@ -823,11 +873,12 @@ func (q *Queries) PeekTicket(ctx context.Context, arg PeekTicketParams) (PeekTic
 		&i.Email,
 		&i.FirstName,
 		&i.LastName,
-		&i.Identity,
-		&i.RevealedPhone,
 		&i.TelegramID,
 		&i.TelegramUsername,
-		&i.CheckedTelegramID,
+		&i.SharedPhone,
+		&i.PhotoUrl,
+		&i.PersonKind,
+		&i.PersonID,
 	)
 	return i, err
 }
@@ -927,28 +978,6 @@ type ResetPasswordToDefaultParams struct {
 
 func (q *Queries) ResetPasswordToDefault(ctx context.Context, arg ResetPasswordToDefaultParams) (int64, error) {
 	result, err := q.db.Exec(ctx, resetPasswordToDefault, arg.PersonKind, arg.PersonID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const revealPhone = `-- name: RevealPhone :execrows
-UPDATE auth_tickets SET revealed_phone = $1::text
-WHERE token_hash = $2 AND purpose = $3 AND used_at IS NULL
-  AND (revealed_phone IS NULL OR revealed_phone = $1::text)
-`
-
-type RevealPhoneParams struct {
-	Phone     string
-	TokenHash []byte
-	Purpose   string
-}
-
-// An identity ticket shows the owner of one phone at most (spec 21.3): it
-// records that phone, and refuses another.
-func (q *Queries) RevealPhone(ctx context.Context, arg RevealPhoneParams) (int64, error) {
-	result, err := q.db.Exec(ctx, revealPhone, arg.Phone, arg.TokenHash, arg.Purpose)
 	if err != nil {
 		return 0, err
 	}
@@ -1055,6 +1084,23 @@ func (q *Queries) SetPassword(ctx context.Context, arg SetPasswordParams) error 
 	return err
 }
 
+const setPhoto = `-- name: SetPhoto :exec
+INSERT INTO credentials (person_kind, person_id, photo_id)
+VALUES ($1, $2, $3)
+ON CONFLICT (person_kind, person_id) DO UPDATE SET photo_id = EXCLUDED.photo_id
+`
+
+type SetPhotoParams struct {
+	PersonKind string
+	PersonID   int32
+	PhotoID    pgtype.Text
+}
+
+func (q *Queries) SetPhoto(ctx context.Context, arg SetPhotoParams) error {
+	_, err := q.db.Exec(ctx, setPhoto, arg.PersonKind, arg.PersonID, arg.PhotoID)
+	return err
+}
+
 const setTelegramUsername = `-- name: SetTelegramUsername :exec
 UPDATE telegram_links SET username = $1 WHERE telegram_id = $2
 `
@@ -1103,6 +1149,22 @@ func (q *Queries) TelegramLinkByID(ctx context.Context, telegramID int64) (Teleg
 	return i, err
 }
 
+const telegramLinkOf = `-- name: TelegramLinkOf :one
+SELECT telegram_id FROM telegram_links WHERE person_kind = $1 AND person_id = $2
+`
+
+type TelegramLinkOfParams struct {
+	PersonKind string
+	PersonID   int32
+}
+
+func (q *Queries) TelegramLinkOf(ctx context.Context, arg TelegramLinkOfParams) (int64, error) {
+	row := q.db.QueryRow(ctx, telegramLinkOf, arg.PersonKind, arg.PersonID)
+	var telegram_id int64
+	err := row.Scan(&telegram_id)
+	return telegram_id, err
+}
+
 const touchSession = `-- name: TouchSession :exec
 UPDATE auth_sessions
 SET last_seen_at = now(), expires_at = $1
@@ -1117,21 +1179,6 @@ type TouchSessionParams struct {
 // Sliding expiry: called at most once an hour per session.
 func (q *Queries) TouchSession(ctx context.Context, arg TouchSessionParams) error {
 	_, err := q.db.Exec(ctx, touchSession, arg.ExpiresAt, arg.ID)
-	return err
-}
-
-const unlinkGooglePerson = `-- name: UnlinkGooglePerson :exec
-DELETE FROM google_links WHERE person_kind = $1 AND person_id = $2
-`
-
-type UnlinkGooglePersonParams struct {
-	PersonKind string
-	PersonID   int32
-}
-
-// A person links one Google account: a new one replaces the old.
-func (q *Queries) UnlinkGooglePerson(ctx context.Context, arg UnlinkGooglePersonParams) error {
-	_, err := q.db.Exec(ctx, unlinkGooglePerson, arg.PersonKind, arg.PersonID)
 	return err
 }
 
@@ -1167,6 +1214,38 @@ func (q *Queries) UseEmailCode(ctx context.Context, arg UseEmailCodeParams) (int
 	return result.RowsAffected(), nil
 }
 
+const useOAuthState = `-- name: UseOAuthState :one
+UPDATE oauth_states SET used_at = $1::timestamptz
+WHERE state_hash = $2 AND used_at IS NULL AND expires_at > $1::timestamptz
+RETURNING purpose, verifier, person_kind, person_id, return_path
+`
+
+type UseOAuthStateParams struct {
+	Now       pgtype.Timestamptz
+	StateHash []byte
+}
+
+type UseOAuthStateRow struct {
+	Purpose    string
+	Verifier   string
+	PersonKind pgtype.Text
+	PersonID   pgtype.Int4
+	ReturnPath string
+}
+
+func (q *Queries) UseOAuthState(ctx context.Context, arg UseOAuthStateParams) (UseOAuthStateRow, error) {
+	row := q.db.QueryRow(ctx, useOAuthState, arg.Now, arg.StateHash)
+	var i UseOAuthStateRow
+	err := row.Scan(
+		&i.Purpose,
+		&i.Verifier,
+		&i.PersonKind,
+		&i.PersonID,
+		&i.ReturnPath,
+	)
+	return i, err
+}
+
 const usePhoneCode = `-- name: UsePhoneCode :execrows
 UPDATE phone_codes SET used_at = $1::timestamptz
 WHERE id = $2 AND used_at IS NULL
@@ -1185,29 +1264,11 @@ func (q *Queries) UsePhoneCode(ctx context.Context, arg UsePhoneCodeParams) (int
 	return result.RowsAffected(), nil
 }
 
-const useTelegramCheck = `-- name: UseTelegramCheck :execrows
-UPDATE telegram_phone_checks SET used_at = $1::timestamptz
-WHERE nonce_hash = $2 AND verified_at IS NOT NULL AND used_at IS NULL
-`
-
-type UseTelegramCheckParams struct {
-	Now       pgtype.Timestamptz
-	NonceHash []byte
-}
-
-func (q *Queries) UseTelegramCheck(ctx context.Context, arg UseTelegramCheckParams) (int64, error) {
-	result, err := q.db.Exec(ctx, useTelegramCheck, arg.Now, arg.NonceHash)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const useTicket = `-- name: UseTicket :one
 UPDATE auth_tickets SET used_at = $1::timestamptz
 WHERE token_hash = $2 AND purpose = $3 AND used_at IS NULL AND expires_at > $1::timestamptz
-RETURNING phone, google_sub, email, first_name, last_name, identity, revealed_phone, telegram_id, telegram_username,
-          checked_telegram_id
+RETURNING phone, google_sub, email, first_name, last_name, telegram_id, telegram_username, shared_phone, photo_url,
+          person_kind, person_id
 `
 
 type UseTicketParams struct {
@@ -1217,16 +1278,17 @@ type UseTicketParams struct {
 }
 
 type UseTicketRow struct {
-	Phone             pgtype.Text
-	GoogleSub         pgtype.Text
-	Email             pgtype.Text
-	FirstName         pgtype.Text
-	LastName          pgtype.Text
-	Identity          []byte
-	RevealedPhone     pgtype.Text
-	TelegramID        pgtype.Int8
-	TelegramUsername  pgtype.Text
-	CheckedTelegramID pgtype.Int8
+	Phone            pgtype.Text
+	GoogleSub        pgtype.Text
+	Email            pgtype.Text
+	FirstName        pgtype.Text
+	LastName         pgtype.Text
+	TelegramID       pgtype.Int8
+	TelegramUsername pgtype.Text
+	SharedPhone      pgtype.Text
+	PhotoUrl         pgtype.Text
+	PersonKind       pgtype.Text
+	PersonID         pgtype.Int4
 }
 
 func (q *Queries) UseTicket(ctx context.Context, arg UseTicketParams) (UseTicketRow, error) {
@@ -1238,35 +1300,12 @@ func (q *Queries) UseTicket(ctx context.Context, arg UseTicketParams) (UseTicket
 		&i.Email,
 		&i.FirstName,
 		&i.LastName,
-		&i.Identity,
-		&i.RevealedPhone,
 		&i.TelegramID,
 		&i.TelegramUsername,
-		&i.CheckedTelegramID,
+		&i.SharedPhone,
+		&i.PhotoUrl,
+		&i.PersonKind,
+		&i.PersonID,
 	)
 	return i, err
-}
-
-const verifyTelegramCheck = `-- name: VerifyTelegramCheck :execrows
-UPDATE telegram_phone_checks SET phone = $1::text, verified_at = $2::timestamptz
-WHERE nonce_hash = (
-    SELECT c.nonce_hash FROM telegram_phone_checks c
-    WHERE c.telegram_user_id = $3 AND c.verified_at IS NULL AND c.used_at IS NULL
-      AND c.expires_at > $2::timestamptz
-    ORDER BY c.created_at DESC LIMIT 1)
-`
-
-type VerifyTelegramCheckParams struct {
-	Phone          string
-	Now            pgtype.Timestamptz
-	TelegramUserID pgtype.Int8
-}
-
-// The contact verifies the account's latest open check.
-func (q *Queries) VerifyTelegramCheck(ctx context.Context, arg VerifyTelegramCheckParams) (int64, error) {
-	result, err := q.db.Exec(ctx, verifyTelegramCheck, arg.Phone, arg.Now, arg.TelegramUserID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }

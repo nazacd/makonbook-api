@@ -17,11 +17,11 @@ import (
 	mailer "github.com/nazacd/makonbook-api/internal/platform/mail"
 )
 
-// Sign-up starts with an email, proved by a code sent to it (or with Google);
-// the phone comes after (spec 21.3). A proved email is an identity ticket,
-// and the person's email afterwards, which they can also sign in with.
+// Email codes (spec 21.2): a code sent to an address signs in whoever has it
+// (which also covers a forgotten password), or answers a ticket to sign up
+// with it. The person's email is also a sign-in identifier.
 
-// EmailTicketTTL is how long a proved email waits for its phone.
+// EmailTicketTTL is how long a proved email waits for the sign-up form.
 const EmailTicketTTL = 30 * time.Minute
 
 const maxEmailLength = 254
@@ -129,25 +129,31 @@ func emailWait(ctx context.Context, q *authdb.Queries, email, ip string, now tim
 	return waitFor(day, netCodes, now), nil
 }
 
-// VerifyEmail checks a code sent by StartEmail and answers an email ticket:
-// the identity to verify a phone and sign up with (30 minutes, once). An
-// email someone active already has is ErrEmailTaken: the code proved the
-// address, so saying so tells nobody else's secret.
-func (s *Service) VerifyEmail(ctx context.Context, raw, code string) (string, error) {
+// EmailResult is a verified email code: a session when someone active has
+// the address, else a ticket to sign up with it.
+type EmailResult struct {
+	SignedIn *LoginResult
+	Ticket   string
+}
+
+// VerifyEmail checks a code sent by StartEmail: whoever active has the
+// address is signed in (the code proved it, as a password would); otherwise
+// it answers an email ticket (30 minutes, once) for Signup.
+func (s *Service) VerifyEmail(ctx context.Context, raw, code, deviceID string) (EmailResult, error) {
 	if s.mail == nil {
-		return "", ErrMailOff
+		return EmailResult{}, ErrMailOff
 	}
 	email, ok := normalizeEmail(raw)
 	if !ok {
-		return "", ErrInvalidEmail
+		return EmailResult{}, ErrInvalidEmail
 	}
 	now := s.now()
 	row, err := s.q.LatestEmailCode(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrCodeExpired
+		return EmailResult{}, ErrCodeExpired
 	}
 	if err != nil {
-		return "", fmt.Errorf("latest code: %w", err)
+		return EmailResult{}, fmt.Errorf("latest code: %w", err)
 	}
 	c := sentCode{id: row.ID, salt: row.Salt, hash: row.CodeHash, tries: row.Tries, expires: row.ExpiresAt, usedAt: row.UsedAt,
 		countTry: s.q.CountEmailCodeTry,
@@ -157,14 +163,83 @@ func (s *Service) VerifyEmail(ctx context.Context, raw, code string) (string, er
 		waitForAnother: func() (time.Duration, error) { return emailWait(ctx, s.q, email, "", now) },
 	}
 	if err := c.check(ctx, code, now); err != nil {
-		return "", err
+		return EmailResult{}, err
 	}
-	if _, taken, err := emailOwner(ctx, s.q, s.people, email); err != nil {
-		return "", err
-	} else if taken {
-		return "", ErrEmailTaken
+	p, active, err := emailOwner(ctx, s.q, s.people, email)
+	if err != nil {
+		return EmailResult{}, err
 	}
-	return s.newTicket(ctx, s.q, ticketData{purpose: ticketEmail, email: email}, EmailTicketTTL)
+	if active {
+		res, err := s.signInPerson(ctx, s.q, p, deviceID)
+		if err != nil {
+			return EmailResult{}, err
+		}
+		return EmailResult{SignedIn: &res}, nil
+	}
+	ticket, err := s.newTicket(ctx, s.q, ticketData{purpose: ticketEmail, email: email}, EmailTicketTTL)
+	return EmailResult{Ticket: ticket}, err
+}
+
+// SignupInput is a sign-up with a proved email: names and a password.
+type SignupInput struct {
+	EmailTicket string `json:"email_ticket"`
+	FirstName   string `json:"first_name"`
+	LastName    string `json:"last_name"`
+	Password    string `json:"password"`
+	DeviceID    string `json:"device_id"`
+}
+
+// Signup creates a registered student with the email, names and password,
+// and no phone yet (they add it afterwards; until then the content is
+// locked), and signs them in.
+func (s *Service) Signup(ctx context.Context, in SignupInput) (LoginResult, error) {
+	now := s.now()
+	if _, err := s.q.PeekTicket(ctx, authdb.PeekTicketParams{TokenHash: hashToken(in.EmailTicket), Purpose: ticketEmail, Now: timestamp(now)}); errors.Is(err, pgx.ErrNoRows) {
+		return LoginResult{}, ErrInvalidTicket
+	} else if err != nil {
+		return LoginResult{}, err
+	}
+	first, last, err := names(in.FirstName, in.LastName)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if err := checkNewPassword(in.Password, "", ""); err != nil {
+		return LoginResult{}, &ValidationError{Field: "password", Err: err}
+	}
+	hash, err := s.hasher.Hash(in.Password)
+	if err != nil {
+		return LoginResult{}, fmt.Errorf("hash password: %w", err)
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := authdb.New(tx)
+	t, err := s.useTicket(ctx, q, in.EmailTicket, ticketEmail, now)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	dir := people.NewDirectory(tx)
+	id, err := people.CreateSelfStudent(ctx, tx, first, last, "")
+	if err != nil {
+		return LoginResult{}, err
+	}
+	p, err := dir.Get(ctx, people.KindStudent, id)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	if err := linkEmail(ctx, q, dir, p, t.email); err != nil {
+		return LoginResult{}, err // ErrEmailTaken: someone took it meanwhile
+	}
+	if err := q.SetPassword(ctx, authdb.SetPasswordParams{PersonKind: p.Kind, PersonID: p.ID, PasswordHash: pgtype.Text{String: hash, Valid: true}}); err != nil {
+		return LoginResult{}, fmt.Errorf("set password: %w", err)
+	}
+	res, err := s.openSession(ctx, q, p, in.DeviceID, false)
+	if err != nil {
+		return LoginResult{}, err
+	}
+	return res, tx.Commit(ctx)
 }
 
 // emailOwner is who has an email; active says whether they still use the

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
@@ -79,6 +80,9 @@ type Principal struct {
 	// Registered: a student who signed up themselves and isn't enrolled at
 	// SAT MAKON (yet); they see only some practice tests (spec 21).
 	Registered bool
+	// NeedsPhone: a registered student without a phone yet; the content is
+	// locked until they add one (403 phone_required, spec 21.4).
+	NeedsPhone bool
 }
 
 type Service struct {
@@ -94,11 +98,13 @@ type Service struct {
 	smsText  string
 	google   *GoogleConfig
 	mail     mail.Sender
-	telegram *telegramBot
+	telegram *telegramOIDC
+	photos   photoFetcher
 }
 
 func NewService(db DB, p People, h *Hasher) *Service {
-	return &Service{db: db, q: authdb.New(db), people: p, hasher: h, now: time.Now, log: slog.New(slog.DiscardHandler)}
+	return &Service{db: db, q: authdb.New(db), people: p, hasher: h, now: time.Now, log: slog.New(slog.DiscardHandler),
+		photos: photoFetcher{client: &http.Client{Timeout: 10 * time.Second}}}
 }
 
 // LoginResult is a new session.
@@ -164,7 +170,8 @@ func (s *Service) openSession(ctx context.Context, q *authdb.Queries, p people.P
 	return LoginResult{
 		Token:     token,
 		ExpiresAt: expires,
-		Principal: Principal{SessionID: row.ID, Kind: p.Kind, ID: p.ID, MustChangePassword: mustChange, Registered: p.Registered},
+		Principal: Principal{SessionID: row.ID, Kind: p.Kind, ID: p.ID, MustChangePassword: mustChange, Registered: p.Registered,
+			NeedsPhone: p.Registered && p.LoginPhone == ""},
 	}, nil
 }
 
@@ -289,11 +296,15 @@ func (s *Service) Authenticate(ctx context.Context, token string) (Principal, er
 	}
 
 	_, custom := ownPassword(row.PasswordHash, row.PasswordChangedAt, p)
-	return Principal{SessionID: row.ID, Kind: p.Kind, ID: p.ID, MustChangePassword: usesDefault(p, custom), Registered: p.Registered}, nil
+	return Principal{SessionID: row.ID, Kind: p.Kind, ID: p.ID, MustChangePassword: usesDefault(p, custom), Registered: p.Registered,
+		NeedsPhone: p.Registered && p.LoginPhone == ""}, nil
 }
 
 // ChangePassword replaces the password (the default one included) after
-// checking the current one, and logs out every other session.
+// checking the current one, and logs out every other session. Someone
+// without a password of their own (signed up with Google or Telegram, or
+// still on the default one) may leave current empty: the session is proof
+// enough.
 func (s *Service) ChangePassword(ctx context.Context, pr Principal, current, next string) error {
 	p, err := s.people.Get(ctx, pr.Kind, pr.ID)
 	if err != nil {
@@ -306,11 +317,14 @@ func (s *Service) ChangePassword(ctx context.Context, pr Principal, current, nex
 	if cred.LockedUntil.Valid && cred.LockedUntil.Time.After(s.now()) {
 		return &LockedError{Until: cred.LockedUntil.Time}
 	}
-	if _, ok := s.checkPassword(p, cred, current); !ok {
-		if err := s.recordFailure(ctx, p); err != nil {
-			return err
+	_, hasOwn := ownPassword(cred.PasswordHash, cred.PasswordChangedAt, p)
+	if hasOwn || current != "" {
+		if _, ok := s.checkPassword(p, cred, current); !ok {
+			if err := s.recordFailure(ctx, p); err != nil {
+				return err
+			}
+			return ErrWrongPassword
 		}
-		return ErrWrongPassword
 	}
 	if err := checkNewPassword(next, current, p.LoginPhone); err != nil {
 		return &ValidationError{Field: "password", Err: err}
@@ -385,6 +399,7 @@ type Profile struct {
 	Email       *string            `json:"email"`        // their email (sign-in and sign-up), lower case
 	Google      bool               `json:"google"`       // a Google account is linked
 	Telegram    bool               `json:"telegram"`     // a Telegram account is linked
+	PhotoURL    *string            `json:"photo_url"`    // /v1/photos/…, same origin
 	HasPassword bool               `json:"has_password"` // their own, not the default one
 	Groups      []people.GroupInfo `json:"groups"`
 }
@@ -442,6 +457,10 @@ func (s *Service) Profile(ctx context.Context, pr Principal, today time.Time) (P
 	}
 	if cred.Email.Valid {
 		prof.Email = &cred.Email.String
+	}
+	if cred.PhotoID.Valid {
+		u := photoPath + cred.PhotoID.String
+		prof.PhotoURL = &u
 	}
 	return prof, nil
 }

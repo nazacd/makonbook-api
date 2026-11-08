@@ -64,7 +64,7 @@ type Deps struct {
 	Google  *auth.GoogleConfig
 	// Mail sends the email codes sign-up can start with; nil: no email.
 	Mail mail.Sender
-	// Telegram turns on Telegram sign-in and phone checks; nil leaves it off.
+	// Telegram turns on Telegram sign-in (OpenID Connect); nil leaves it off.
 	Telegram *auth.TelegramConfig
 }
 
@@ -90,9 +90,7 @@ func Handler(d Deps) http.Handler {
 	}
 	signIn := system.SignIn{
 		Signup: authSvc.SignupEnabled(), Reset: authSvc.ResetEnabled(), Email: authSvc.MailEnabled(), Google: authSvc.GoogleEnabled(),
-	}
-	if id, username, ok := authSvc.TelegramBot(); ok {
-		signIn.Telegram = &system.TelegramBot{BotID: id, BotUsername: username}
+		Telegram: authSvc.TelegramEnabled(),
 	}
 	system.NewHandler(systemdb.New(d.Pool), d.Pool).WithSignIn(signIn).Register(mux)
 	authHandler := auth.NewHandler(authSvc, d.Location, d.TrustProxy)
@@ -112,8 +110,9 @@ func Handler(d Deps) http.Handler {
 	parentsSvc := parents.NewService(d.Pool, directory, attendanceSvc, notifier, adminURL)
 	parents.NewHandler(parentsSvc, d.Location, authHandler.Require, d.TrustProxy, d.Log).Register(mux)
 	practiceSvc := practiceService(d)
-	practice.NewHandler(practiceSvc, d.Location, authHandler.Require).Register(mux)
-	vocab.NewHandler(vocab.NewService(d.Pool, signer(d.Uploads)), d.Location, authHandler.Require).Register(mux)
+	// The content is locked for registered students until they add a phone.
+	practice.NewHandler(practiceSvc, d.Location, authHandler.RequireContent).Register(mux)
+	vocab.NewHandler(vocab.NewService(d.Pool, signer(d.Uploads)), d.Location, authHandler.RequireContent).Register(mux)
 	panel := admin.Panel{
 		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory, Practice: practiceSvc, Parents: parentsSvc,
 		Location: d.Location, WriteEnabled: d.HolliHopWriteEnabled,
