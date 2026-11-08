@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -101,9 +103,20 @@ func courseFiles(paths []string) ([]string, error) {
 			out = append(out, p)
 			continue
 		}
-		matches, err := filepath.Glob(filepath.Join(p, "*.json"))
+		// ReadDir, not Glob: Glob hides a folder it can't read (the container
+		// runs as distroless's nonroot user, uid 65532) as "no files".
+		entries, err := os.ReadDir(p) //nolint:gosec // the operator's own folder
 		if err != nil {
+			if errors.Is(err, fs.ErrPermission) {
+				return nil, fmt.Errorf("%s: can't read the folder (the import runs as uid 65532; chown -R 65532:65532 it): %w", p, err)
+			}
 			return nil, err
+		}
+		var matches []string
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+				matches = append(matches, filepath.Join(p, e.Name()))
+			}
 		}
 		if len(matches) == 0 {
 			return nil, fmt.Errorf("%s: no .json files", p)

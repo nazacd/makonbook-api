@@ -337,7 +337,11 @@ material, so it is **never committed**; copy the files to the server instead:
 ```bash
 ssh root@makonbook.uz 'mkdir -p /opt/curriculum && chmod 700 /opt/curriculum'
 scp math-*.json english-*.json root@makonbook.uz:/opt/curriculum/
+ssh root@makonbook.uz 'chown -R 65532:65532 /opt/curriculum'
 ```
+
+The container runs as distroless's nonroot user (uid 65532), so the folder
+belongs to it: root and the import can read the files, nobody else can.
 
 Then, in `/opt/makonbook-api` (after `migrate up` has applied 00036):
 
