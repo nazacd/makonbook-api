@@ -186,6 +186,121 @@ func (q *Queries) ApproveQuestion(ctx context.Context, arg ApproveQuestionParams
 	return err
 }
 
+const approvedCounts = `-- name: ApprovedCounts :many
+SELECT skill, coalesce(difficulty, '')::text AS difficulty, count(*)::int AS n
+FROM questions WHERE status = 'approved' AND subject = $1
+GROUP BY skill, difficulty
+`
+
+type ApprovedCountsRow struct {
+	Skill      string
+	Difficulty string
+	N          int32
+}
+
+func (q *Queries) ApprovedCounts(ctx context.Context, subject string) ([]ApprovedCountsRow, error) {
+	rows, err := q.db.Query(ctx, approvedCounts, subject)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ApprovedCountsRow
+	for rows.Next() {
+		var i ApprovedCountsRow
+		if err := rows.Scan(&i.Skill, &i.Difficulty, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const bankQuestions = `-- name: BankQuestions :many
+SELECT id, subject, type, content_hash, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty, status, ai_risk, version, created_at, updated_at, approved_at, auto_approved, approved_by FROM questions WHERE id = ANY ($1::uuid[])
+`
+
+// Roadmaps (spec 22) draw their level checks and homework from the bank.
+func (q *Queries) BankQuestions(ctx context.Context, ids []pgtype.UUID) ([]Question, error) {
+	rows, err := q.db.Query(ctx, bankQuestions, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Question
+	for rows.Next() {
+		var i Question
+		if err := rows.Scan(
+			&i.ID,
+			&i.Subject,
+			&i.Type,
+			&i.ContentHash,
+			&i.Passage,
+			&i.Stem,
+			&i.Choices,
+			&i.Figures,
+			&i.Correct,
+			&i.Accepted,
+			&i.Explanation,
+			&i.Domain,
+			&i.Skill,
+			&i.Difficulty,
+			&i.Status,
+			&i.AiRisk,
+			&i.Version,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ApprovedAt,
+			&i.AutoApproved,
+			&i.ApprovedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const candidates = `-- name: Candidates :many
+SELECT id, difficulty FROM questions
+WHERE status = 'approved' AND subject = $1 AND lower(skill) = ANY ($2::text[])
+`
+
+type CandidatesParams struct {
+	Subject string
+	Skills  []string
+}
+
+type CandidatesRow struct {
+	ID         pgtype.UUID
+	Difficulty pgtype.Text
+}
+
+func (q *Queries) Candidates(ctx context.Context, arg CandidatesParams) ([]CandidatesRow, error) {
+	rows, err := q.db.Query(ctx, candidates, arg.Subject, arg.Skills)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CandidatesRow
+	for rows.Next() {
+		var i CandidatesRow
+		if err := rows.Scan(&i.ID, &i.Difficulty); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const catalog = `-- name: Catalog :many
 SELECT t.code, t.title, t.open_to_all,
        count(*)::int AS questions,
@@ -389,6 +504,44 @@ func (q *Queries) ExistingImages(ctx context.Context, keys []string) ([]string, 
 			return nil, err
 		}
 		items = append(items, key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const figureFiles = `-- name: FigureFiles :many
+SELECT f.key, i.file, i.width, i.height
+FROM figure_files f JOIN practice_published_images i ON i.file = f.file
+WHERE f.key = ANY ($1::text[])
+`
+
+type FigureFilesRow struct {
+	Key    string
+	File   string
+	Width  int32
+	Height int32
+}
+
+func (q *Queries) FigureFiles(ctx context.Context, keys []string) ([]FigureFilesRow, error) {
+	rows, err := q.db.Query(ctx, figureFiles, keys)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FigureFilesRow
+	for rows.Next() {
+		var i FigureFilesRow
+		if err := rows.Scan(
+			&i.Key,
+			&i.File,
+			&i.Width,
+			&i.Height,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -609,6 +762,21 @@ func (q *Queries) InsertAttempt(ctx context.Context, arg InsertAttemptParams) (i
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const insertFigureFile = `-- name: InsertFigureFile :exec
+INSERT INTO figure_files (key, file) VALUES ($1, $2)
+ON CONFLICT (key) DO UPDATE SET file = excluded.file
+`
+
+type InsertFigureFileParams struct {
+	Key  string
+	File string
+}
+
+func (q *Queries) InsertFigureFile(ctx context.Context, arg InsertFigureFileParams) error {
+	_, err := q.db.Exec(ctx, insertFigureFile, arg.Key, arg.File)
+	return err
 }
 
 const insertImage = `-- name: InsertImage :exec

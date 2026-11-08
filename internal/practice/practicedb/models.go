@@ -125,6 +125,15 @@ type Credential struct {
 	PhotoChosen       bool
 }
 
+type CurriculumVersion struct {
+	Subject     string
+	Level       string
+	Version     int32
+	Content     []byte
+	ContentHash string
+	ImportedAt  pgtype.Timestamptz
+}
+
 type DataQualityIssue struct {
 	ID          int64
 	PersonKind  string
@@ -155,6 +164,11 @@ type Enrollment struct {
 	BeginDate       pgtype.Date
 	EndDate         pgtype.Date
 	Weekdays        int16
+}
+
+type FigureFile struct {
+	Key  string
+	File string
 }
 
 type GoogleLink struct {
@@ -260,6 +274,12 @@ type Office struct {
 	Name      string
 	UtcOffset string
 	UpdatedAt pgtype.Timestamptz
+}
+
+type Onboarding struct {
+	StudentClientID int32
+	Answers         []byte
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type ParentCode struct {
@@ -462,6 +482,28 @@ type ReviewBot struct {
 	UpdateOffset    int64
 	LastPostAt      pgtype.Timestamptz
 	VoteHours       int16
+}
+
+type RoadmapAssessment struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	RoadmapID       string
+	LessonID        string
+	Kind            string
+	HomeworkIndex   pgtype.Int2
+	QuestionIds     []pgtype.UUID
+	Answers         []byte
+	CreatedAt       pgtype.Timestamptz
+	FinishedAt      pgtype.Timestamptz
+	Correct         pgtype.Int2
+	Total           pgtype.Int2
+	Percent         pgtype.Int2
+}
+
+type RoadmapChoice struct {
+	StudentClientID int32
+	RoadmapID       string
+	CreatedAt       pgtype.Timestamptz
 }
 
 type ScheduleItem struct {

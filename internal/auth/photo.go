@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"time"
 
@@ -60,7 +61,7 @@ func (s *Service) ensurePhoto(ctx context.Context, p people.Person, url string) 
 		return
 	}
 	if err := s.copyPhoto(ctx, p, url); err != nil {
-		s.log.Warn("profile photo not copied", slog.String("person", fmt.Sprintf("%s %d", p.Kind, p.ID)), slog.Any("err", err))
+		s.log.Warn("profile photo not copied", slog.String("person", fmt.Sprintf("%s %d", p.Kind, p.ID)), slog.String("from", photoSource(url)), slog.Any("err", err))
 	}
 }
 
@@ -213,4 +214,16 @@ func (h *Handler) servePhoto(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'")
 	_, _ = w.Write(ph.Data)
+}
+
+// photoSource says where a picture link points without the rest of it (which
+// can carry a username or a signed token): the host and the first path
+// segment, e.g. "t.me/i" (a userpic link) or "cdn4.telesco.pe/file".
+func photoSource(raw string) string {
+	u, err := neturl.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "unparsable"
+	}
+	first, _, _ := strings.Cut(strings.TrimPrefix(u.Path, "/"), "/")
+	return u.Host + "/" + first
 }

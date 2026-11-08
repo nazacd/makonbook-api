@@ -430,3 +430,25 @@ ON CONFLICT (student_client_id) DO UPDATE
 SET target_math = EXCLUDED.target_math, target_rw = EXCLUDED.target_rw, exam_date = EXCLUDED.exam_date,
     updated_at = now()
 RETURNING *;
+
+-- Roadmaps (spec 22) draw their level checks and homework from the bank.
+-- name: BankQuestions :many
+SELECT * FROM questions WHERE id = ANY (@ids::uuid[]);
+
+-- name: Candidates :many
+SELECT id, difficulty FROM questions
+WHERE status = 'approved' AND subject = @subject AND lower(skill) = ANY (@skills::text[]);
+
+-- name: ApprovedCounts :many
+SELECT skill, coalesce(difficulty, '')::text AS difficulty, count(*)::int AS n
+FROM questions WHERE status = 'approved' AND subject = @subject
+GROUP BY skill, difficulty;
+
+-- name: FigureFiles :many
+SELECT f.key, i.file, i.width, i.height
+FROM figure_files f JOIN practice_published_images i ON i.file = f.file
+WHERE f.key = ANY (@keys::text[]);
+
+-- name: InsertFigureFile :exec
+INSERT INTO figure_files (key, file) VALUES (@key, @file)
+ON CONFLICT (key) DO UPDATE SET file = excluded.file;

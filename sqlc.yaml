@@ -98,3 +98,11 @@ sql:
         package: demodb
         out: internal/demo/demodb
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/roadmap/queries.sql
+    gen:
+      go:
+        package: roadmapdb
+        out: internal/roadmap/roadmapdb
+        sql_package: pgx/v5

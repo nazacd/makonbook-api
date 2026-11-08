@@ -328,6 +328,32 @@ students keep the last one. It needs both `R2_*` (to read the bank's images)
 and `R2_UPLOADS_*`. To publish at once: `docker compose run --rm api practice
 publish`. `practice list` shows `OPEN v2` for a test students have.
 
+## Roadmaps: loading the curriculum
+
+The roadmaps (spec 22) are built on SAT MAKON's curriculum: one JSON file per
+course (`math-foundation.json` … `english-advanced.json`). It is SAT MAKON's own
+material, so it is **never committed**; copy the files to the server instead:
+
+```bash
+ssh root@makonbook.uz 'mkdir -p /opt/curriculum && chmod 700 /opt/curriculum'
+scp math-*.json english-*.json root@makonbook.uz:/opt/curriculum/
+```
+
+Then, in `/opt/makonbook-api` (after `migrate up` has applied 00036):
+
+```bash
+docker compose run --rm -v /opt/curriculum:/curriculum:ro api curriculum import /curriculum
+```
+
+The import checks every file first and stores nothing unless all of them pass
+(it lists the problems otherwise). Each course that changed becomes a new
+version, live at once; students keep their progress (it is kept by lesson id).
+It then prints the coverage report: for each level check and homework set, the
+approved questions at each difficulty (`have/want`), with `SHORT` where the bank
+can't fill it as asked (students then get questions of a neighbouring
+difficulty, or fewer). `curriculum coverage` prints it again at any time, e.g.
+after more questions are approved. Run the import again whenever the files change.
+
 ## Question pictures (renderer)
 
 Question pictures (the editors' **Export image**, and later the teachers'
@@ -577,6 +603,8 @@ docker exec db psql -U postgres -d makonbook_api -c \
 | Practice tests and their review progress | `docker compose run --rm api practice list` |
 | Publish approved tests now (the worker does it every 5 minutes) | `docker compose run --rm api practice publish` |
 | Load the word lists (folder with `words.jsonl` or `words.csv`, and `images/`) | `docker compose run --rm -v /opt/vocab:/vocab:ro api vocab import /vocab` |
+| Load or update the roadmaps' curriculum (below) | `docker compose run --rm -v /opt/curriculum:/curriculum:ro api curriculum import /curriculum` |
+| How well the bank covers the roadmaps | `docker compose run --rm api curriculum coverage` |
 | Review bot: what it did | `docker compose logs --tail 100 bot` |
 | Draw a question picture | `docker compose run --rm -v /tmp:/out api practice picture DAY3 english-m2-04 fix /out/q.png` |
 | Test the app as a real teacher and student | `/opt/makonbook-api/test-accounts.sh` (below) |
@@ -588,7 +616,7 @@ docker exec db psql -U postgres -d makonbook_api -c \
 group, both free (never used the app, or put back with `reset-password`), and prints their phone numbers and default
 passwords. Test in the app, then type `done` (or press Ctrl+C): it deletes the
 password, username and sessions the test gave them, the student's practice
-attempts, and parent sign-ins and reports made with the student's code during
+attempts and roadmap level checks and homework, and parent sign-ins and reports made with the student's code during
 the test, so both are as they were. (The student's parent code itself stays: it
 never changes.) Attendance marks made while
 testing are real and stay; the script says if there were any. To borrow
