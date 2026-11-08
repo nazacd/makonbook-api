@@ -64,6 +64,9 @@ enrol).
 | D34 | A roadmap lesson is **done** when its **level check is passed (≥ 70 %)** and **every homework set is finished at any score**; lessons open **one after another in course order**. Level checks and homework are **drawn from the approved bank and graded on the server**, preferring questions the student hasn't had. | 2026-11-10. |
 | D35 | Onboarding levels: a section score **below 450 → Foundation, 450–590 → Pre-SAT, 600+ → Advanced**; a total counts half for each section; no score → Foundation. | 2026-11-10. |
 | D36 | **University logos** on the roadmap stops are used **with the universities' permission** (confirmed by SAT MAKON) and, as trademarks in a public repo, **never committed**: they are loaded from the server's curriculum folder into the database and served by the API. | 2026-11-10. |
+| D37 | **Assignments** (section 23): teachers give their groups **homework, level checks and exams with deadlines**. Every student of the group gets the **same questions**; work after the deadline is taken and **marked late**; an exam is a mock test whose **first finished attempt** counts (retakes allowed); an assigned curriculum level check or homework **counts for the roadmap**. **Every current teacher of a group** may assign to it; content creation stays with the editors (9.4). | 2026-11-08, the product owner. |
+| D38 | A group whose discipline names the subject but **no level** takes the level from **HolliHop's group level**; without a subject, no roadmap. | 2026-11-08. |
+| D39 | **In-app notifications** (a table, the web's drawer): a new assignment notifies the group's students. Nothing outside the app yet; Telegram later. | 2026-11-08. |
 
 ## 3. System overview
 
@@ -516,6 +519,8 @@ Phase 2: attendance by group/date · teacher override report · HolliHop write e
 **Built (web, phase 2 step 5)** — `web/admin`: sign-in; Lessons (a day's lessons by branch, attendance status and counts); a lesson's attendance with per-student correction, how each mark was set, HolliHop status and history; Teacher corrections (per teacher, "made present" first; all changes); HolliHop writes (dry-run notice, counts, failed / set by hand, retry); HolliHop issues (groups to fix, people who can't sign in); Admins (super admins: add branch admins from HolliHop staff search or by teacher id, change their branches, remove them; super admins are listed but managed on the server). Branch filter on every page for admins with several branches. Served at `ADMIN_HOST` with a strict CSP; the page never sees the session cookie.
 Phase 3: content authoring (9.4).
 
+**Redesign (2026-11, the web's design system)**: the panel takes sat.makonbook.uz's tokens, type and building blocks (Nunito, light and dark with a toggle, the floating sidebar panel with grouped sections, cards, pills, segmented tabs, the reference's table style), copied into `web/admin` and kept in step with makonbook-web by hand; the question editor keeps its logic under the new skin. New page **Issue reports** (9.6): open and resolved reports, newest first, with the student, the test and place, kind, reason and text; resolve and reopen; editors open the question in the editor.
+
 ## 14. Backend architecture (Go)
 
 ### 14.1 Layout — modular monolith, packaged by feature
@@ -719,6 +724,19 @@ GET  /v1/me/roadmaps/{id}/lessons/{lessonId}              a lesson, its level ch
 POST /v1/me/roadmaps/{id}/lessons/{lessonId}/assessments  start or continue one
 GET  /v1/me/assessments/{id}           PUT …/answers saves; POST …/submit grades
 GET  /v1/logos/{slug}                  a stop's university logo (no sign-in)
+
+# assignments and notifications (23)
+GET  /v1/me/assignments                the student's homework, level checks and exams, with their standing
+POST /v1/me/assignments/{id}/start     an assigned homework or level check: the open assessment, or a new one
+GET  /v1/me/notifications              newest first, with the unread count; PUT …/read {ids} | {all}
+GET|POST /v1/teacher/assignments       a teacher's groups' assignments (?group_id=); give one (any teacher of the group)
+POST /v1/teacher/assignments/draw      questions for a set, not saved: the preview, and a set after a swap
+GET|PUT|DELETE /v1/teacher/assignments/{id}   with its questions; change or close; delete while nobody started
+GET  /v1/teacher/assignments/{id}/results     per student and per question; …/{client_id}: one student's work
+GET  /v1/teacher/questions?subject=&skill=&difficulty=&q=   approved questions to swap in (previews)
+GET  /v1/teacher/taxonomy              domains and skills with approved counts per difficulty
+GET  /v1/teacher/curriculum            the imported courses, lessons and their level check and homework specs
+GET  /v1/teacher/groups/{id}/roadmap   a group's course(s) and every student's progress
 
 # vocabulary (phase 4)
 GET  /v1/vocab/deck?have=              every list and word (or "unchanged")
@@ -946,8 +964,9 @@ university stop), each unit a few **lessons**. A lesson has notes, examples and 
 ### 22.2 Who follows which course
 - **Enrolled students**: one roadmap per course their **current groups' disciplines** teach (`source:
   group`, `group_name`): the subject from MATH or ENGLISH (or ENG), the level from FOUNDATION, PRE SAT
-  (PRE-SAT, PRESAT) or ADV (ADVANCED), as words. A discipline without both (e.g. "SAT MATH") gives none;
-  several groups of one course give it once. Every unit is theirs.
+  (PRE-SAT, PRESAT) or ADV (ADVANCED), as words. A discipline that names the subject but no level (e.g. "SAT
+  MATH") takes the level from HolliHop's group level (`groups.level`, the same words; D38); without a subject,
+  or still without a level, none. Several groups of one course give it once. Every unit is theirs.
 - **Registered students**: the roadmaps onboarding gave (`roadmap_choices`, `source: onboarding`). **Free**:
   only the **first country's units** are open (`free_units`); the rest are locked `enrolled_only` whatever
   the progress. Once they enrol, their groups decide (their progress comes with them).
@@ -1027,3 +1046,97 @@ university_logos    (slug PK, content_type, body bytea, sha256, updated_at)     
   nothing.
 - `stop.logo_url` on each unit of `GET /v1/me/roadmaps/{id}`, and `current.logo_url` in the summaries:
   `/v1/logos/{slug}?v=<first 8 of the sha>` (relative, the API's origin; a new logo is a new URL), or null.
+
+## 23. Assignments and notifications (built, for the web)
+
+Teachers give their groups work with deadlines (D37): the reference's Homework, Level Checks and Exams tabs,
+fed by SAT MAKON's own bank, curriculum and mock tests. Built in `internal/assignments` (assignments, drawing,
+results, notifications) on `internal/roadmap`'s assessments and `internal/practice`'s attempts. The admin panel
+has no part in it: **every current teacher of a group** (on its schedule now or later, as `TeachesGroup`) may
+give, change, close and delete its assignments and see its results.
+
+### 23.1 Kinds
+- **Homework**: a fixed, ordered set of 1–60 approved questions, built from a curriculum lesson's homework set
+  (`course`, `lesson_id`, `homework_index`) or custom (`subject`, `skills`, `mix`; or questions picked one by one).
+- **Level check**: a curriculum lesson's level check (`course`, `lesson_id`), drawn once with the lesson's skills
+  and mix.
+- **Exam**: a published mock test (`test`), full or one section (`sections`: `english`, `math` or both, a subset
+  of the test's).
+- Every student of the group gets the **same questions**, so the class can go over them and per-question
+  statistics mean something.
+- Fields: `title` (1–120 characters; defaults to the lesson's, the set's or the test's), `instructions` (≤ 2000,
+  plain text), `opens_at` (default now; may be later), `due_at` (after `opens_at`), `closed_at`.
+- **Status**: `scheduled` (not open yet), `open`, `overdue` (the deadline passed; work is still taken and marked
+  **late**), `closed` (the teacher closed it: no more starts; work in progress can still be finished). Students see
+  an assignment once it opens: open and overdue ones, and closed ones they have work on.
+- Deleting is allowed while nobody has started (`409 has_work` otherwise).
+
+### 23.2 Drawing questions (`POST /v1/teacher/assignments/draw`)
+- From a lesson's level check, one of its homework sets, or `subject` + `skills` + `mix`: the approved questions
+  of the subject with one of the skills (as 22.5 resolves them), as many of each difficulty as asked, from the
+  neighbouring difficulty when short, then any; fewer when still short, never none (`409 no_questions`). With
+  `group_id`, questions none of the group's students has had (in any roadmap assessment or assignment) come
+  first. Random within each step; easy to hard.
+- With `question_ids` it returns those questions in that order instead: the preview after a swap.
+  `GET /v1/teacher/questions?subject=&skill=&difficulty=&q=` lists approved questions to swap in (previews, 30 at
+  a time, `total`); `GET /v1/teacher/taxonomy` the domains and skills with approved counts per difficulty;
+  `GET /v1/teacher/curriculum` the imported courses with every lesson's level check and homework specs.
+- Teachers see questions whole: keys, accepted forms, explanations, figure links (6 h).
+- `POST /v1/teacher/assignments` stores `question_ids` as sent (checked: approved, of the subject, no repeats,
+  1–60). The set is never drawn again: it is the assignment.
+
+### 23.3 Students (`/v1/me/assignments`)
+- `GET /v1/me/assignments`: the assignments of the student's current groups once opened, soonest deadline
+  first, each with its lesson (when from the curriculum), its test (exams) and `mine`: `status` (`new`,
+  `in_progress`, `done`), the open or first finished assessment, `finished_at`, `late` (finished after the
+  deadline), `percent`/`correct`/`total`, `passed` (a level check at ≥ 70 %; homework once done), the exam's
+  `scores` and `total_score`, `tries` and `best`. Registered students and teachers get an empty list.
+- `POST /v1/me/assignments/{id}/start` (homework, level check): the student's open assessment for it, else a
+  new one with the assignment's questions, as a row of `roadmap_assessments` with `assignment_id` (and the
+  lesson, set and course when from the curriculum; `roadmap_id` and `lesson_id` are null for custom homework).
+  Then `GET /v1/me/assessments/{id}`, `PUT …/answers` and `POST …/submit` as in 22.5; the assessment carries
+  `assignment` (id, title, kind, due date). A finished one may be started again for practice; **the first finished
+  one is the result**, later ones count in `tries` and `best`. `409 not_open` before it opens, `409
+  assignment_closed` after it is closed, `409 not_an_assessment` for an exam, `404` for a student not in the group.
+- **Exams** are taken as the mock test itself (the web preselects the sections): the student's attempts on the
+  test, finished at or after `opens_at`, whose sections include the assignment's, count; the first finished is the
+  result (late after `due_at`), `tries` how many, `best` the best total (one section: its score).
+- **Roadmap credit** (D37): an assessment with a lesson counts in the student's roadmap like any other, so an
+  assigned level check passed at 70 %+ passes the lesson and an assigned homework set finishes it. The roadmap's
+  own start (22.5) continues an open assigned one for the same lesson and set rather than drawing another.
+- **Times** (D37): `PUT …/answers` and `POST …/submit` take `times` (question id → seconds spent so far,
+  0–21600, each replacing that question's) next to the answers; the assessment returns them. The web's runner
+  counts active time per question.
+
+### 23.4 Results (`GET /v1/teacher/assignments/{id}/results`)
+- Per student of the roster now: status, started and finished, late, the result as above, `tries`, `best`, and
+  the assessment or attempt id. `GET …/results/{client_id}` gives the work itself: the first finished assessment
+  with keys and explanations, or the exam attempt that counted, with its answers.
+- Per question (the set's, or for an exam the assigned sections' questions of the test's latest version, in
+  order): `answered`, `correct`, the `answers` given (`A`–`D` and `blank`; a grid-in: `correct`, `wrong`,
+  `blank`), `avg_seconds` (null without times). `skills`: wrong and total per skill. Each assignment's `summary`:
+  students, done, late, in progress, the average percent (exams: the average score).
+
+### 23.5 Notifications (D39)
+- `notifications`: one row per person and event. When an assignment is created, every student enrolled in the
+  group then gets one (`kind: assignment`, the title, the deadline, a link to the tab). Nothing is sent outside
+  the app yet (Telegram later).
+- `GET /v1/me/notifications`: newest first, 100 at most, with `unread`; `PUT /v1/me/notifications/read {ids}`
+  or `{all: true}` marks them read and answers `unread`. Teachers have none yet.
+
+### 23.6 A group's roadmap, for its teachers
+- `GET /v1/teacher/groups/{id}/roadmap`: the course(s) the group teaches (22.2, with D38's fallback to the
+  group's HolliHop level) with every lesson in order, and each student's standing per lesson (`done`, `open`,
+  `locked`, the level check passed and its best, homework sets done), as their own roadmap lays it out. A group
+  that maps to no course gives an empty list of courses.
+
+### 23.7 Tables
+```
+assignments          (id uuid, group_id → groups, teacher_id → teachers, kind, title, instructions, subject,
+                      course, lesson_id, homework_index, test_code, sections text[], question_ids uuid[],
+                      skills text[], mix jsonb, opens_at, due_at, closed_at, created_at, updated_at)
+roadmap_assessments  + assignment_id → assignments (null for the roadmap's own), + times jsonb;
+                      roadmap_id and lesson_id nullable (custom homework); one open per student, lesson, kind,
+                      set and assignment
+notifications        (id bigserial, person_kind, person_id, kind, title, body, link, created_at, read_at)
+```

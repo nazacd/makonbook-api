@@ -39,6 +39,12 @@ info:
     level check and homework, drawn from the bank and graded on the server
     (`/v1/me/roadmaps/*`, `/v1/me/assessments/*`).
 
+    Assignments (spec 23): teachers give their groups homework, level checks
+    and exams with deadlines (`/v1/teacher/assignments*`); students see and
+    start theirs (`/v1/me/assignments*`), homework and level checks as
+    assessments, exams as the mock test itself. New assignments show up in
+    the in-app notifications (`/v1/me/notifications`).
+
     Admin panel (`/v1/admin/*`): admins sign in with their HolliHop login and
     password, which HolliHop checks; MakonBook stores neither. The session is
     an HttpOnly `mb_admin` cookie (SameSite=Strict, 12 h). Every admin request
@@ -1959,6 +1965,355 @@ paths:
           description: No logo for this slug
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/me/assignments:
+    get:
+      summary: The student's assignments (spec 23)
+      description: |
+        Homework, level checks and exams the teachers of the student's current
+        groups set, once open: the open and overdue ones, and closed ones the
+        student has work on. Soonest deadline first. `mine` is how the student
+        stands: the first finished work is the result; later tries count in
+        `tries` and `best`. Teachers and registered students get an empty list.
+      operationId: myAssignments
+      tags: [assignments]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The assignments with the student's standing in each
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assignments]
+                properties:
+                  assignments: { type: array, items: { $ref: "#/components/schemas/StudentAssignment" } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`phone_required`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/me/assignments/{id}/start:
+    post:
+      summary: Start an assigned homework or level check, or continue it
+      description: |
+        The student's open assessment for this assignment, else a new one with
+        the assignment's questions (the same for everyone in the group). Then
+        `GET /v1/me/assessments/{id}`, `PUT …/answers` and `POST …/submit` as
+        for a roadmap lesson's. A finished one can be started again for
+        practice; the first finished one stays the result. Exams are taken as
+        the mock test itself (`/v1/practice/…`): the attempts count by themselves.
+      operationId: startAssignment
+      tags: [assignments]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The assessment, open or new
+          content: { application/json: { schema: { $ref: "#/components/schemas/Assessment" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`phone_required`; `forbidden`: not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "404":
+          description: "`not_found`: no such assignment of the student's groups"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "409":
+          description: "`not_an_assessment`: an exam; `not_open`: it hasn't opened yet; `assignment_closed`: the teacher closed it; `no_questions`: its questions are gone from the bank"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/me/notifications:
+    get:
+      summary: The person's notifications, newest first (spec 23.5)
+      operationId: myNotifications
+      tags: [notifications]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: At most 100, and how many are unread
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, unread]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/Notification" } }
+                  unread: { type: integer }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/me/notifications/read:
+    put:
+      summary: Mark notifications read
+      operationId: readNotifications
+      tags: [notifications]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids: { type: array, items: { type: integer }, description: These (another person's are ignored) }
+                all: { type: boolean, description: Every one of the person's }
+      responses:
+        "200":
+          description: How many are unread now
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [unread]
+                properties:
+                  unread: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/teacher/assignments:
+    get:
+      summary: The assignments of the teacher's groups (spec 23)
+      operationId: teacherAssignments
+      tags: [assignments]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: group_id, in: query, schema: { type: integer }, description: Only this group (one of theirs) }
+      responses:
+        "200":
+          description: Newest first, each with its summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assignments]
+                properties:
+                  assignments: { type: array, items: { $ref: "#/components/schemas/Assignment" } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a teacher, or not this group's"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    post:
+      summary: Give a group an assignment
+      description: |
+        Any teacher of the group (on its schedule now or later). A homework's
+        or level check's questions are sent as drawn (`POST …/draw`) and
+        swapped: 1–60 approved questions of the subject, in order. An exam
+        names a published test and the sections to take. The title defaults
+        to the lesson's, the set's or the test's. Every student of the group
+        gets a notification.
+      operationId: createAssignment
+      tags: [assignments]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AssignmentInput" } } }
+      responses:
+        "201":
+          description: The assignment
+          content: { application/json: { schema: { $ref: "#/components/schemas/AssignmentDetail" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a teacher of the group"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_assignment`: a value is wrong (the message says which; `fields` names them)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/teacher/assignments/draw:
+    post:
+      summary: Draw questions for a homework or level check, without saving
+      description: |
+        From a curriculum lesson's level check (`course`, `lesson_id`), one of
+        its homework sets (`homework_index` too), or custom (`subject`,
+        `skills`, `mix`): approved questions of the subject with one of the
+        skills, as many of each difficulty as asked, from the neighbouring
+        difficulty when short, then any; fewer when still short, never none.
+        With `group_id`, questions none of the group's students has had come
+        first. With `question_ids` (and `subject`) it returns those questions
+        in that order instead, in full: the way to see a set after swapping a
+        question.
+      operationId: drawAssignment
+      tags: [assignments]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/DrawInput" } } }
+      responses:
+        "200":
+          description: The questions, easy to hard, with keys, explanations and image links
+          content: { application/json: { schema: { $ref: "#/components/schemas/DrawResult" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a teacher"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "404":
+          description: "`not_found`: no such course, lesson or set"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "409":
+          description: "`no_questions`: the bank has no approved question for the set"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_assignment`: the request names neither a lesson, nor skills and a mix, nor questions; or a value is wrong"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/teacher/assignments/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: An assignment with its questions (its group's teachers)
+      operationId: teacherAssignment
+      tags: [assignments]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The assignment, its questions whole, and image links
+          content: { application/json: { schema: { $ref: "#/components/schemas/AssignmentDetail" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Change an assignment's title, instructions or dates, or close it
+      description: Every field is sent. `closed` true closes it (no more starts; work in progress can still be finished); false opens it again.
+      operationId: updateAssignment
+      tags: [assignments]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/AssignmentUpdate" } } }
+      responses:
+        "200":
+          description: The assignment as it is now
+          content: { application/json: { schema: { $ref: "#/components/schemas/AssignmentDetail" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`invalid_assignment`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    delete:
+      summary: Delete an assignment nobody has started
+      operationId: deleteAssignment
+      tags: [assignments]
+      security: [{ bearer: [] }]
+      responses:
+        "204": { description: Deleted, with its notifications }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`has_work`: a student has started it (close it instead)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/teacher/assignments/{id}/results:
+    get:
+      summary: "How the group did: each student, each question, the weakest skills"
+      operationId: assignmentResults
+      tags: [assignments]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The results
+          content: { application/json: { schema: { $ref: "#/components/schemas/AssignmentResults" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /v1/teacher/assignments/{id}/results/{client_id}:
+    get:
+      summary: One student's work on the assignment
+      description: Their first finished assessment, with the keys and the explanations, or for an exam the attempt that counted, with its answers.
+      operationId: assignmentStudentResult
+      tags: [assignments]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: client_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: The assessment or the attempt; both null while they haven't finished
+          content: { application/json: { schema: { $ref: "#/components/schemas/AssignmentStudentWork" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404":
+          description: "`not_found`: no such assignment of theirs, or the student isn't in the group"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/teacher/questions:
+    get:
+      summary: Approved questions to put in a homework (teachers)
+      operationId: teacherQuestions
+      tags: [assignments]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: subject, in: query, required: true, schema: { type: string, enum: [math, english] } }
+        - { name: skill, in: query, schema: { type: string }, description: One skill, in any case }
+        - { name: difficulty, in: query, schema: { type: string, enum: [easy, medium, hard] } }
+        - { name: q, in: query, schema: { type: string, maxLength: 100 }, description: Text in the question }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 30 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200":
+          description: Previews, newest approved first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [questions, total]
+                properties:
+                  questions: { type: array, items: { $ref: "#/components/schemas/QuestionPreview" } }
+                  total: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/teacher/taxonomy:
+    get:
+      summary: Domains and skills, with how many approved questions each has (teachers)
+      operationId: teacherTaxonomy
+      tags: [assignments]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: Per subject, the domains and their skills
+          content: { application/json: { schema: { $ref: "#/components/schemas/TeacherTaxonomy" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/teacher/curriculum:
+    get:
+      summary: The imported courses, to pick a lesson's level check or homework (teachers)
+      operationId: teacherCurriculum
+      tags: [assignments]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: Every course, math first, with its units, lessons and their set specs
+          content: { application/json: { schema: { $ref: "#/components/schemas/TeacherCurriculum" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/teacher/groups/{id}/roadmap:
+    get:
+      summary: A group's roadmap progress (its teachers)
+      description: The course or courses the group teaches (its discipline, or HolliHop's level for it), every lesson in order, and each student's standing per lesson as their own roadmap lays it out.
+      operationId: groupRoadmap
+      tags: [assignments]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: The courses and the students
+          content: { application/json: { schema: { $ref: "#/components/schemas/GroupRoadmap" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a teacher, or not this group's"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /v1/me/parent-code:
     get:
       summary: The student's parent code
@@ -3548,16 +3903,31 @@ components:
           type: object
           description: Question id → the letter (mcq) or what was entered (grid-in); null clears
           additionalProperties: { type: [string, "null"], maxLength: 32 }
+        times:
+          type: object
+          description: "Question id → seconds spent on it so far (each replaces that question's); for the teacher's statistics"
+          additionalProperties: { type: integer, minimum: 0, maximum: 21600 }
 
     Assessment:
       type: object
-      required: [id, kind, roadmap_id, lesson_id, homework_index, title, subject, created_at, finished_at, questions, images, answers, result]
+      required: [id, kind, roadmap_id, lesson_id, homework_index, assignment, title, subject, created_at, finished_at, questions, images, answers, times, result]
       properties:
         id: { type: string, format: uuid }
         kind: { type: string, enum: [level_check, homework] }
-        roadmap_id: { type: string }
-        lesson_id: { type: string }
+        roadmap_id: { type: [string, "null"], description: "The course; null for a custom homework assignment" }
+        lesson_id: { type: [string, "null"], description: "null for a custom homework assignment" }
         homework_index: { type: [integer, "null"] }
+        assignment:
+          description: The assignment it was started from (spec 23); null for the roadmap's own
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [id, kind, title, due_at]
+              properties:
+                id: { type: string, format: uuid }
+                kind: { $ref: "#/components/schemas/AssignmentKind" }
+                title: { type: string }
+                due_at: { type: string, format: date-time }
         title: { type: string }
         subject: { type: string, enum: [math, english] }
         created_at: { type: string, format: date-time }
@@ -3596,6 +3966,10 @@ components:
           type: object
           description: Every question id → the saved answer or null
           additionalProperties: { type: [string, "null"] }
+        times:
+          type: object
+          description: Question id → seconds spent, as the client sent them
+          additionalProperties: { type: integer }
         result:
           oneOf:
             - type: "null"
@@ -3618,6 +3992,473 @@ components:
                       correct: { type: boolean }
                       correct_answer: { type: string, description: The letter, or the first accepted form }
                       explanation: { type: string }
+
+    AssignmentKind:
+      type: string
+      enum: [homework, level_check, exam]
+
+    AssignmentStatus:
+      type: string
+      enum: [scheduled, open, overdue, closed]
+      description: "scheduled: not open yet; open; overdue: the deadline passed, work is still taken and marked late; closed: the teacher closed it, no more starts"
+
+    AssignmentLesson:
+      type: object
+      description: The curriculum lesson an assignment comes from
+      required: [course, lesson_id, title, unit_id, unit_title]
+      properties:
+        course: { type: string, example: math-pre-sat }
+        lesson_id: { type: string }
+        title: { type: string }
+        unit_id: { type: string }
+        unit_title: { type: string }
+
+    AssignmentTest:
+      type: object
+      description: The mock test of an exam
+      required: [code, title, sections, english, math]
+      properties:
+        code: { type: string, example: DAY12 }
+        title: { type: string }
+        sections: { type: array, items: { type: string, enum: [english, math] }, description: The sections to take }
+        english: { type: integer, description: Questions in Reading and Writing }
+        math: { type: integer, description: Questions in Math }
+
+    AssignmentMix:
+      type: object
+      required: [easy, medium, hard]
+      properties:
+        easy: { type: integer, minimum: 0 }
+        medium: { type: integer, minimum: 0 }
+        hard: { type: integer, minimum: 0 }
+
+    ImageLinks:
+      type: object
+      description: "A figure's key (in ![alt](r2:key)) → a link an <img> loads (signed, https, works for 6 hours). A figure that can't be had is missing."
+      additionalProperties:
+        type: object
+        required: [url, width, height]
+        properties:
+          url: { type: string }
+          width: { type: integer }
+          height: { type: integer }
+
+    AssignmentQuestion:
+      type: object
+      description: A question as the teacher sees it, whole
+      required: [id, position, type, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty]
+      properties:
+        id: { type: string, format: uuid }
+        position: { type: integer, description: From 1 }
+        type: { type: string, enum: [mcq, grid_in] }
+        passage: { type: [string, "null"] }
+        stem: { type: string }
+        choices: { type: [object, "null"], additionalProperties: { type: string } }
+        figures: { type: array, items: { $ref: "#/components/schemas/PracticeFigure" } }
+        correct: { type: [string, "null"], description: "The letter, for mcq" }
+        accepted: { type: [array, "null"], items: { type: string }, description: "Grid-in: the accepted forms" }
+        explanation: { type: string }
+        domain: { type: string }
+        skill: { type: string }
+        difficulty: { type: [string, "null"], enum: [easy, medium, hard, null] }
+
+    QuestionPreview:
+      type: object
+      required: [id, type, domain, skill, difficulty, preview]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [mcq, grid_in] }
+        domain: { type: string }
+        skill: { type: string }
+        difficulty: { type: [string, "null"], enum: [easy, medium, hard, null] }
+        preview: { type: string, description: The start of the question as plain text }
+
+    AssignmentSummary:
+      type: object
+      description: How the group stands on an assignment
+      required: [students, done, late, in_progress, average_percent, average_score]
+      properties:
+        students: { type: integer, description: In the group now }
+        done: { type: integer }
+        late: { type: integer, description: Done after the deadline }
+        in_progress: { type: integer, description: Homework and level checks started and not finished }
+        average_percent: { type: [number, "null"], description: "Homework and level checks: the mean percent of those done" }
+        average_score: { type: [number, "null"], description: "Exams: the mean total (one section: its score) of those done" }
+
+    Assignment:
+      type: object
+      required: [id, group_id, group_name, teacher_id, kind, status, title, instructions, subject, lesson, homework_index, test, skills, mix, questions, opens_at, due_at, closed_at, created_at, updated_at, summary]
+      properties:
+        id: { type: string, format: uuid }
+        group_id: { type: integer }
+        group_name: { type: string }
+        teacher_id: { type: integer, description: Who gave it }
+        kind: { $ref: "#/components/schemas/AssignmentKind" }
+        status: { $ref: "#/components/schemas/AssignmentStatus" }
+        title: { type: string }
+        instructions: { type: string }
+        subject: { type: string, enum: [math, english] }
+        lesson:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/AssignmentLesson"
+        homework_index: { type: [integer, "null"], description: The lesson's homework set it comes from }
+        test:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/AssignmentTest"
+        skills: { type: array, items: { type: string } }
+        mix:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/AssignmentMix"
+        questions: { type: integer, description: How many }
+        opens_at: { type: string, format: date-time }
+        due_at: { type: string, format: date-time }
+        closed_at: { type: [string, "null"], format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        summary: { $ref: "#/components/schemas/AssignmentSummary" }
+
+    AssignmentDetail:
+      allOf:
+        - $ref: "#/components/schemas/Assignment"
+        - type: object
+          required: [items, images]
+          properties:
+            items: { type: array, items: { $ref: "#/components/schemas/AssignmentQuestion" }, description: "The set, in order; empty for an exam" }
+            images: { $ref: "#/components/schemas/ImageLinks" }
+
+    AssignmentInput:
+      type: object
+      required: [group_id, kind, due_at]
+      properties:
+        group_id: { type: integer }
+        kind: { $ref: "#/components/schemas/AssignmentKind" }
+        title: { type: string, maxLength: 120, description: "Defaults to the lesson's, the set's or the test's" }
+        instructions: { type: string, maxLength: 2000 }
+        opens_at: { type: string, format: date-time, description: Default now }
+        due_at: { type: string, format: date-time }
+        course: { type: string, description: "With lesson_id: the curriculum course", example: math-pre-sat }
+        lesson_id: { type: string, description: "Level checks, and homework from the curriculum" }
+        homework_index: { type: integer, minimum: 0, description: "Homework from the curriculum: the lesson's set" }
+        subject: { type: string, enum: [math, english], description: Custom homework (without a lesson) }
+        skills: { type: array, items: { type: string }, description: "Custom homework: for the record" }
+        mix: { $ref: "#/components/schemas/AssignmentMix" }
+        question_ids: { type: array, items: { type: string, format: uuid }, minItems: 1, maxItems: 60, description: "Homework and level checks: the set, in order" }
+        test: { type: string, description: "Exams: a published test's code" }
+        sections: { type: array, items: { type: string, enum: [english, math] }, minItems: 1, description: "Exams: the sections to take" }
+
+    AssignmentUpdate:
+      type: object
+      required: [title, instructions, opens_at, due_at, closed]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        instructions: { type: string, maxLength: 2000 }
+        opens_at: { type: string, format: date-time }
+        due_at: { type: string, format: date-time }
+        closed: { type: boolean }
+
+    DrawInput:
+      type: object
+      properties:
+        group_id: { type: integer, description: Prefer questions none of this group's students has had }
+        course: { type: string }
+        lesson_id: { type: string }
+        homework_index: { type: integer, minimum: 0 }
+        subject: { type: string, enum: [math, english] }
+        skills: { type: array, items: { type: string } }
+        mix: { $ref: "#/components/schemas/AssignmentMix" }
+        question_ids: { type: array, items: { type: string, format: uuid }, maxItems: 60, description: These questions, in this order, in full }
+
+    DrawResult:
+      type: object
+      required: [subject, skills, mix, items, images]
+      properties:
+        subject: { type: string, enum: [math, english] }
+        skills: { type: array, items: { type: string } }
+        mix:
+          description: What was asked for; null for a set given by ids
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/AssignmentMix"
+        items: { type: array, items: { $ref: "#/components/schemas/AssignmentQuestion" } }
+        images: { $ref: "#/components/schemas/ImageLinks" }
+
+    SectionScores:
+      type: object
+      description: Per section taken (english, math)
+      additionalProperties:
+        type: object
+        required: [raw, questions, score]
+        properties:
+          raw: { type: integer, description: Questions right }
+          questions: { type: integer }
+          score: { type: integer, description: "Estimated, 200–800" }
+
+    AssignmentStanding:
+      type: object
+      description: "How a student stands on an assignment: the first finished work is the result"
+      required: [status, assessment_id, attempt_id, started_at, finished_at, late, percent, correct, total, passed, scores, total_score, tries, best]
+      properties:
+        status: { type: string, enum: [new, in_progress, done] }
+        assessment_id: { type: [string, "null"], format: uuid, description: "Homework and level checks: the open one, or the first finished" }
+        attempt_id: { type: [string, "null"], format: uuid, description: "Exams: the attempt that counted" }
+        started_at: { type: [string, "null"], format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        late: { type: boolean, description: Finished after the deadline }
+        percent: { type: [integer, "null"], description: Homework and level checks }
+        correct: { type: [integer, "null"] }
+        total: { type: [integer, "null"] }
+        passed: { type: [boolean, "null"], description: "Level checks: 70 % or more; homework: true once done; exams: null" }
+        scores:
+          description: Exams
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/SectionScores"
+        total_score: { type: [integer, "null"], description: "Exams: both sections' sum, or the one section's score" }
+        tries: { type: integer, description: Finished ones, the first included }
+        best: { type: [integer, "null"], description: "The best percent (exams: the best total or section score)" }
+
+    StudentAssignment:
+      type: object
+      required: [id, kind, status, title, instructions, subject, group_id, group_name, lesson, test, questions, opens_at, due_at, closed_at, mine]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/AssignmentKind" }
+        status: { type: string, enum: [open, overdue, closed] }
+        title: { type: string }
+        instructions: { type: string }
+        subject: { type: string, enum: [math, english] }
+        group_id: { type: integer }
+        group_name: { type: string }
+        lesson:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/AssignmentLesson"
+        test:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/AssignmentTest"
+        questions: { type: integer, description: "How many; for an exam, in the sections to take" }
+        opens_at: { type: string, format: date-time }
+        due_at: { type: string, format: date-time }
+        closed_at: { type: [string, "null"], format: date-time }
+        mine: { $ref: "#/components/schemas/AssignmentStanding" }
+
+    AssignmentStudentResult:
+      allOf:
+        - $ref: "#/components/schemas/AssignmentStanding"
+        - type: object
+          required: [client_id, first_name, last_name]
+          properties:
+            client_id: { type: integer }
+            first_name: { type: string }
+            last_name: { type: string }
+
+    AssignmentQuestionStats:
+      type: object
+      required: [question_id, position, subject, module, skill, difficulty, answered, correct, answers, avg_seconds]
+      properties:
+        question_id: { type: string, format: uuid }
+        position: { type: integer, description: From 1, in the set's (or the test's) order }
+        subject: { type: string, enum: [math, english] }
+        module: { type: [integer, "null"], description: Exams }
+        skill: { type: string }
+        difficulty: { type: [string, "null"], enum: [easy, medium, hard, null] }
+        answered: { type: integer, description: Students whose counted work has the question (a blank counts) }
+        correct: { type: integer }
+        answers: { type: object, additionalProperties: { type: integer }, description: "mcq: A–D and blank; grid-in: correct, wrong, blank" }
+        avg_seconds: { type: [number, "null"], description: Over the work with a time for it }
+
+    AssignmentResults:
+      type: object
+      required: [assignment, students, questions, skills]
+      properties:
+        assignment: { $ref: "#/components/schemas/Assignment" }
+        students: { type: array, items: { $ref: "#/components/schemas/AssignmentStudentResult" }, description: The group's roster now, by name }
+        questions: { type: array, items: { $ref: "#/components/schemas/AssignmentQuestionStats" } }
+        skills:
+          type: array
+          description: Wrong answers per skill, most first
+          items:
+            type: object
+            required: [skill, wrong, total]
+            properties:
+              skill: { type: string }
+              wrong: { type: integer }
+              total: { type: integer }
+
+    PracticeOwnAttempt:
+      allOf:
+        - $ref: "#/components/schemas/PracticeAttempt"
+        - type: object
+          required: [answers]
+          properties:
+            answers: { type: array, items: { $ref: "#/components/schemas/PracticeAnswer" } }
+
+    AssignmentStudentWork:
+      type: object
+      required: [assessment, attempt]
+      properties:
+        assessment:
+          description: Homework and level checks
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/Assessment"
+        attempt:
+          description: Exams
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/PracticeOwnAttempt"
+
+    TeacherCurriculum:
+      type: object
+      required: [courses]
+      properties:
+        courses:
+          type: array
+          items:
+            type: object
+            required: [id, subject, level, title, units]
+            properties:
+              id: { type: string, example: math-pre-sat }
+              subject: { type: string, enum: [math, english] }
+              level: { type: string, enum: [foundation, pre-sat, advanced] }
+              title: { type: string, example: "Math · Pre-SAT" }
+              units:
+                type: array
+                items:
+                  type: object
+                  required: [id, title, university, lessons]
+                  properties:
+                    id: { type: string }
+                    title: { type: string }
+                    university: { type: string }
+                    lessons:
+                      type: array
+                      items:
+                        type: object
+                        required: [id, title, skills, level_check, homework]
+                        properties:
+                          id: { type: string }
+                          title: { type: string }
+                          skills: { type: array, items: { type: string } }
+                          level_check:
+                            type: object
+                            required: [questions, mix, skills]
+                            properties:
+                              questions: { type: integer }
+                              mix: { $ref: "#/components/schemas/AssignmentMix" }
+                              skills: { type: array, items: { type: string } }
+                          homework:
+                            type: array
+                            items:
+                              type: object
+                              required: [index, title, difficulty, questions, skills]
+                              properties:
+                                index: { type: integer }
+                                title: { type: string }
+                                difficulty: { type: string, enum: [easy, medium, hard] }
+                                questions: { type: integer }
+                                skills: { type: array, items: { type: string } }
+
+    TeacherTaxonomy:
+      type: object
+      required: [subjects]
+      properties:
+        subjects:
+          type: object
+          description: "math and english: the domains, each with its skills and approved counts"
+          additionalProperties:
+            type: array
+            items:
+              type: object
+              required: [domain, skills]
+              properties:
+                domain: { type: string }
+                skills:
+                  type: array
+                  items:
+                    type: object
+                    required: [skill, easy, medium, hard, total]
+                    properties:
+                      skill: { type: string }
+                      easy: { type: integer, description: Approved questions at this difficulty }
+                      medium: { type: integer }
+                      hard: { type: integer }
+                      total: { type: integer, description: Approved questions, unestimated ones included }
+
+    GroupRoadmap:
+      type: object
+      required: [courses, students]
+      properties:
+        courses:
+          type: array
+          description: Math first; empty when the group maps to no course
+          items:
+            type: object
+            required: [id, subject, level, title, lessons]
+            properties:
+              id: { type: string }
+              subject: { type: string, enum: [math, english] }
+              level: { type: string, enum: [foundation, pre-sat, advanced] }
+              title: { type: string }
+              lessons:
+                type: array
+                description: In course order
+                items:
+                  type: object
+                  required: [id, title, unit_id, unit_title, university, homework_sets]
+                  properties:
+                    id: { type: string }
+                    title: { type: string }
+                    unit_id: { type: string }
+                    unit_title: { type: string }
+                    university: { type: string }
+                    homework_sets: { type: integer }
+        students:
+          type: array
+          description: The roster now, by name
+          items:
+            type: object
+            required: [client_id, first_name, last_name, courses]
+            properties:
+              client_id: { type: integer }
+              first_name: { type: string }
+              last_name: { type: string }
+              courses:
+                type: object
+                description: By course id; lessons in the course's order
+                additionalProperties:
+                  type: object
+                  required: [lessons_done, lessons_total, current_lesson_id, lessons]
+                  properties:
+                    lessons_done: { type: integer }
+                    lessons_total: { type: integer }
+                    current_lesson_id: { type: [string, "null"], description: The first lesson not done; null when all are }
+                    lessons:
+                      type: array
+                      items:
+                        type: object
+                        required: [status, passed, best, homework_done]
+                        properties:
+                          status: { type: string, enum: [done, open, locked] }
+                          passed: { type: boolean }
+                          best: { type: [integer, "null"] }
+                          homework_done: { type: integer }
+
+    Notification:
+      type: object
+      required: [id, kind, title, body, link, created_at, read_at]
+      properties:
+        id: { type: integer }
+        kind: { type: string, enum: [assignment] }
+        title: { type: string }
+        body: { type: string }
+        link: { type: [string, "null"], description: "A path in the web app, e.g. /homework" }
+        created_at: { type: string, format: date-time }
+        read_at: { type: [string, "null"], format: date-time }
 
     AdminPracticeReport:
       allOf:
@@ -4066,6 +4907,18 @@ components:
                 - invalid_photo
                 - google_unavailable
                 - enrolled_only
+                - invalid_onboarding
+                - not_needed
+                - lesson_locked
+                - no_questions
+                - finished
+                - invalid_answers
+                - invalid_assessment
+                - invalid_assignment
+                - assignment_closed
+                - not_open
+                - not_an_assessment
+                - has_work
             message:
               type: string
               description: Human-readable explanation; may change.
