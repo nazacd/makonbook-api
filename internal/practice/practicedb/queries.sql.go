@@ -218,6 +218,72 @@ func (q *Queries) ApprovedCounts(ctx context.Context, subject string) ([]Approve
 	return items, nil
 }
 
+const approvedQuestions = `-- name: ApprovedQuestions :many
+SELECT id, type, domain, skill, difficulty, passage, stem FROM questions
+WHERE status = 'approved' AND subject = $1
+  AND ($2::text IS NULL OR lower(skill) = lower($2::text))
+  AND ($3::text IS NULL OR difficulty = $3::text)
+  AND ($4::text IS NULL OR stem ILIKE $4::text OR passage ILIKE $4::text)
+ORDER BY approved_at DESC, id
+LIMIT $6 OFFSET $5
+`
+
+type ApprovedQuestionsParams struct {
+	Subject    string
+	Skill      pgtype.Text
+	Difficulty pgtype.Text
+	Q          pgtype.Text
+	Off        int32
+	Lim        int32
+}
+
+type ApprovedQuestionsRow struct {
+	ID         pgtype.UUID
+	Type       string
+	Domain     string
+	Skill      string
+	Difficulty pgtype.Text
+	Passage    pgtype.Text
+	Stem       string
+}
+
+// Approved questions for teachers to put in a homework (spec 23.2), newest
+// approved first. q is an ILIKE pattern.
+func (q *Queries) ApprovedQuestions(ctx context.Context, arg ApprovedQuestionsParams) ([]ApprovedQuestionsRow, error) {
+	rows, err := q.db.Query(ctx, approvedQuestions,
+		arg.Subject,
+		arg.Skill,
+		arg.Difficulty,
+		arg.Q,
+		arg.Off,
+		arg.Lim,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ApprovedQuestionsRow
+	for rows.Next() {
+		var i ApprovedQuestionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.Domain,
+			&i.Skill,
+			&i.Difficulty,
+			&i.Passage,
+			&i.Stem,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const bankQuestions = `-- name: BankQuestions :many
 SELECT id, subject, type, content_hash, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty, status, ai_risk, version, created_at, updated_at, approved_at, auto_approved, approved_by FROM questions WHERE id = ANY ($1::uuid[])
 `
@@ -398,6 +464,33 @@ func (q *Queries) CompleteTests(ctx context.Context) ([]CompleteTestsRow, error)
 		return nil, err
 	}
 	return items, nil
+}
+
+const countApprovedQuestions = `-- name: CountApprovedQuestions :one
+SELECT count(*)::int FROM questions
+WHERE status = 'approved' AND subject = $1
+  AND ($2::text IS NULL OR lower(skill) = lower($2::text))
+  AND ($3::text IS NULL OR difficulty = $3::text)
+  AND ($4::text IS NULL OR stem ILIKE $4::text OR passage ILIKE $4::text)
+`
+
+type CountApprovedQuestionsParams struct {
+	Subject    string
+	Skill      pgtype.Text
+	Difficulty pgtype.Text
+	Q          pgtype.Text
+}
+
+func (q *Queries) CountApprovedQuestions(ctx context.Context, arg CountApprovedQuestionsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countApprovedQuestions,
+		arg.Subject,
+		arg.Skill,
+		arg.Difficulty,
+		arg.Q,
+	)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const countQuestions = `-- name: CountQuestions :one

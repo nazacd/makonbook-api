@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nazacd/makonbook-api/internal/admin"
+	"github.com/nazacd/makonbook-api/internal/assignments"
 	"github.com/nazacd/makonbook-api/internal/attendance"
 	"github.com/nazacd/makonbook-api/internal/auth"
 	"github.com/nazacd/makonbook-api/internal/lessons"
@@ -117,6 +118,8 @@ func Handler(d Deps) http.Handler {
 	roadmapSvc := roadmap.NewService(d.Pool, practiceSvc, directory)
 	authSvc.WithOnboarded(roadmapSvc.Onboarded)
 	roadmap.NewHandler(roadmapSvc, d.Location, authSvc.Profile, authHandler.Require, authHandler.RequireContent).Register(mux)
+	assignments.NewHandler(assignments.NewService(d.Pool, roadmapSvc, practiceSvc, d.Location), d.Location,
+		authHandler.Require, authHandler.RequireContent).Register(mux)
 	panel := admin.Panel{
 		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory, Practice: practiceSvc, Parents: parentsSvc,
 		Location: d.Location, WriteEnabled: d.HolliHopWriteEnabled,
