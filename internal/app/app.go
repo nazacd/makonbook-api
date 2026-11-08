@@ -75,7 +75,7 @@ func Handler(d Deps) http.Handler {
 	mux.HandleFunc("/", httpx.NotFound)
 
 	directory := people.NewDirectory(d.Pool)
-	authSvc := auth.NewService(d.Pool, directory, auth.NewHasher())
+	authSvc := auth.NewService(d.Pool, directory, auth.NewHasher()).WithLog(d.Log)
 	if d.SMS != nil {
 		authSvc.WithSMS(d.SMS, d.SMSText, d.Log)
 	}

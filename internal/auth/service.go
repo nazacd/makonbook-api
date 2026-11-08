@@ -22,6 +22,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/auth/authdb"
 	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/mail"
+	"github.com/nazacd/makonbook-api/internal/platform/ratelimit"
 	"github.com/nazacd/makonbook-api/internal/platform/sms"
 )
 
@@ -94,17 +95,28 @@ type Service struct {
 	log    *slog.Logger
 
 	// Accounts (spec 21): nil when not configured.
-	sms      sms.Sender
-	smsText  string
-	google   *GoogleConfig
-	mail     mail.Sender
-	telegram *telegramOIDC
-	photos   photoFetcher
+	sms        sms.Sender
+	smsText    string
+	google     *GoogleConfig
+	mail       mail.Sender
+	telegram   *telegramOIDC
+	photos     photoFetcher
+	photoLimit *ratelimit.Limiter // own photo uploads per person
 }
 
 func NewService(db DB, p People, h *Hasher) *Service {
 	return &Service{db: db, q: authdb.New(db), people: p, hasher: h, now: time.Now, log: slog.New(slog.DiscardHandler),
-		photos: photoFetcher{client: &http.Client{Timeout: 10 * time.Second}}}
+		photos:     photoFetcher{client: &http.Client{Timeout: 10 * time.Second}},
+		photoLimit: ratelimit.New(photoUploads, photoUploadWindow)}
+}
+
+// WithLog sets the logger for what fails quietly (photo copies, background
+// SMS).
+func (s *Service) WithLog(log *slog.Logger) *Service {
+	if log != nil {
+		s.log = log
+	}
+	return s
 }
 
 // LoginResult is a new session.

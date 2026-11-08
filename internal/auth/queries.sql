@@ -1,10 +1,12 @@
 -- name: GetCredential :one
-SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email, photo_id
+SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email, photo_id,
+       photo_chosen
 FROM credentials
 WHERE person_kind = @person_kind AND person_id = @person_id;
 
 -- name: GetCredentialByUsername :one
-SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email, photo_id
+SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email, photo_id,
+       photo_chosen
 FROM credentials
 WHERE username = @username;
 
@@ -299,3 +301,12 @@ DELETE FROM telegram_links WHERE person_kind = @person_kind AND person_id = @per
 
 -- name: DeleteCredential :exec
 DELETE FROM credentials WHERE person_kind = @person_kind AND person_id = @person_id;
+
+-- The person's own choice (an upload, or none): the automatic copy stops.
+-- name: ChoosePhoto :exec
+INSERT INTO credentials (person_kind, person_id, photo_id, photo_chosen)
+VALUES (@person_kind, @person_id, @photo_id, true)
+ON CONFLICT (person_kind, person_id) DO UPDATE SET photo_id = EXCLUDED.photo_id, photo_chosen = true;
+
+-- name: DeletePhoto :exec
+DELETE FROM photos WHERE id = @id;

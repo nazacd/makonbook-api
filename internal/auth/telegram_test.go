@@ -224,7 +224,7 @@ func TestTelegramSignIn(t *testing.T) {
 	r := a.tgSignIn(c)
 	u, _ := r.body["user"].(map[string]any)
 	if r.status != http.StatusOK || u["status"] != StatusRegistered || u["phone"] != "+971501234567" || u["telegram"] != true ||
-		u["first_name"] != "Diyora" || u["last_name"] != "Abdullayeva" || u["has_password"] != false {
+		u["first_name"] != "Diyora" || u["last_name"] != "Abdullayeva" || u["has_password"] != false || u["photo_url"] == nil {
 		t.Fatalf("new: %d %v", r.status, r.body)
 	}
 	if me := a.do("GET", "/v1/me", r.body["token"].(string), nil); me.body["photo_url"] == nil {
@@ -281,20 +281,26 @@ func TestTelegramVerifyPhone(t *testing.T) {
 	if r := a.do("POST", "/v1/me/phone/telegram", token, map[string]string{"ticket": v.Get("ticket")}); r.code() != CodeInvalidTicket {
 		t.Errorf("someone else's ticket: %d %v", r.status, r.body)
 	}
-	// Their own, with a free number: theirs, Telegram linked.
-	v = a.tgRoundTrip(TelegramVerify, token, a.tgClaims(8003, "998903000061"))
+	// Their own, with a free number: theirs, Telegram linked, the photo copied.
+	img := photoServer(t)
+	c := a.tgClaims(8003, "998903000061")
+	c["picture"] = img.URL + "/tg.jpg"
+	v = a.tgRoundTrip(TelegramVerify, token, c)
 	r := a.do("POST", "/v1/me/phone/telegram", token, map[string]string{"ticket": v.Get("ticket")})
 	if me := r.body["user"]; r.status != http.StatusOK || me.(map[string]any)["phone"] != "+998903000061" || me.(map[string]any)["telegram"] != true ||
-		me.(map[string]any)["id"] != u["id"] {
+		me.(map[string]any)["id"] != u["id"] || me.(map[string]any)["photo_url"] == nil {
 		t.Fatalf("verify: %d %v", r.status, r.body)
 	}
 	if r := a.do("POST", "/v1/auth/telegram/start", token, map[string]any{"purpose": "verify"}); r.code() != CodePhoneAlreadySet {
 		t.Errorf("verify with a phone: %d %v", r.status, r.body)
 	}
-	// Student 1's number: merged into them.
-	v = a.tgRoundTrip(TelegramVerify, other, a.tgClaims(8004, "998902001234"))
+	// Student 1's number: merged into them; they get the Telegram photo.
+	c = a.tgClaims(8004, "998902001234")
+	c["picture"] = img.URL + "/tg2.jpg"
+	v = a.tgRoundTrip(TelegramVerify, other, c)
 	r = a.do("POST", "/v1/me/phone/telegram", other, map[string]string{"ticket": v.Get("ticket")})
-	if me := r.body["user"].(map[string]any); r.status != http.StatusOK || me["id"] != float64(1) || me["email"] != "other@example.com" || me["telegram"] != true {
+	if me := r.body["user"].(map[string]any); r.status != http.StatusOK || me["id"] != float64(1) || me["email"] != "other@example.com" ||
+		me["telegram"] != true || me["photo_url"] == nil {
 		t.Errorf("merge: %d %v", r.status, r.body)
 	}
 }

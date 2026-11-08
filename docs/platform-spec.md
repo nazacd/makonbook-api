@@ -59,6 +59,7 @@ enrol).
 | D29 | **Telegram** is a third identity (the Login Widget) and a **free way to prove the phone** next to SMS: the sign-in bot (its own bot) asks for the person's **own contact**; only +998 numbers. | 2026-11-06. Saves SMS costs; Telegram is widespread in Uzbekistan. |
 | D30 | **A phone shared through the bot links that Telegram account** to whoever signs up or resets with it (never taken from someone else active, never replacing another link). A sign-up whose Telegram identity is the **same Telegram account that shared the phone** signs straight into the phone's owner, registered or enrolled. | 2026-11-07, after a free account owner coming back with Telegram was told "already exists". |
 | D31 | **Accounts reworked** (supersedes D24, D28–D30): sign in or sign up with an **email code**, **Google** or **Telegram** (its OpenID Connect flow, which can share a **verified phone**) — no phone step at sign-up. An account without a phone is **locked** from the content until it adds one (SMS code or Telegram). **Proving a number someone else has merges the phoneless account into theirs** (no "Is this you?", no "already exists"). Photos are copied, never hotlinked. Telegram's old hash widget and the "share my number" bot are gone. | 2026-11-08, decided by the product owner: proving the number is proof enough. |
+| D32 | People **set or remove their own photo**; once they have, the Google/Telegram picture is **never copied over their choice**. | 2026-11-09. |
 
 ## 3. System overview
 
@@ -627,6 +628,7 @@ auth_tickets.identity (a phone ticket's identity ticket hash), revealed_phone (a
 telegram_links(telegram_id PK, person_kind, person_id, username, created_at, UNIQUE(person_kind, person_id))
 telegram_phone_checks(…)                             -- unused since D31
 photos(id PK, content_type, data, created_at); credentials.photo_id
+credentials.photo_chosen                             -- the person set or removed their photo (D32)
 oauth_states(state_hash PK, purpose (signin|verify), verifier, person_kind, person_id, return_path, created_at,
              expires_at, used_at)                    -- Telegram's OpenID Connect flow
 google_links: several per person (D31)
@@ -680,6 +682,7 @@ POST /v1/auth/phone/start              {phone, purpose: reset} → {resend_in, e
 POST /v1/auth/phone/verify             {phone, code, purpose: reset} → {ticket}
 POST /v1/auth/reset                    {ticket, password} → login
 GET  /v1/photos/{id}                   a profile photo (no token, long cache)
+PUT|DELETE /v1/me/photo                own photo (raw JPEG/PNG/WebP ≤ 512 KB) → profile
 
 # teacher
 GET  /v1/teacher/lessons?date=         lesson days for the teacher
@@ -868,12 +871,23 @@ student. A phone is added afterwards (21.4) unless Telegram shared it.
 - **Passwords**: `POST /v1/auth/password` takes an empty or missing `current_password` when `has_password` is
   false (Google, Telegram, or never set), so passwordless people set one in Profile.
 
-### 21.5 Photos
-- On Google or Telegram sign-in or creation, a person without a photo gets a copy of the picture (https,
-  at most 512 KB, JPEG/PNG/WebP by its bytes; skipped on any failure), kept in `photos` (the database; R2 would
-  still need the API to serve it, as pages load images from their own origin only) and served at
-  `GET /v1/photos/{id}` (random id, no token, `Cache-Control: public, max-age=31536000, immutable`).
-  `Profile.photo_url` is that path, or null. The providers' CDNs are never hotlinked.
+### 21.5 Photos (D32)
+- **Their own**: `PUT /v1/me/photo` with the raw image as the body (everyone signed in: students and teachers,
+  with or without a phone, even on the default password). JPEG, PNG or WebP by its bytes
+  (`http.DetectContentType`, not the header), decoding (`image.DecodeConfig`, at most 4096 px a side; not
+  necessarily square), at most 512 KB (`413 photo_too_large`; otherwise `422 invalid_photo`); 20 an hour per
+  person (`429 rate_limited`). It is stored under a new random id and the previous photo row is deleted (old
+  URLs are cached as immutable). `DELETE /v1/me/photo` removes it. Both answer the profile and set
+  `credentials.photo_chosen`.
+- **Copied**: on Google or Telegram sign-in or creation, and when Telegram verifies a phone (for whoever then
+  has it, the owner after a merge), a person without a photo who never chose one (`photo_chosen` false) gets a
+  copy of the picture (https, at most 512 KB, JPEG/PNG/WebP by its bytes; skipped and logged on any failure). The
+  copy is made before the answer is built, so the answer's profile has it. In a merge, U's photo goes to O when
+  O has none and never removed theirs (an uploaded photo stays chosen); otherwise it is deleted.
+- Kept in `photos` (the database; R2 would still need the API to serve it, as pages load images from their own
+  origin only) and served at `GET /v1/photos/{id}` (random id, no token, `Cache-Control: public,
+  max-age=31536000, immutable`). `Profile.photo_url` is that relative path, or null. The providers' CDNs are
+  never hotlinked.
 
 ### 21.6 Own names
 - `PUT /v1/me/profile {first_name, last_name}` (students and teachers): the names the person sees for

@@ -150,8 +150,18 @@ func mergeInto(ctx context.Context, q *authdb.Queries, tx pgx.Tx, u, o people.Pe
 			return fmt.Errorf("merge: email: %w", err)
 		}
 	}
-	if uc.PhotoID.Valid && !oc.PhotoID.Valid {
-		if err := q.SetPhoto(ctx, authdb.SetPhotoParams{PersonKind: o.Kind, PersonID: o.ID, PhotoID: uc.PhotoID}); err != nil {
+	// U's photo goes to O if O has none and didn't remove theirs on purpose
+	// (an upload stays U's choice); otherwise it is deleted.
+	if uc.PhotoID.Valid {
+		switch {
+		case !oc.PhotoID.Valid && !oc.PhotoChosen && uc.PhotoChosen:
+			err = q.ChoosePhoto(ctx, authdb.ChoosePhotoParams{PersonKind: o.Kind, PersonID: o.ID, PhotoID: uc.PhotoID})
+		case !oc.PhotoID.Valid && !oc.PhotoChosen:
+			err = q.SetPhoto(ctx, authdb.SetPhotoParams{PersonKind: o.Kind, PersonID: o.ID, PhotoID: uc.PhotoID})
+		default: // the reference clears itself (ON DELETE SET NULL)
+			err = q.DeletePhoto(ctx, uc.PhotoID.String)
+		}
+		if err != nil {
 			return fmt.Errorf("merge: photo: %w", err)
 		}
 	}
