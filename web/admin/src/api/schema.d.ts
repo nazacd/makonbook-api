@@ -1096,6 +1096,190 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/onboarding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The registered student's onboarding answers
+         * @description What they last sent, with `updated_at`. 404 before they send any (and for anyone who isn't a student).
+         */
+        get: operations["myOnboarding"];
+        put?: never;
+        /**
+         * Send onboarding (registered students)
+         * @description Spec 22.3. Stores the answers (works before a phone is added) and
+         *     then:
+         *     - sets the goals (`/v1/me/goals`): `target_math`, `target_rw` (so
+         *       `target_total`), and `exam_date`, the first of `sat_dates` from
+         *       today (Tashkent) on, or null;
+         *     - gives a roadmap per subject in `focus`, at the level of that
+         *       section's current score: below 450 Foundation, 450–590 Pre-SAT,
+         *       600 and up Advanced; a total counts half for each section; no
+         *       score, Foundation.
+         *     Sending again replaces the answers and the roadmaps onboarding gave;
+         *     progress is kept (by lesson). A course not imported yet gives no
+         *     roadmap until it is. Scores are multiples of 10; `target.total`
+         *     must be `target.math + target.rw`.
+         */
+        post: operations["sendOnboarding"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/roadmaps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The student's roadmaps
+         * @description Spec 22. Enrolled students: one per course their current groups'
+         *     disciplines teach (`source: group`), everything open as they go.
+         *     Registered students: those onboarding gave (`source: onboarding`),
+         *     only the first country's units open (`free_units`). Teachers: none.
+         *     Math first, then by level.
+         */
+        get: operations["myRoadmaps"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/roadmaps/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One of the student's roadmaps, with its route */
+        get: operations["myRoadmap"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/roadmaps/{id}/lessons/{lessonId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A lesson's content, level check and homework
+         * @description A locked lesson stays hidden (403).
+         */
+        get: operations["myRoadmapLesson"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/roadmaps/{id}/lessons/{lessonId}/assessments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start (or continue) a level check or homework set
+         * @description Returns the unfinished one of that kind (and set) if there is one;
+         *     otherwise makes one with approved questions of the set's skills
+         *     and difficulties (homework: its difficulty), preferring questions
+         *     the student hasn't had in any roadmap assessment. Short at a
+         *     difficulty, it fills from the neighbouring difficulty, then any
+         *     difficulty of those skills; still short, it has fewer questions.
+         *     A finished homework set can be practised again (it stays done); a
+         *     level check can be retaken, with new questions where possible.
+         */
+        post: operations["startAssessment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/assessments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One of the student's assessments */
+        get: operations["myAssessment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/assessments/{id}/answers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Save answers as the student goes
+         * @description Each answer given replaces that question's (null or "" clears it); the others stay.
+         */
+        put: operations["saveAssessmentAnswers"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/assessments/{id}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit and grade
+         * @description Saves the answers sent (as PUT …/answers does) and grades the
+         *     assessment exactly as practice tests are graded: the letter for
+         *     multiple choice, any accepted form or the same number for grid-in.
+         *     The percent is rounded down; a level check passes at 70 %.
+         */
+        post: operations["submitAssessment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/parent-code": {
         parameters: {
             query?: never;
@@ -2220,6 +2404,256 @@ export interface components {
              */
             updated_at: string | null;
         };
+        /** @description A total, or the two sections */
+        OnboardingScores: {
+            total?: number;
+            math?: number;
+            rw?: number;
+        };
+        OnboardingInput: {
+            /** @enum {string} */
+            graduation: "2027" | "2028" | "2029" | "2030" | "2031" | "2032" | "2033" | "2034" | "graduated";
+            /** @description SAT dates they may sit (any order, kept sorted); empty means not decided */
+            sat_dates: string[];
+            /** @description Their score so far: null (none), {total} or {math, rw} */
+            current: null | components["schemas"]["OnboardingScores"];
+            /** @description total = math + rw */
+            target: {
+                total: number;
+                math: number;
+                rw: number;
+            };
+            /** @enum {string} */
+            focus: "math" | "english" | "both";
+            schedule: {
+                /** @description Kept in week order */
+                days: ("mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun")[];
+                /** @enum {integer} */
+                minutes: 15 | 30 | 45 | 60;
+            };
+        };
+        Onboarding: components["schemas"]["OnboardingInput"] & {
+            /** Format: date-time */
+            updated_at: string;
+        };
+        RoadmapSummary: {
+            /**
+             * @description <subject>-<level>
+             * @example math-foundation
+             */
+            id: string;
+            /** @enum {string} */
+            subject: "math" | "english";
+            /** @enum {string} */
+            level: "foundation" | "pre-sat" | "advanced";
+            /** @example Math · Foundation */
+            title: string;
+            /** @enum {string} */
+            source: "group" | "onboarding";
+            /** @description The group it comes from (source group) */
+            group_name: string | null;
+            lessons_done: number;
+            lessons_total: number;
+            units_done: number;
+            units_total: number;
+            /** @description The first lesson not done (it may be locked); null when everything is done */
+            current: null | {
+                unit_id: string;
+                unit_title: string;
+                lesson_id: string;
+                lesson_title: string;
+                university: string;
+            };
+            /** @description Free accounts: how many units are open (the first country's); null for enrolled students */
+            free_units: number | null;
+        };
+        RoadmapStop: {
+            university: string;
+            city: string;
+            country: string;
+        };
+        Roadmap: components["schemas"]["RoadmapSummary"] & {
+            countries: {
+                /** @example south-korea */
+                id: string;
+                name: string;
+                /**
+                 * @description ISO 3166-1 alpha-2, lower case (for a flag); null if unknown
+                 * @example kr
+                 */
+                code: string | null;
+                /** @description Unit ids */
+                units: string[];
+            }[];
+            units: {
+                id: string;
+                title: string;
+                domain: string;
+                summary: string;
+                stop: components["schemas"]["RoadmapStop"];
+                /** @enum {string} */
+                status: "done" | "open" | "locked";
+                /** @enum {string|null} */
+                lock: "previous" | "enrolled_only" | null;
+                lessons: {
+                    id: string;
+                    title: string;
+                    minutes: number;
+                    /** @enum {string} */
+                    status: "done" | "open" | "locked";
+                    /** @enum {string|null} */
+                    lock: "previous" | "enrolled_only" | null;
+                    level_check: {
+                        questions: number;
+                        /** @description Best percent */
+                        best: number | null;
+                        passed: boolean;
+                    };
+                    homework: {
+                        sets: number;
+                        done: number;
+                    };
+                }[];
+            }[];
+        };
+        AssessmentRef: {
+            /** Format: uuid */
+            id: string;
+            percent: number;
+            /** Format: date-time */
+            finished_at: string;
+        };
+        RoadmapLessonDetail: {
+            lesson: {
+                id: string;
+                title: string;
+                unit_id: string;
+                minutes: number;
+                skills: string[];
+                objectives: string[];
+                /** @description The API's content format (render like question text) */
+                notes: string;
+                examples: {
+                    problem: string;
+                    steps: string[];
+                    answer: string;
+                }[];
+                common_mistakes: string[];
+                /** @enum {string} */
+                status: "done" | "open";
+                lock: null;
+            };
+            level_check: {
+                questions: number;
+                mix: {
+                    easy: number;
+                    medium: number;
+                    hard: number;
+                };
+                /** @example 70 */
+                pass_percent: number;
+                best: number | null;
+                passed: boolean;
+                /** @description Finished ones, newest first */
+                attempts: components["schemas"]["AssessmentRef"][];
+                open: null | {
+                    /** Format: uuid */
+                    id: string;
+                };
+            };
+            homework: {
+                index: number;
+                title: string;
+                /** @enum {string} */
+                difficulty: "easy" | "medium" | "hard";
+                questions: number;
+                done: boolean;
+                /** @description The latest finished one */
+                attempt: null | components["schemas"]["AssessmentRef"];
+                open: null | {
+                    /** Format: uuid */
+                    id: string;
+                };
+            }[];
+        };
+        AssessmentAnswers: {
+            /** @description Question id → the letter (mcq) or what was entered (grid-in); null clears */
+            answers: {
+                [key: string]: string | null;
+            };
+        };
+        Assessment: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            kind: "level_check" | "homework";
+            roadmap_id: string;
+            lesson_id: string;
+            homework_index: number | null;
+            title: string;
+            /** @enum {string} */
+            subject: "math" | "english";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            finished_at: string | null;
+            /** @description Easy to hard. While open, without correct, accepted and explanation. */
+            questions: {
+                /** Format: uuid */
+                id: string;
+                /** @description From 1 */
+                position: number;
+                /** @enum {string} */
+                type: "mcq" | "grid_in";
+                passage: string | null;
+                stem: string;
+                choices: {
+                    [key: string]: string;
+                } | null;
+                figures: components["schemas"]["PracticeFigure"][];
+                domain: string;
+                skill: string;
+                /** @enum {string|null} */
+                difficulty: "easy" | "medium" | "hard" | null;
+                /** @description Once submitted, mcq: the letter */
+                correct?: string;
+                /** @description Once submitted, grid-in: the accepted forms */
+                accepted?: string[];
+                /** @description Once submitted */
+                explanation?: string;
+            }[];
+            /** @description A figure's key (in ![alt](r2:key)) → a link an <img> loads (signed, https, works for 6 hours; read the assessment again for fresh ones). A figure that can't be had is missing. */
+            images: {
+                [key: string]: {
+                    url: string;
+                    width: number;
+                    height: number;
+                };
+            };
+            /** @description Every question id → the saved answer or null */
+            answers: {
+                [key: string]: string | null;
+            };
+            result: null | {
+                /** @description Rounded down */
+                percent: number;
+                correct: number;
+                total: number;
+                /** @description Level check: percent ≥ 70; homework: always true */
+                passed: boolean;
+                /** @description The lesson is done now (as of reading this) */
+                lesson_done: boolean;
+                items: {
+                    /** Format: uuid */
+                    question_id: string;
+                    given: string | null;
+                    correct: boolean;
+                    /** @description The letter */
+                    correct_answer: string;
+                    explanation: string;
+                }[];
+            };
+        };
         AdminPracticeReport: components["schemas"]["PracticeQuestionRef"] & {
             /** Format: uuid */
             id: string;
@@ -2444,6 +2878,8 @@ export interface components {
             photo_url?: string | null;
             /** @description Their own password (false while on the default one, or signed up with Google only) */
             has_password?: boolean;
+            /** @description Registered students: they have sent onboarding (POST /v1/me/onboarding). Always true for enrolled students and teachers */
+            onboarded?: boolean;
             /** @description Current and upcoming groups (enrolled in, or teaching). */
             groups: components["schemas"]["Group"][];
         };
@@ -4890,6 +5326,403 @@ export interface operations {
             401: components["responses"]["Error"];
             /** @description `forbidden`: not a teacher, or not this group's */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    myOnboarding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The answers */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Onboarding"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    sendOnboarding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OnboardingInput"];
+            };
+        };
+        responses: {
+            /** @description The profile (now `onboarded`) and the student's roadmaps */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        profile: components["schemas"]["Profile"];
+                        roadmaps: components["schemas"]["RoadmapSummary"][];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description `not_needed`: not a registered student (enrolled students and teachers have no onboarding) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_onboarding`: the message says which field is wrong */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    myRoadmaps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The roadmaps */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        roadmaps: components["schemas"]["RoadmapSummary"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `phone_required`: a registered student without a phone */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    myRoadmap: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The roadmap */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Roadmap"];
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `phone_required` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not one of the student's roadmaps */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    myRoadmapLesson: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                lessonId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The lesson */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoadmapLessonDetail"];
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `lesson_locked`: opens once the lesson before it is done; `enrolled_only`: past what a free account opens; `phone_required` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description Not one of the student's roadmaps, or no such lesson in it */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    startAssessment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                lessonId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    kind: "level_check" | "homework";
+                    /** @description The homework set (from 0); required for homework */
+                    index?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description The assessment, open */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Assessment"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description `lesson_locked`, `enrolled_only` or `phone_required` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such roadmap, lesson or homework set for the student */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `no_questions`: the bank has no approved question for the set yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_assessment`: kind isn't level_check or homework, or homework without an index */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    myAssessment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The assessment (with its result once submitted) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Assessment"];
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `phone_required` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    saveAssessmentAnswers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssessmentAnswers"];
+            };
+        };
+        responses: {
+            /** @description Saved */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description `phone_required` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            404: components["responses"]["Error"];
+            /** @description `finished`: submitted already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_answers`: a question that isn't the assessment's, or an answer over 32 characters */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    submitAssessment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssessmentAnswers"];
+            };
+        };
+        responses: {
+            /** @description The assessment with its result, keys and explanations */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Assessment"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description `phone_required` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            404: components["responses"]["Error"];
+            /** @description `finished`: submitted already */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_answers` */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

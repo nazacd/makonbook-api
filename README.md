@@ -39,6 +39,7 @@ The project builds one binary, `makonbook`:
 | `makonbook worker` | Run the HolliHop sync forever: incremental every `SYNC_INTERVAL`, full once a day after `SYNC_FULL_AT`. |
 | `makonbook sync full\|incremental` | Run one sync now and print a summary. Add `--allow-mass-change` to apply a run the guard blocked, after checking the change is real. |
 | `makonbook reset-password student\|teacher <id>` | Back to the default password, unlock, log out everywhere — for someone who forgot their password. `<id>` is the HolliHop client id (students) or teacher id. |
+| `makonbook curriculum import <file or folder>…` | Load SAT MAKON's curriculum for the roadmaps (never committed), then print the coverage report. `curriculum coverage` prints the report alone. |
 | `makonbook migrate up` | Apply pending migrations. Run this before `serve` on every deploy. |
 | `makonbook migrate down` | Roll back the last migration. |
 | `makonbook migrate status` | List migrations and whether each is applied. |
@@ -151,6 +152,16 @@ practice tests DAY1–DAY10 only. Photos from Google or Telegram are copied and
 served from `/v1/photos/`. Everyone can set their own name, which the sync
 never overwrites.
 Details: spec section 21.
+
+## Roadmaps in one paragraph
+
+SAT MAKON's curriculum, imported from JSON files that are never committed
+(`makonbook curriculum import`), is a route of countries, units and lessons
+per course. Enrolled students follow the courses their groups' disciplines
+teach; registered students pick through onboarding and get the first country
+free. Each lesson has a level check and homework drawn from the approved bank
+and graded on the server; a lesson is done at 70 % on its level check and every
+homework set finished, and opens the next. Details: spec section 22.
 
 ## Deploying
 

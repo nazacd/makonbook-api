@@ -60,6 +60,9 @@ enrol).
 | D30 | **A phone shared through the bot links that Telegram account** to whoever signs up or resets with it (never taken from someone else active, never replacing another link). A sign-up whose Telegram identity is the **same Telegram account that shared the phone** signs straight into the phone's owner, registered or enrolled. | 2026-11-07, after a free account owner coming back with Telegram was told "already exists". |
 | D31 | **Accounts reworked** (supersedes D24, D28–D30): sign in or sign up with an **email code**, **Google** or **Telegram** (its OpenID Connect flow, which can share a **verified phone**) — no phone step at sign-up. An account without a phone is **locked** from the content until it adds one (SMS code or Telegram). **Proving a number someone else has merges the phoneless account into theirs** (no "Is this you?", no "already exists"). Photos are copied, never hotlinked. Telegram's old hash widget and the "share my number" bot are gone. | 2026-11-08, decided by the product owner: proving the number is proof enough. |
 | D32 | People **set or remove their own photo**; once they have, the Google/Telegram picture is **never copied over their choice**. | 2026-11-09. |
+| D33 | **Roadmaps** (section 22): SAT MAKON's curriculum is **imported from files, never committed**, one version per change, progress **kept by lesson id**. Enrolled students get the courses their **groups' disciplines** teach; registered students choose through **onboarding** and get the **first country free**. | 2026-11-10, for the web. |
+| D34 | A roadmap lesson is **done** when its **level check is passed (≥ 70 %)** and **every homework set is finished at any score**; lessons open **one after another in course order**. Level checks and homework are **drawn from the approved bank and graded on the server**, preferring questions the student hasn't had. | 2026-11-10. |
+| D35 | Onboarding levels: a section score **below 450 → Foundation, 450–590 → Pre-SAT, 600+ → Advanced**; a total counts half for each section; no score → Foundation. | 2026-11-10. |
 
 ## 3. System overview
 
@@ -708,6 +711,13 @@ GET  /v1/teacher/groups/{id}/parked    a group's students' parked questions
 POST /v1/practice/reports              "Report an issue" on a question; idempotent by client UUID
 GET|PUT /v1/me/goals                   the student's SAT targets and exam date (9.6)
 
+# roadmaps (22)
+GET|POST /v1/me/onboarding             a registered student's answers; POST sets goals and roadmaps
+GET  /v1/me/roadmaps                   the student's roadmaps; GET …/{id} with units and lessons
+GET  /v1/me/roadmaps/{id}/lessons/{lessonId}              a lesson, its level check and homework
+POST /v1/me/roadmaps/{id}/lessons/{lessonId}/assessments  start or continue one
+GET  /v1/me/assessments/{id}           PUT …/answers saves; POST …/submit grades
+
 # vocabulary (phase 4)
 GET  /v1/vocab/deck?have=              every list and word (or "unchanged")
 GET  /v1/vocab/lists/{slug}/images     signed image links (6 h)
@@ -900,3 +910,101 @@ student. A phone is added afterwards (21.4) unless Telegram shared it.
   the default one) and `photo_url`.
 - `GET /v1/app/config` gains `signup` (email codes), `reset` (SMS), `email`, `google` and `telegram`
   (booleans); the web shows those options only when true.
+
+## 22. Roadmaps (built)
+
+SAT MAKON's curriculum as a route for each student: a **course** per subject and level (`math-foundation`,
+`math-pre-sat`, `math-advanced`, `english-…`), each a run of **countries**, each country a few **units** (a
+university stop), each unit a few **lessons**. A lesson has notes, examples and common mistakes to study, a
+**level check** and **homework sets**, drawn from the approved question bank and graded on the server. Built in
+`internal/roadmap` (the curriculum, assignment, progress, onboarding, assessments) with the bank's side in
+`internal/practice/bank.go`. The web shows it; the phone app doesn't yet.
+
+### 22.1 The curriculum
+- It is **SAT MAKON's own material and is never committed** (the repo is public): one JSON file per course,
+  `{subject, level, countries: [{id, name, units: [unit ids]}], units: [{id, title, domain, summary, stop:
+  {university, city, country}, lessons: [{id, title, skills, prerequisites, minutes, objectives, notes,
+  examples: [{problem, steps, answer}], common_mistakes, level_check: {questions, mix: {easy, medium, hard},
+  skills}, homework: [{title, skills, difficulty, questions}]}]}]}`. Notes and examples are in the content
+  format (9.2). Skills are the digital SAT's names (`practice.Taxonomy`); tests use a made-up course.
+- `makonbook curriculum import <file or folder>…` checks everything before storing anything: unique unit and
+  lesson ids, the countries listing every unit once and in the units' order, each level check's mix adding up
+  to its questions, homework with a title, skills, a difficulty and questions, skills never empty, no course
+  twice, and **no lesson id in two courses** (stored ones included). Each course whose content changed becomes
+  a new row in `curriculum_versions` (jsonb, with its hash); the latest is live at once. **Progress is keyed
+  by lesson id**, so a new version keeps it.
+- Then (and on `makonbook curriculum coverage`) it prints the **coverage report**: for every level check and
+  homework set, the approved questions of its skills at each difficulty asked (`have/want`), at any
+  difficulty, `SHORT` where the bank can't fill it as asked, and skills no approved question has.
+- Skills match the bank's in any case; a name the bank splits ("Command of Evidence") stands for each of its
+  parts ("… (Textual)", "… (Quantitative)").
+- Country ids map to ISO codes for flags: uzbekistan uz, south-korea kr, japan jp, singapore sg, turkey tr,
+  germany de, switzerland ch, united-kingdom gb, canada ca, united-states and usa us; any other, null.
+
+### 22.2 Who follows which course
+- **Enrolled students**: one roadmap per course their **current groups' disciplines** teach (`source:
+  group`, `group_name`): the subject from MATH or ENGLISH (or ENG), the level from FOUNDATION, PRE SAT
+  (PRE-SAT, PRESAT) or ADV (ADVANCED), as words. A discipline without both (e.g. "SAT MATH") gives none;
+  several groups of one course give it once. Every unit is theirs.
+- **Registered students**: the roadmaps onboarding gave (`roadmap_choices`, `source: onboarding`). **Free**:
+  only the **first country's units** are open (`free_units`); the rest are locked `enrolled_only` whatever
+  the progress. Once they enrol, their groups decide (their progress comes with them).
+- **Teachers**: none. A course never imported gives no roadmap until it is. The list is math first, then by level.
+- Behind `auth.RequireContent`: a registered student without a phone gets `403 phone_required` from the
+  roadmaps and assessments (onboarding works without one).
+
+### 22.3 Onboarding (registered students)
+- `POST /v1/me/onboarding {graduation ("2027" … "2034" | "graduated"), sat_dates: [dates] (empty: not
+  decided), current: null | {total: 400–1600} | {math, rw: 200–800}, target: {total, math, rw}, focus: math |
+  english | both, schedule: {days: [mon … sun] (≥ 1), minutes: 15 | 30 | 45 | 60}}`. Scores are multiples of
+  10 and `target.total = target.math + target.rw`; anything else is `422 invalid_onboarding` with a message.
+  Anyone else gets `409 not_needed`.
+- It stores the answers (`onboarding`), sets the goals (9.6: the two targets, and `exam_date` = the first SAT
+  date from today on, or null) and gives a roadmap per subject in focus, at the level of that section's
+  current score: **below 450 Foundation, 450–590 Pre-SAT, 600+ Advanced**; a total counts half for each; no
+  score, Foundation. Sending again replaces the answers and those roadmaps; progress stays. It answers
+  `{profile, roadmaps}`. `GET /v1/me/onboarding` reads the answers back (404 before).
+- `Profile.onboarded`: registered students, whether they have sent it; always true for everyone else.
+
+### 22.4 Progress, open and locked
+- The **first lesson** is open; each later lesson opens once **the lesson before it in course order** is done
+  (`lock: previous`). A lesson is **done** when its level check was **passed (best ≥ 70 %)** and **every
+  homework set was finished, at any score**. A unit is done when its lessons are. Free accounts: units past the
+  first country are `locked` / `enrolled_only` (22.2).
+- `GET /v1/me/roadmaps` → summaries: counts of lessons and units done, `current` (the first lesson not done,
+  even if locked; null when all are), `free_units`. `GET /v1/me/roadmaps/{id}` adds the countries (with
+  codes) and the units and lessons with their status, lock, best level check and homework done. 404 when it
+  isn't one of theirs.
+- `GET /v1/me/roadmaps/{id}/lessons/{lessonId}` → the lesson's content, its level check (mix, pass percent,
+  best, attempts newest first, the open one) and homework sets (done, the latest finished attempt, the open
+  one). A locked lesson stays hidden: `403 lesson_locked`, or `enrolled_only` past the free limit.
+
+### 22.5 Level checks and homework
+- `POST …/lessons/{lessonId}/assessments {kind: level_check | homework, index}` returns the **unfinished** one
+  of that kind and set if there is one, else makes one (`roadmap_assessments`, at most one open per set):
+  approved questions of the set's skills, the level check's mix (homework: its difficulty), **preferring
+  questions the student hasn't had in any roadmap assessment**. In order: unseen at the difficulty asked, at
+  the neighbouring difficulty (easy ↔ medium ↔ hard), at any difficulty (unestimated too); then the same among
+  those seen; still short, fewer questions (never none: `409 no_questions`). Random within each step;
+  ordered easy to hard. A finished homework set can be practised again and stays done; a level check can be
+  retaken, with new questions where possible. Locked lessons: 403 as above.
+- An open assessment has no keys or explanations. Figures come as signed links (6 h) to the files practice
+  publishes (`p/img/`), copied there on first use for questions in no published test (`figure_files`).
+- `PUT /v1/me/assessments/{id}/answers {answers}` saves as the student goes (each replaces that question's;
+  null clears); `POST …/submit {answers}` saves and **grades exactly like practice** (`PackageQuestion.Correct`):
+  `percent` rounded down, `passed` = ≥ 70 for a level check (always for homework), `lesson_done`, and per
+  question the answer given, right or not, the correct answer (letter or first accepted form) and the
+  explanation; the questions then carry their keys. Either after submitting: `409 finished`. Other people's
+  assessments are 404.
+- A merge (21.4) moves the registered student's assessments and choices, and their onboarding when the other
+  has none.
+
+### 22.6 Tables
+```
+curriculum_versions (subject, level, version, content jsonb, content_hash, imported_at)   PK (subject, level, version)
+onboarding          (student_client_id PK, answers jsonb, updated_at)
+roadmap_choices     (student_client_id, roadmap_id, created_at)                           PK both
+roadmap_assessments (id uuid, student_client_id, roadmap_id, lesson_id, kind, homework_index,
+                     question_ids uuid[], answers jsonb, created_at, finished_at, correct, total, percent)
+figure_files        (key PK, file → practice_published_images)                            practice's
+```
