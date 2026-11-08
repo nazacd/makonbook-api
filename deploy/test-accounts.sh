@@ -14,12 +14,15 @@
 # It prints their numbers and waits; type `done` when you have finished
 # testing (Ctrl+C works too). Then it deletes what the test created on the two
 # accounts: their password, username and sessions (back to the default
-# password, signed out everywhere), and the student's practice attempts sent
-# during the test.
+# password, signed out everywhere), the student's practice attempts sent
+# during the test, and the assignments the teacher gave during the test
+# (with their notifications and the work on them).
 #
 # Attendance is not undone: a scan or a teacher's mark is a real mark and is
 # written to HolliHop when writing is enabled. The script tells you if any was
-# made, so you can correct it in the admin panel.
+# made, so you can correct it in the admin panel. An assignment the teacher
+# gives notifies every student of the group in the app (nothing is sent
+# outside it); deleting it at the end removes those notifications too.
 #
 # Settings: PSQL (how to reach the database; default the shared `db`
 # container), TEST_TEACHER_ID / TEST_STUDENT_ID (use these people instead of choosing;
@@ -117,6 +120,7 @@ DELETE FROM credentials WHERE (person_kind, person_id) IN (('teacher', $tid), ('
 DELETE FROM auth_sessions WHERE (person_kind, person_id) IN (('teacher', $tid), ('student', $sid));
 DELETE FROM practice_attempts WHERE student_client_id = $sid AND received_at >= '$started';
 DELETE FROM roadmap_assessments WHERE student_client_id = $sid AND created_at >= '$started';
+DELETE FROM assignments WHERE teacher_id = $tid AND created_at >= '$started';
 DELETE FROM parent_sessions WHERE student_client_id = $sid AND created_at >= '$started';
 DELETE FROM parent_reports WHERE student_client_id = $sid AND created_at >= '$started';
 COMMIT;
@@ -124,8 +128,8 @@ SQL
   marks=$(sql -c "SELECT count(*) FROM attendance_marks WHERE student_client_id = $sid AND scanned_at >= '$started'")
   sessions=$(sql -c "SELECT count(*) FROM attendance_sessions WHERE teacher_id = $tid AND opened_at >= '$started'")
   echo "Done: both back to the default password, signed out everywhere, test results deleted"
-  echo "(practice attempts, roadmap level checks and homework, parent sign-ins with the student's code,"
-  echo "parent reports)."
+  echo "(practice attempts, roadmap level checks and homework, assignments the teacher gave,"
+  echo "parent sign-ins with the student's code, parent reports)."
   if [[ $marks != 0 || $sessions != 0 ]]; then
     echo "Attendance made during the test is kept (it is real): $sessions session(s) opened by the teacher,"
     echo "$marks check-in(s) by the student. Correct them in the admin panel if they shouldn't count."

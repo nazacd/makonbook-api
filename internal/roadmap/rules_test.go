@@ -73,6 +73,24 @@ func TestDisciplineCourse(t *testing.T) {
 	}
 }
 
+func TestGroupCourse(t *testing.T) {
+	for _, c := range []struct{ discipline, level, want string }{
+		{"PRE SAT MATH", "ADVANCED", "math-pre-sat"}, // the discipline's level first
+		{"SAT MATH", "PRE SAT", "math-pre-sat"},      // D38: HolliHop's level
+		{"SAT ENG", "Foundation", "english-foundation"},
+		{"SAT MATH", "ADV 2", "math-advanced"},
+		{"SAT MATH", "B1", ""},       // still no level
+		{"SAT MATH", "", ""},         // still no level
+		{"OLYMPIAD", "ADVANCED", ""}, // no subject
+		{"FOUNDATION", "MATH", ""},   // the subject comes from the discipline only
+	} {
+		got, ok := GroupCourse(c.discipline, c.level)
+		if got != c.want || ok != (c.want != "") {
+			t.Errorf("%q, %q: %q %v, want %q", c.discipline, c.level, got, ok, c.want)
+		}
+	}
+}
+
 func TestOnboardingLevels(t *testing.T) {
 	n := func(v int) *int { return &v }
 	valid := func() Onboarding {
