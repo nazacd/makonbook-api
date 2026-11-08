@@ -1,7 +1,6 @@
-// Package telegram is the part of the Telegram Bot API MakonBook's bots use:
-// the review bot reads updates (long polling), posts pictures and messages
-// with buttons, edits them and answers button presses; the sign-in bot
-// (internal/auth) gets updates by webhook, asks for a contact and replies.
+// Package telegram is the part of the Telegram Bot API the review bot uses:
+// reading updates (long polling), posting pictures and messages with
+// buttons, editing them, and answering button presses.
 package telegram
 
 import (
@@ -28,18 +27,6 @@ type Bot struct {
 // New is a bot with its token (from @BotFather).
 func New(token string) *Bot {
 	return &Bot{token: token, base: "https://api.telegram.org", http: &http.Client{Timeout: 60 * time.Second}}
-}
-
-// WithBaseURL points the bot at another Bot API server (tests).
-func (b *Bot) WithBaseURL(u string) *Bot {
-	b.base = strings.TrimRight(u, "/")
-	return b
-}
-
-// Call calls any Bot API method with JSON params; out (if not nil) gets the
-// result.
-func (b *Bot) Call(ctx context.Context, method string, params, out any) error {
-	return b.call(ctx, method, params, out)
 }
 
 // User is a Telegram account.
@@ -72,19 +59,10 @@ type Chat struct {
 
 // Message is a message, as far as the bot reads it.
 type Message struct {
-	MessageID int64    `json:"message_id"`
-	From      *User    `json:"from"`
-	Chat      Chat     `json:"chat"`
-	Text      string   `json:"text"`
-	Contact   *Contact `json:"contact"`
-}
-
-// Contact is a shared phone contact; UserID is the Telegram account it
-// belongs to, when it is one.
-type Contact struct {
-	PhoneNumber string `json:"phone_number"`
-	FirstName   string `json:"first_name"`
-	UserID      int64  `json:"user_id"`
+	MessageID int64  `json:"message_id"`
+	From      *User  `json:"from"`
+	Chat      Chat   `json:"chat"`
+	Text      string `json:"text"`
 }
 
 // CallbackQuery is a press on one of the bot's buttons.

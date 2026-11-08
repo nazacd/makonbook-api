@@ -30,19 +30,11 @@ type Handler struct {
 
 // SignIn is which ways in the app config offers (spec 21).
 type SignIn struct {
-	Signup bool // sign-up (an email code or Google, then an SMS code)
-	Reset  bool // password reset by SMS code
-	Email  bool // sign-up can start with an email code
-	Google bool // Google sign-in
-	// Telegram: the sign-in bot, for the Login Widget; nil when off.
-	Telegram *TelegramBot
-}
-
-// TelegramBot is the public face of the sign-in bot: its id (the token's
-// number) and username.
-type TelegramBot struct {
-	BotID       int64  `json:"bot_id"`
-	BotUsername string `json:"bot_username"`
+	Signup   bool // sign-up (an email code or Google, then an SMS code)
+	Reset    bool // password reset by SMS code
+	Email    bool // sign-up can start with an email code
+	Google   bool // Google sign-in
+	Telegram bool // Telegram sign-in
 }
 
 func NewHandler(store Store, db Pinger) *Handler {
@@ -91,12 +83,11 @@ type AppConfig struct {
 	// Signup: people can sign up (an email code or Google, then an SMS
 	// code). Reset: they can reset their password with an SMS code. Email:
 	// sign-up can start with an email. Google: Google sign-in.
-	Signup bool `json:"signup"`
-	Reset  bool `json:"reset"`
-	Email  bool `json:"email"`
-	Google bool `json:"google"`
-	// Telegram: the sign-in bot, or null when Telegram is off.
-	Telegram *TelegramBot `json:"telegram"`
+	Signup   bool `json:"signup"`
+	Reset    bool `json:"reset"`
+	Email    bool `json:"email"`
+	Google   bool `json:"google"`
+	Telegram bool `json:"telegram"`
 }
 
 func (h *Handler) appConfig(w http.ResponseWriter, r *http.Request) {

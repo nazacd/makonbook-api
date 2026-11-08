@@ -15,7 +15,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/nazacd/makonbook-api/internal/auth/authdb"
@@ -23,9 +22,11 @@ import (
 	"github.com/nazacd/makonbook-api/internal/platform/sms"
 )
 
-// Accounts (spec 21): anyone can sign up as a student after proving a phone
-// number with a code sent by SMS (or come with Google and then prove one);
-// anyone who signs in with a phone can reset their password the same way.
+// Accounts (spec 21): anyone can sign up as a student with an email code,
+// Google or Telegram; a phone is added afterwards (an SMS code, or the one
+// Telegram shares), and proving a number someone else has merges the two
+// accounts (phone.go). Anyone who signs in with a phone can reset their
+// password with an SMS code.
 
 // Code and ticket rules.
 const (
@@ -40,32 +41,30 @@ const (
 	uzbekCountryCode = "+998"
 )
 
-// Code purposes.
+// Code purposes (phone_codes.purpose).
 const (
-	PurposeSignup = "signup"
-	PurposeReset  = "reset"
+	PurposeReset  = "reset"  // a forgotten password
+	purposeVerify = "verify" // a signed-in person adding their phone
 )
 
 // Ticket purposes besides the code purposes (auth_tickets.purpose).
 const (
-	ticketGoogle       = "google"        // back from Google, for /v1/auth/google/ticket
-	ticketGoogleSignup = "google_signup" // a Google account waiting for a phone, for sign-up
-	ticketEmail        = "email"         // a proved email waiting for a phone, for sign-up
-	// ticketTelegramSignup: a Telegram account waiting for a phone, for sign-up.
-	ticketTelegramSignup = "telegram_signup"
+	ticketGoogle         = "google"          // back from Google, for /v1/auth/google/ticket
+	ticketEmail          = "email"           // a proved email nobody has, for sign-up
+	ticketTelegramSignin = "telegram_signin" // back from Telegram, for /v1/auth/telegram/ticket
+	ticketTelegramVerify = "telegram_verify" // back from Telegram, for /v1/me/phone/telegram
 )
 
 var (
-	ErrSMSOff        = errors.New("sign-up and reset by SMS aren't available")
-	ErrSMSFailed     = errors.New("the SMS couldn't be sent; try again in a minute")
-	ErrInvalidPhone  = errors.New("an Uzbek mobile number is needed, like 90 123 45 67")
-	ErrCodeExpired   = errors.New("this code has expired or was used; ask for a new one")
-	ErrInvalidTicket = errors.New("this step took too long or was already done; start again")
-	ErrNoAccount     = errors.New("nobody signs in with this phone number")
-	ErrPhoneTaken    = errors.New("this phone number already has an account; sign in, or reset the password")
-	ErrIdentitySpent = errors.New("this email or Google account was already used with another phone number; start again")
-	ErrGoogleTaken   = errors.New("this Google account is linked to another account")
-	errNeedPassword  = errors.New("choose a password (8 to 128 characters)")
+	ErrSMSOff          = errors.New("sign-up and reset by SMS aren't available")
+	ErrSMSFailed       = errors.New("the SMS couldn't be sent; try again in a minute")
+	ErrInvalidPhone    = errors.New("an Uzbek mobile number is needed, like 90 123 45 67")
+	ErrCodeExpired     = errors.New("this code has expired or was used; ask for a new one")
+	ErrInvalidTicket   = errors.New("this step took too long or was already done; start again")
+	ErrNoAccount       = errors.New("nobody signs in with this phone number")
+	ErrGoogleTaken     = errors.New("this Google account is linked to another account")
+	ErrPhoneSet        = errors.New("you already have a phone number")
+	ErrNoTelegramPhone = errors.New("Telegram didn't share a phone number; allow it, or verify it by SMS") //nolint:staticcheck // a product name
 )
 
 // RateLimitedError: too many codes for a phone or from a network.
@@ -105,15 +104,12 @@ func (s *Service) WithSMS(sender sms.Sender, text string, log *slog.Logger) *Ser
 	return s
 }
 
-// SignupEnabled: people can sign up: there is a way to start (an email code,
-// Google or Telegram) and to prove the phone (an SMS code or the Telegram bot).
-func (s *Service) SignupEnabled() bool {
-	return (s.sms != nil || s.telegram != nil) && (s.mail != nil || s.google != nil || s.telegram != nil)
-}
+// SignupEnabled: people can sign up with an email code (Google and Telegram
+// make accounts on their own).
+func (s *Service) SignupEnabled() bool { return s.mail != nil }
 
-// ResetEnabled: people can reset their password (the phone proved by SMS or
-// the Telegram bot).
-func (s *Service) ResetEnabled() bool { return s.sms != nil || s.telegram != nil }
+// ResetEnabled: people can reset their password with an SMS code.
+func (s *Service) ResetEnabled() bool { return s.sms != nil }
 
 // uzbekPhone normalises a number as the rest of the API does (spec 5) and
 // accepts Uzbek numbers only: codes go by SMS through an Uzbek gateway.
@@ -290,119 +286,33 @@ func (c sentCode) check(ctx context.Context, code string, now time.Time) error {
 	return nil
 }
 
-// PhoneOwner is who already signs in with a phone, as sign-up shows it once
-// the phone is verified (spec 21.3): a registered student (sign-up is
-// refused), or an enrolled person, by kind and short name ("Diyora A."), who
-// is asked whether that is them.
-type PhoneOwner struct {
-	Status string `json:"status"`         // StatusRegistered or StatusEnrolled
-	Kind   string `json:"kind,omitempty"` // enrolled: student or teacher
-	Name   string `json:"name,omitempty"` // enrolled: first name and the last name's initial
-}
-
-// phoneOwner is the active person who signs in with phone; found is false
-// when nobody does.
-func phoneOwner(ctx context.Context, p People, phone string) (people.Person, bool, error) {
-	owner, err := p.ByLoginPhone(ctx, phone)
-	if errors.Is(err, people.ErrNotFound) {
-		return people.Person{}, false, nil
-	}
+// VerifyPhone checks a password-reset code sent by StartPhone and answers a
+// ticket: proof, for 15 minutes and once, that this phone was verified.
+func (s *Service) VerifyPhone(ctx context.Context, raw, code string) (string, error) {
+	phone, err := s.checkPhoneCode(ctx, raw, code, PurposeReset)
 	if err != nil {
-		return people.Person{}, false, err
+		return "", err
 	}
-	return owner, owner.Active, nil
+	return s.newTicket(ctx, s.q, ticketData{purpose: PurposeReset, phone: phone}, PhoneTicketTTL)
 }
 
-// shortName is a first name and the last name's initial: "Diyora A.".
-func shortName(first, last string) string {
-	first, last = strings.TrimSpace(first), strings.TrimSpace(last)
-	r, _ := utf8.DecodeRuneInString(last)
-	if last == "" || r == utf8.RuneError {
-		return first
-	}
-	return strings.TrimSpace(first + " " + string(unicode.ToUpper(r)) + ".")
-}
-
-// Identity is what a sign-up starts with (spec 21.3): a proved email
-// (EmailTicket, from VerifyEmail), a Google account (GoogleTicket, from
-// GoogleTicket's needs_phone) or a Telegram account (TelegramTicket, from
-// TelegramSignIn's needs_phone); exactly one.
-type Identity struct {
-	EmailTicket    *string `json:"email_ticket"`
-	GoogleTicket   *string `json:"google_ticket"`
-	TelegramTicket *string `json:"telegram_ticket"`
-}
-
-// ticket is the identity's ticket and its purpose; ErrInvalidTicket unless
-// exactly one is given.
-func (id Identity) ticket() (ticket, purpose string, err error) {
-	n := 0
-	for _, c := range []struct {
-		t       *string
-		purpose string
-	}{{id.EmailTicket, ticketEmail}, {id.GoogleTicket, ticketGoogleSignup}, {id.TelegramTicket, ticketTelegramSignup}} {
-		if c.t != nil && *c.t != "" {
-			ticket, purpose = *c.t, c.purpose
-			n++
-		}
-	}
-	if n != 1 {
-		return "", "", ErrInvalidTicket
-	}
-	return ticket, purpose, nil
-}
-
-// identityFor checks a sign-up's identity: given, live, and (when phone is
-// known) not spent on another phone. It answers the ticket's hash and purpose.
-func (s *Service) identityFor(ctx context.Context, identity Identity, phone string, now time.Time) ([]byte, string, error) {
-	idTicket, purpose, err := identity.ticket()
-	if err != nil {
-		return nil, "", err
-	}
-	hash := hashToken(idTicket)
-	it, err := s.q.PeekTicket(ctx, authdb.PeekTicketParams{TokenHash: hash, Purpose: purpose, Now: timestamp(now)})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, "", ErrInvalidTicket
-	}
-	if err != nil {
-		return nil, "", err
-	}
-	if phone != "" && it.RevealedPhone.Valid && it.RevealedPhone.String != phone {
-		return nil, "", ErrIdentitySpent
-	}
-	return hash, purpose, nil
-}
-
-// VerifyPhone checks a code sent by StartPhone and answers a ticket: proof,
-// for 15 minutes and once, that this phone was verified for this purpose.
-// A sign-up needs an identity, and the ticket is good only with it; the
-// answer then also says who already signs in with the phone (nil: nobody).
-// An identity shows the owner of one phone at most: another phone with an
-// owner is ErrIdentitySpent (a phone nobody has doesn't count). For a reset,
-// identity is ignored and owner is nil.
-func (s *Service) VerifyPhone(ctx context.Context, raw, code, purpose string, identity Identity) (ticket string, owner *PhoneOwner, err error) {
+// checkPhoneCode checks the latest code sent to the phone for purpose and
+// uses it; it answers the phone, normalised.
+func (s *Service) checkPhoneCode(ctx context.Context, raw, code, purpose string) (string, error) {
 	if s.sms == nil {
-		return "", nil, ErrSMSOff
+		return "", ErrSMSOff
 	}
 	phone, ok := uzbekPhone(raw)
 	if !ok {
-		return "", nil, ErrInvalidPhone
+		return "", ErrInvalidPhone
 	}
 	now := s.now()
-	var idHash []byte
-	var idPurpose string
-	if purpose == PurposeSignup {
-		if idHash, idPurpose, err = s.identityFor(ctx, identity, phone, now); err != nil {
-			return "", nil, err
-		}
-	}
-
 	row, err := s.q.LatestPhoneCode(ctx, authdb.LatestPhoneCodeParams{Phone: phone, Purpose: purpose})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil, ErrCodeExpired
+		return "", ErrCodeExpired
 	}
 	if err != nil {
-		return "", nil, fmt.Errorf("latest code: %w", err)
+		return "", fmt.Errorf("latest code: %w", err)
 	}
 	c := sentCode{id: row.ID, salt: row.Salt, hash: row.CodeHash, tries: row.Tries, expires: row.ExpiresAt, usedAt: row.UsedAt,
 		countTry: s.q.CountPhoneCodeTry,
@@ -412,212 +322,9 @@ func (s *Service) VerifyPhone(ctx context.Context, raw, code, purpose string, id
 		waitForAnother: func() (time.Duration, error) { return s.codeWait(ctx, s.q, phone, "", now) },
 	}
 	if err := c.check(ctx, code, now); err != nil {
-		return "", nil, err
+		return "", err
 	}
-	return s.phoneProved(ctx, phone, purpose, idHash, idPurpose, 0)
-}
-
-// phoneProved answers the ticket for a phone just proved (by an SMS code or
-// the Telegram bot): for a sign-up, bound to the identity, with whose the
-// phone is, which spends the identity on this phone. checkedBy is the
-// Telegram account that shared the number through the bot (0: an SMS code),
-// linked to whoever the ticket then signs in.
-func (s *Service) phoneProved(ctx context.Context, phone, purpose string, idHash []byte, idPurpose string, checkedBy int64) (string, *PhoneOwner, error) {
-	var owner *PhoneOwner
-	if purpose == PurposeSignup {
-		p, found, err := phoneOwner(ctx, s.people, phone)
-		switch {
-		case err != nil:
-			return "", nil, err
-		case !found:
-		case p.Registered:
-			owner = &PhoneOwner{Status: StatusRegistered}
-		default:
-			owner = &PhoneOwner{Status: StatusEnrolled, Kind: p.Kind, Name: shortName(p.FirstName, p.LastName)}
-		}
-		if owner != nil {
-			n, err := s.q.RevealPhone(ctx, authdb.RevealPhoneParams{Phone: phone, TokenHash: idHash, Purpose: idPurpose})
-			if err != nil {
-				return "", nil, fmt.Errorf("reveal phone: %w", err)
-			}
-			if n == 0 { // another phone was revealed meanwhile, or the identity was used
-				return "", nil, ErrIdentitySpent
-			}
-		}
-	}
-	ticket, err := s.newTicket(ctx, s.q, ticketData{purpose: purpose, phone: phone, identity: idHash, checkedBy: checkedBy}, PhoneTicketTTL)
-	if err != nil {
-		return "", nil, err
-	}
-	return ticket, owner, nil
-}
-
-// SignupInput is a sign-up: a verified phone (Ticket), verified together with
-// the identity (an email or a Google account), the person's names (needed
-// only for a new account) and password (needed with an email).
-type SignupInput struct {
-	Ticket string `json:"ticket"`
-	Identity
-	FirstName *string `json:"first_name"`
-	LastName  *string `json:"last_name"`
-	Password  *string `json:"password"`
-	DeviceID  string  `json:"device_id"`
-}
-
-// Signup creates a registered student with the verified phone and the
-// identity, and signs them in. A phone an enrolled person (a student or
-// teacher in HolliHop) signs in with signs into that account instead (the
-// client asked them first; see VerifyPhone): the password, if given, replaces
-// theirs (ending their other sessions), the email is added if nobody active
-// has it, the Google account is linked, and the names are ignored. existing
-// says which. A phone a registered student already signs in with is
-// ErrPhoneTaken: they sign in, or reset their password.
-func (s *Service) Signup(ctx context.Context, in SignupInput) (res LoginResult, existing bool, err error) {
-	now := s.now()
-	idTicket, idPurpose, err := in.ticket()
-	if err != nil {
-		return LoginResult{}, false, err
-	}
-	pt, err := s.q.PeekTicket(ctx, authdb.PeekTicketParams{TokenHash: hashToken(in.Ticket), Purpose: PurposeSignup, Now: timestamp(now)})
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && subtle.ConstantTimeCompare(pt.Identity, hashToken(idTicket)) != 1) {
-		return LoginResult{}, false, ErrInvalidTicket // unknown, or verified with another identity
-	}
-	if err != nil {
-		return LoginResult{}, false, err
-	}
-	phone := pt.Phone.String
-	checkedBy := pt.CheckedTelegramID.Int64
-	it, err := s.q.PeekTicket(ctx, authdb.PeekTicketParams{TokenHash: hashToken(idTicket), Purpose: idPurpose, Now: timestamp(now)})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return LoginResult{}, false, ErrInvalidTicket
-	}
-	if err != nil {
-		return LoginResult{}, false, err
-	}
-	var email string
-	var google *GoogleAccount
-	var tg *TelegramAccount
-	switch idPurpose {
-	case ticketEmail:
-		email = it.Email.String
-	case ticketGoogleSignup:
-		google = &GoogleAccount{Sub: it.GoogleSub.String, Email: it.Email.String}
-	default:
-		tg = &TelegramAccount{ID: it.TelegramID.Int64, Username: it.TelegramUsername.String}
-	}
-
-	if owner, found, err := phoneOwner(ctx, s.people, phone); err != nil {
-		return LoginResult{}, false, err
-	} else if found && owner.Registered {
-		return LoginResult{}, false, ErrPhoneTaken
-	}
-	var hash string
-	if in.Password == nil {
-		if email != "" {
-			return LoginResult{}, false, &ValidationError{Field: "password", Err: errNeedPassword}
-		}
-	} else {
-		if err := checkNewPassword(*in.Password, "", phone); err != nil {
-			return LoginResult{}, false, &ValidationError{Field: "password", Err: err}
-		}
-		if hash, err = s.hasher.Hash(*in.Password); err != nil {
-			return LoginResult{}, false, fmt.Errorf("hash password: %w", err)
-		}
-	}
-
-	// Two sign-ups with one number at once: the second finds the first's.
-	for attempt := 0; ; attempt++ {
-		res, existing, err = s.signup(ctx, in, idTicket, idPurpose, phone, hash, email, google, tg, checkedBy)
-		var pgErr *pgconn.PgError
-		if attempt == 0 && errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			continue
-		}
-		return res, existing, err
-	}
-}
-
-func (s *Service) signup(ctx context.Context, in SignupInput, idTicket, idPurpose, phone, hash, email string, google *GoogleAccount, tg *TelegramAccount, checkedBy int64) (LoginResult, bool, error) {
-	now := s.now()
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return LoginResult{}, false, err
-	}
-	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	q := authdb.New(tx)
-	if _, err := s.useTicket(ctx, q, in.Ticket, PurposeSignup, now); err != nil {
-		return LoginResult{}, false, err
-	}
-	if _, err := s.useTicket(ctx, q, idTicket, idPurpose, now); err != nil {
-		return LoginResult{}, false, err
-	}
-
-	dir := people.NewDirectory(tx)
-	p, err := dir.ByLoginPhone(ctx, phone)
-	existing := err == nil
-	switch {
-	case existing && !p.Active: // the sync clears a leaver's login phone: not expected
-		return LoginResult{}, false, fmt.Errorf("sign-up: %s %d has the phone but isn't active", p.Kind, p.ID)
-	case existing && p.Registered: // signed up meanwhile
-		return LoginResult{}, false, ErrPhoneTaken
-	case errors.Is(err, people.ErrNotFound):
-		first, last, err := names(deref(in.FirstName), deref(in.LastName))
-		if err != nil {
-			return LoginResult{}, false, err
-		}
-		id, err := people.CreateSelfStudent(ctx, tx, first, last, phone)
-		if err != nil {
-			return LoginResult{}, false, err
-		}
-		if p, err = dir.Get(ctx, people.KindStudent, id); err != nil {
-			return LoginResult{}, false, err
-		}
-	case err != nil:
-		return LoginResult{}, false, err
-	}
-
-	custom := false
-	if hash != "" {
-		if err := q.SetPassword(ctx, authdb.SetPasswordParams{PersonKind: p.Kind, PersonID: p.ID, PasswordHash: pgtype.Text{String: hash, Valid: true}}); err != nil {
-			return LoginResult{}, false, fmt.Errorf("set password: %w", err)
-		}
-		if _, err := q.RevokeAllSessions(ctx, authdb.RevokeAllSessionsParams{PersonKind: p.Kind, PersonID: p.ID}); err != nil {
-			return LoginResult{}, false, fmt.Errorf("revoke sessions: %w", err)
-		}
-		custom = true
-	} else if existing {
-		c, err := q.GetCredential(ctx, authdb.GetCredentialParams{PersonKind: p.Kind, PersonID: p.ID})
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return LoginResult{}, false, fmt.Errorf("get credential: %w", err)
-		}
-		_, custom = ownPassword(c.PasswordHash, c.PasswordChangedAt, p)
-	}
-	if email != "" {
-		// A new account must get it; an enrolled one gets it if it's free.
-		if err := linkEmail(ctx, q, dir, p, email); err != nil && (!existing || !errors.Is(err, ErrEmailTaken)) {
-			return LoginResult{}, false, err
-		}
-	}
-	if google != nil {
-		if err := s.linkGoogle(ctx, q, dir, p, *google); err != nil {
-			return LoginResult{}, false, err
-		}
-	}
-	if tg != nil {
-		if err := linkTelegram(ctx, q, dir, p, *tg); err != nil {
-			return LoginResult{}, false, err
-		}
-	}
-	if err := linkCheckedTelegram(ctx, q, dir, p, checkedBy); err != nil {
-		return LoginResult{}, false, err
-	}
-	res, err := s.openSession(ctx, q, p, in.DeviceID, usesDefault(p, custom))
-	if err != nil {
-		return LoginResult{}, false, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return LoginResult{}, false, err
-	}
-	return res, existing, nil
+	return phone, nil
 }
 
 // Reset sets a new password for whoever signs in with the phone a reset
@@ -654,11 +361,7 @@ func (s *Service) Reset(ctx context.Context, ticket, password, deviceID string) 
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	q := authdb.New(tx)
-	used, err := s.useTicket(ctx, q, ticket, PurposeReset, now)
-	if err != nil {
-		return LoginResult{}, err
-	}
-	if err := linkCheckedTelegram(ctx, q, people.NewDirectory(tx), p, used.checkedBy); err != nil {
+	if _, err := s.useTicket(ctx, q, ticket, PurposeReset, now); err != nil {
 		return LoginResult{}, err
 	}
 	// SetPassword also clears failures and the lockout.
@@ -698,13 +401,6 @@ func (s *Service) SetNames(ctx context.Context, pr Principal, first, last *strin
 	return s.people.SetNames(ctx, p.Kind, p.ID, first, last)
 }
 
-func deref(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
-
 // names checks a first and a last name.
 func names(first, last string) (string, string, error) {
 	f, err := name(first)
@@ -734,15 +430,16 @@ func name(s string) (string, error) {
 // GoogleAccount is a Google account as its ID token describes it.
 type GoogleAccount struct {
 	Sub       string // Google's id for the account, never reused
-	Email     string
+	Email     string // verified
 	FirstName string
 	LastName  string
+	PhotoURL  string
 }
 
 // linkGoogle links the Google account to p (inside the caller's
 // transaction). An account linked to someone else who is still active is
-// ErrGoogleTaken; one linked to someone who left moves to p. A person has one
-// Google account: a new one replaces theirs.
+// ErrGoogleTaken; one linked to someone who left moves to p. A person may
+// have several Google accounts.
 func (s *Service) linkGoogle(ctx context.Context, q *authdb.Queries, dir *people.Directory, p people.Person, g GoogleAccount) error {
 	link, err := q.GoogleLinkBySub(ctx, g.Sub)
 	switch {
@@ -762,9 +459,6 @@ func (s *Service) linkGoogle(ctx context.Context, q *authdb.Queries, dir *people
 	case !errors.Is(err, pgx.ErrNoRows):
 		return fmt.Errorf("google link: %w", err)
 	}
-	if err := q.UnlinkGooglePerson(ctx, authdb.UnlinkGooglePersonParams{PersonKind: p.Kind, PersonID: p.ID}); err != nil {
-		return fmt.Errorf("unlink google: %w", err)
-	}
 	if err := q.InsertGoogleLink(ctx, authdb.InsertGoogleLinkParams{Sub: g.Sub, PersonKind: p.Kind, PersonID: p.ID, Email: g.Email}); err != nil {
 		return fmt.Errorf("link google: %w", err)
 	}
@@ -774,15 +468,16 @@ func (s *Service) linkGoogle(ctx context.Context, q *authdb.Queries, dir *people
 // ticketData is what a ticket proves.
 type ticketData struct {
 	purpose  string
-	phone    string           // signup, reset
+	phone    string           // reset
 	email    string           // email
-	identity []byte           // signup: the identity ticket's hash
-	telegram *TelegramAccount // telegram_signup
-	// checkedBy: signup, reset: the Telegram account that shared the phone
-	// through the bot (0: an SMS code).
-	checkedBy int64
-	google    *GoogleAccount // google, google_signup
+	google   *GoogleAccount   // google
+	telegram *TelegramAccount // telegram_signin, telegram_verify
+	// telegram_verify: who started the flow.
+	personKind string
+	personID   int32
 }
+
+func optText(s string) pgtype.Text { return pgtype.Text{String: s, Valid: s != ""} }
 
 // newTicket stores a single-use ticket and returns it.
 func (s *Service) newTicket(ctx context.Context, q *authdb.Queries, t ticketData, ttl time.Duration) (string, error) {
@@ -791,28 +486,22 @@ func (s *Service) newTicket(ctx context.Context, q *authdb.Queries, t ticketData
 		return "", err
 	}
 	now := s.now()
-	p := authdb.InsertTicketParams{TokenHash: hash, Purpose: t.purpose, CreatedAt: timestamp(now), ExpiresAt: timestamp(now.Add(ttl))}
-	if t.phone != "" {
-		p.Phone = pgtype.Text{String: t.phone, Valid: true}
-	}
-	if t.email != "" {
-		p.Email = pgtype.Text{String: t.email, Valid: true}
-	}
-	p.Identity = t.identity
-	if t.checkedBy != 0 {
-		p.CheckedTelegramID = pgtype.Int8{Int64: t.checkedBy, Valid: true}
+	p := authdb.InsertTicketParams{TokenHash: hash, Purpose: t.purpose, CreatedAt: timestamp(now), ExpiresAt: timestamp(now.Add(ttl)),
+		Phone: optText(t.phone), Email: optText(t.email), PersonKind: optText(t.personKind)}
+	if t.personKind != "" {
+		p.PersonID = pgtype.Int4{Int32: t.personID, Valid: true}
 	}
 	if tg := t.telegram; tg != nil {
 		p.TelegramID = pgtype.Int8{Int64: tg.ID, Valid: true}
-		p.TelegramUsername = pgtype.Text{String: tg.Username, Valid: tg.Username != ""}
-		p.FirstName = pgtype.Text{String: tg.FirstName, Valid: true}
-		p.LastName = pgtype.Text{String: tg.LastName, Valid: true}
+		p.TelegramUsername = optText(tg.Username)
+		p.FirstName, p.LastName = pgtype.Text{String: tg.FirstName, Valid: true}, pgtype.Text{String: tg.LastName, Valid: true}
+		p.SharedPhone, p.PhotoUrl = optText(tg.Phone), optText(tg.PhotoURL)
 	}
 	if g := t.google; g != nil {
 		p.GoogleSub = pgtype.Text{String: g.Sub, Valid: true}
 		p.Email = pgtype.Text{String: g.Email, Valid: true}
-		p.FirstName = pgtype.Text{String: g.FirstName, Valid: true}
-		p.LastName = pgtype.Text{String: g.LastName, Valid: true}
+		p.FirstName, p.LastName = pgtype.Text{String: g.FirstName, Valid: true}, pgtype.Text{String: g.LastName, Valid: true}
+		p.PhotoUrl = optText(g.PhotoURL)
 	}
 	if err := q.InsertTicket(ctx, p); err != nil {
 		return "", fmt.Errorf("store ticket: %w", err)
@@ -830,9 +519,15 @@ func (s *Service) useTicket(ctx context.Context, q *authdb.Queries, ticket, purp
 	if err != nil {
 		return ticketData{}, fmt.Errorf("use ticket: %w", err)
 	}
-	t := ticketData{purpose: purpose, phone: row.Phone.String, checkedBy: row.CheckedTelegramID.Int64}
+	t := ticketData{purpose: purpose, phone: row.Phone.String, email: row.Email.String,
+		personKind: row.PersonKind.String, personID: row.PersonID.Int32}
 	if row.GoogleSub.Valid {
-		t.google = &GoogleAccount{Sub: row.GoogleSub.String, Email: row.Email.String, FirstName: row.FirstName.String, LastName: row.LastName.String}
+		t.google = &GoogleAccount{Sub: row.GoogleSub.String, Email: row.Email.String, FirstName: row.FirstName.String,
+			LastName: row.LastName.String, PhotoURL: row.PhotoUrl.String}
+	}
+	if row.TelegramID.Valid {
+		t.telegram = &TelegramAccount{ID: row.TelegramID.Int64, Username: row.TelegramUsername.String, FirstName: row.FirstName.String,
+			LastName: row.LastName.String, Phone: row.SharedPhone.String, PhotoURL: row.PhotoUrl.String}
 	}
 	return t, nil
 }
@@ -853,8 +548,8 @@ func CleanUp(ctx context.Context, db authdb.DBTX, now time.Time) (int64, error) 
 	if err != nil {
 		return 0, err
 	}
-	checks, err := q.DeleteOldTelegramChecks(ctx, timestamp(now.Add(-48*time.Hour)))
-	return codes + tickets + emails + checks, err
+	states, err := q.DeleteOldOAuthStates(ctx, timestamp(now.Add(-24*time.Hour)))
+	return codes + tickets + emails + states, err
 }
 
 // newCode is 6 random digits.

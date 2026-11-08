@@ -1,10 +1,10 @@
 -- name: GetCredential :one
-SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email
+SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email, photo_id
 FROM credentials
 WHERE person_kind = @person_kind AND person_id = @person_id;
 
 -- name: GetCredentialByUsername :one
-SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email
+SELECT person_kind, person_id, username, password_hash, password_changed_at, failed_attempts, locked_until, email, photo_id
 FROM credentials
 WHERE username = @username;
 
@@ -138,24 +138,24 @@ UPDATE phone_codes SET used_at = @now::timestamptz
 WHERE id = @id AND used_at IS NULL;
 
 -- name: InsertTicket :exec
-INSERT INTO auth_tickets (token_hash, purpose, phone, google_sub, email, first_name, last_name, identity,
-                          telegram_id, telegram_username, checked_telegram_id, created_at, expires_at)
-VALUES (@token_hash, @purpose, @phone, @google_sub, @email, @first_name, @last_name, @identity,
-        @telegram_id, @telegram_username, @checked_telegram_id, @created_at, @expires_at);
+INSERT INTO auth_tickets (token_hash, purpose, phone, google_sub, email, first_name, last_name,
+                          telegram_id, telegram_username, shared_phone, photo_url, person_kind, person_id, created_at, expires_at)
+VALUES (@token_hash, @purpose, @phone, @google_sub, @email, @first_name, @last_name,
+        @telegram_id, @telegram_username, @shared_phone, @photo_url, @person_kind, @person_id, @created_at, @expires_at);
 
 -- A ticket that can still be used, without using it (to check a request
 -- before changing anything).
 -- name: PeekTicket :one
-SELECT phone, google_sub, email, first_name, last_name, identity, revealed_phone, telegram_id, telegram_username,
-       checked_telegram_id
+SELECT phone, google_sub, email, first_name, last_name, telegram_id, telegram_username, shared_phone, photo_url,
+       person_kind, person_id
 FROM auth_tickets
 WHERE token_hash = @token_hash AND purpose = @purpose AND used_at IS NULL AND expires_at > @now::timestamptz;
 
 -- name: UseTicket :one
 UPDATE auth_tickets SET used_at = @now::timestamptz
 WHERE token_hash = @token_hash AND purpose = @purpose AND used_at IS NULL AND expires_at > @now::timestamptz
-RETURNING phone, google_sub, email, first_name, last_name, identity, revealed_phone, telegram_id, telegram_username,
-          checked_telegram_id;
+RETURNING phone, google_sub, email, first_name, last_name, telegram_id, telegram_username, shared_phone, photo_url,
+          person_kind, person_id;
 
 -- name: DeleteOldPhoneCodes :execrows
 DELETE FROM phone_codes WHERE created_at < @before::timestamptz;
@@ -172,23 +172,12 @@ SELECT EXISTS (SELECT 1 FROM google_links WHERE person_kind = @person_kind AND p
 -- name: DeleteGoogleLink :exec
 DELETE FROM google_links WHERE sub = @sub;
 
--- A person links one Google account: a new one replaces the old.
--- name: UnlinkGooglePerson :exec
-DELETE FROM google_links WHERE person_kind = @person_kind AND person_id = @person_id;
-
 -- name: InsertGoogleLink :exec
 INSERT INTO google_links (sub, person_kind, person_id, email)
 VALUES (@sub, @person_kind, @person_id, @email);
 
 -- name: SetGoogleEmail :exec
 UPDATE google_links SET email = @email WHERE sub = @sub AND email <> @email;
-
--- An identity ticket shows the owner of one phone at most (spec 21.3): it
--- records that phone, and refuses another.
--- name: RevealPhone :execrows
-UPDATE auth_tickets SET revealed_phone = @phone::text
-WHERE token_hash = @token_hash AND purpose = @purpose AND used_at IS NULL
-  AND (revealed_phone IS NULL OR revealed_phone = @phone::text);
 
 -- Emails ------------------------------------------------------------------------
 
@@ -264,34 +253,49 @@ VALUES (@telegram_id, @person_kind, @person_id, @username);
 -- name: SetTelegramUsername :exec
 UPDATE telegram_links SET username = @username WHERE telegram_id = @telegram_id;
 
--- name: InsertTelegramCheck :exec
-INSERT INTO telegram_phone_checks (nonce_hash, purpose, identity, identity_purpose, ip, created_at, expires_at)
-VALUES (@nonce_hash, @purpose, @identity, @identity_purpose, @ip, @created_at, @expires_at);
 
--- name: NetworkTelegramChecksSince :one
-SELECT count(*)::int FROM telegram_phone_checks WHERE ip = @ip AND created_at > @since::timestamptz;
+-- name: TelegramLinkOf :one
+SELECT telegram_id FROM telegram_links WHERE person_kind = @person_kind AND person_id = @person_id;
 
--- /start <nonce>: the check now belongs to this Telegram account.
--- name: OpenTelegramCheck :execrows
-UPDATE telegram_phone_checks SET telegram_user_id = @telegram_user_id
-WHERE nonce_hash = @nonce_hash AND verified_at IS NULL AND used_at IS NULL AND expires_at > @now::timestamptz;
+-- Telegram's OpenID Connect flow ---------------------------------------------------
 
--- The contact verifies the account's latest open check.
--- name: VerifyTelegramCheck :execrows
-UPDATE telegram_phone_checks SET phone = @phone::text, verified_at = @now::timestamptz
-WHERE nonce_hash = (
-    SELECT c.nonce_hash FROM telegram_phone_checks c
-    WHERE c.telegram_user_id = @telegram_user_id AND c.verified_at IS NULL AND c.used_at IS NULL
-      AND c.expires_at > @now::timestamptz
-    ORDER BY c.created_at DESC LIMIT 1);
+-- name: InsertOAuthState :exec
+INSERT INTO oauth_states (state_hash, purpose, verifier, person_kind, person_id, return_path, created_at, expires_at)
+VALUES (@state_hash, @purpose, @verifier, @person_kind, @person_id, @return_path, @created_at, @expires_at);
 
--- name: GetTelegramCheck :one
-SELECT purpose, identity, identity_purpose, phone, telegram_user_id, expires_at, verified_at, used_at
-FROM telegram_phone_checks WHERE nonce_hash = @nonce_hash;
+-- name: UseOAuthState :one
+UPDATE oauth_states SET used_at = @now::timestamptz
+WHERE state_hash = @state_hash AND used_at IS NULL AND expires_at > @now::timestamptz
+RETURNING purpose, verifier, person_kind, person_id, return_path;
 
--- name: UseTelegramCheck :execrows
-UPDATE telegram_phone_checks SET used_at = @now::timestamptz
-WHERE nonce_hash = @nonce_hash AND verified_at IS NOT NULL AND used_at IS NULL;
+-- name: DeleteOldOAuthStates :execrows
+DELETE FROM oauth_states WHERE expires_at < @before::timestamptz;
 
--- name: DeleteOldTelegramChecks :execrows
-DELETE FROM telegram_phone_checks WHERE created_at < @before::timestamptz;
+-- Photos ---------------------------------------------------------------------------
+
+-- name: InsertPhoto :exec
+INSERT INTO photos (id, content_type, data) VALUES (@id, @content_type, @data);
+
+-- name: GetPhoto :one
+SELECT content_type, data FROM photos WHERE id = @id;
+
+-- name: SetPhoto :exec
+INSERT INTO credentials (person_kind, person_id, photo_id)
+VALUES (@person_kind, @person_id, @photo_id)
+ON CONFLICT (person_kind, person_id) DO UPDATE SET photo_id = EXCLUDED.photo_id;
+
+-- Merging an account into another (spec 21.4) ------------------------------------
+
+-- name: MoveGoogleLinks :exec
+UPDATE google_links SET person_kind = @to_kind, person_id = @to_id
+WHERE person_kind = @from_kind AND person_id = @from_id;
+
+-- name: MoveTelegramLink :exec
+UPDATE telegram_links SET person_kind = @to_kind, person_id = @to_id
+WHERE person_kind = @from_kind AND person_id = @from_id;
+
+-- name: DeletePersonTelegram :exec
+DELETE FROM telegram_links WHERE person_kind = @person_kind AND person_id = @person_id;
+
+-- name: DeleteCredential :exec
+DELETE FROM credentials WHERE person_kind = @person_kind AND person_id = @person_id;

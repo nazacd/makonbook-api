@@ -105,10 +105,10 @@ type Config struct {
 	// MailFrom, e.g. "SATMAKON <no-reply@makonbook.uz>".
 	SMTPHost, SMTPUsername, SMTPPassword, MailFrom string
 	SMTPPort                                       int
-	// The Telegram sign-in bot (its own, not the alerts' or the review
-	// bot's): its token (a secret; empty: no Telegram), username without @,
-	// and the webhook secret Telegram sends with every update (a secret).
-	TelegramLoginToken, TelegramLoginUsername, TelegramLoginWebhookSecret string
+	// Telegram sign-in (OpenID Connect): the client id and secret from
+	// @BotFather → the bot → Login Widget (the secret is a secret); both or
+	// neither. It needs WebOrigin, like Google.
+	TelegramClientID, TelegramClientSecret string
 }
 
 // DefaultSMSText is the SMS with a sign-up or reset code ({code}).
@@ -289,19 +289,10 @@ func (c *Config) loadAccounts(getenv func(string) string) (errs []error) {
 		}
 	}
 
-	c.TelegramLoginToken = strings.TrimSpace(getenv("TELEGRAM_LOGIN_BOT_TOKEN"))
-	c.TelegramLoginUsername = strings.TrimPrefix(strings.TrimSpace(getenv("TELEGRAM_LOGIN_BOT_USERNAME")), "@")
-	c.TelegramLoginWebhookSecret = strings.TrimSpace(getenv("TELEGRAM_LOGIN_WEBHOOK_SECRET"))
-	if c.TelegramLoginToken != "" {
-		if id, _, ok := strings.Cut(c.TelegramLoginToken, ":"); !ok || strings.Trim(id, "0123456789") != "" || id == "" {
-			errs = append(errs, errors.New("TELEGRAM_LOGIN_BOT_TOKEN must be a bot token like 123456789:AA…"))
-		}
-		if c.TelegramLoginUsername == "" || strings.ContainsAny(c.TelegramLoginUsername, " /:") {
-			errs = append(errs, errors.New("TELEGRAM_LOGIN_BOT_USERNAME is required with TELEGRAM_LOGIN_BOT_TOKEN (the bot's username, without @)"))
-		}
-		if w := c.TelegramLoginWebhookSecret; len(w) < 16 || len(w) > 256 || strings.Trim(w, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != "" {
-			errs = append(errs, errors.New("TELEGRAM_LOGIN_WEBHOOK_SECRET is required with TELEGRAM_LOGIN_BOT_TOKEN: 16 to 256 characters of A-Z a-z 0-9 _ -"))
-		}
+	c.TelegramClientID = strings.TrimSpace(getenv("TELEGRAM_CLIENT_ID"))
+	c.TelegramClientSecret = strings.TrimSpace(getenv("TELEGRAM_CLIENT_SECRET"))
+	if (c.TelegramClientID == "") != (c.TelegramClientSecret == "") {
+		errs = append(errs, errors.New("TELEGRAM_CLIENT_ID and TELEGRAM_CLIENT_SECRET must be set together"))
 	}
 
 	c.GoogleClientID = strings.TrimSpace(getenv("GOOGLE_CLIENT_ID"))
@@ -315,8 +306,8 @@ func (c *Config) loadAccounts(getenv func(string) string) (errs []error) {
 			errs = append(errs, err)
 		}
 		c.WebOrigin = o
-	} else if c.GoogleClientID != "" {
-		errs = append(errs, errors.New("WEB_ORIGIN is required for Google sign-in (e.g. https://sat.makonbook.uz)"))
+	} else if c.GoogleClientID != "" || c.TelegramClientID != "" {
+		errs = append(errs, errors.New("WEB_ORIGIN is required for Google and Telegram sign-in (e.g. https://sat.makonbook.uz)"))
 	}
 	return errs
 }

@@ -89,12 +89,12 @@ func TestAppConfigSignIn(t *testing.T) {
 		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 			t.Fatal(err)
 		}
-		if got["signup"] != c.Signup || got["reset"] != c.Reset || got["email"] != c.Email || got["google"] != c.Google || got["telegram"] != nil {
+		if got["signup"] != c.Signup || got["reset"] != c.Reset || got["email"] != c.Email || got["google"] != c.Google || got["telegram"] != false {
 			t.Errorf("%+v: %s", c, rec.Body)
 		}
 	}
-	rec := serve(t, system.NewHandler(store, fakePinger{}).WithSignIn(system.SignIn{Telegram: &system.TelegramBot{BotID: 123456, BotUsername: "SatMakonBot"}}), "/v1/app/config")
-	if !strings.Contains(rec.Body.String(), `"telegram":{"bot_id":123456,"bot_username":"SatMakonBot"}`) {
+	rec := serve(t, system.NewHandler(store, fakePinger{}).WithSignIn(system.SignIn{Telegram: true}), "/v1/app/config")
+	if !strings.Contains(rec.Body.String(), `"telegram":true`) {
 		t.Errorf("telegram: %s", rec.Body)
 	}
 }

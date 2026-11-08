@@ -95,15 +95,76 @@ func person(kind string, id int32, first, last string, phone pgtype.Text, deacti
 }
 
 // CreateSelfStudent stores a student who signed up themselves (spec 21) with
-// their verified phone (E.164) and names, active from now. db is the
-// sign-up's transaction. A phone another student already logs in with fails
-// with a unique violation.
+// their names and verified phone (E.164; "" for none yet), active from now.
+// db is the sign-up's transaction. A phone another student already logs in
+// with fails with a unique violation.
 func CreateSelfStudent(ctx context.Context, db peopledb.DBTX, firstName, lastName, phone string) (int32, error) {
-	id, err := peopledb.New(db).InsertSelfStudent(ctx, peopledb.InsertSelfStudentParams{FirstName: firstName, LastName: lastName, Phone: phone})
+	id, err := peopledb.New(db).InsertSelfStudent(ctx, peopledb.InsertSelfStudentParams{
+		FirstName: firstName, LastName: lastName, Phone: pgtype.Text{String: phone, Valid: phone != ""}})
 	if err != nil {
 		return 0, fmt.Errorf("create self-registered student: %w", err)
 	}
 	return id, nil
+}
+
+// SetSelfPhone gives a registered student without a phone their proved
+// number (spec 21.4). ErrNotFound if they aren't one (or have a phone).
+func SetSelfPhone(ctx context.Context, db peopledb.DBTX, id int32, phone string) error {
+	n, err := peopledb.New(db).SetSelfPhone(ctx, peopledb.SetSelfPhoneParams{Phone: phone, ClientID: id})
+	if err != nil {
+		return fmt.Errorf("set phone: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MergeSelfStudent folds a registered student into another person (spec
+// 21.4), inside the caller's transaction: their attempts, reviews, parked
+// questions, reports and (if the other has none) goals move to toStudent; when
+// the other is a teacher (toStudent 0) those that can't move are deleted.
+// Then the registered student is removed (the rest cascades).
+func MergeSelfStudent(ctx context.Context, db peopledb.DBTX, from, toStudent int32) error {
+	q := peopledb.New(db)
+	if toStudent != 0 {
+		for _, move := range []func(context.Context) error{
+			func(ctx context.Context) error {
+				return q.MoveStudentAttempts(ctx, peopledb.MoveStudentAttemptsParams{ToID: toStudent, FromID: from})
+			},
+			func(ctx context.Context) error {
+				return q.MoveStudentReviews(ctx, peopledb.MoveStudentReviewsParams{ToID: toStudent, FromID: from})
+			},
+			func(ctx context.Context) error {
+				return q.MoveStudentParked(ctx, peopledb.MoveStudentParkedParams{ToID: toStudent, FromID: from})
+			},
+			func(ctx context.Context) error {
+				return q.MoveStudentReports(ctx, peopledb.MoveStudentReportsParams{ToID: toStudent, FromID: from})
+			},
+			func(ctx context.Context) error {
+				return q.MoveStudentGoals(ctx, peopledb.MoveStudentGoalsParams{ToID: toStudent, FromID: from})
+			},
+		} {
+			if err := move(ctx); err != nil {
+				return fmt.Errorf("merge %d into %d: %w", from, toStudent, err)
+			}
+		}
+	} else {
+		if err := q.DeleteStudentAttempts(ctx, from); err != nil {
+			return fmt.Errorf("merge %d: %w", from, err)
+		}
+		if err := q.DeleteStudentReviews(ctx, from); err != nil {
+			return fmt.Errorf("merge %d: %w", from, err)
+		}
+	}
+	n, err := q.DeleteSelfStudent(ctx, from)
+	if err != nil {
+		return fmt.Errorf("merge %d: remove: %w", from, err)
+	}
+	if n != 1 {
+		return fmt.Errorf("merge %d: not a registered student", from)
+	}
+	return nil
 }
 
 // SetNames sets the names a person chose for themselves; the sync never

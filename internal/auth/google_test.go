@@ -1,9 +1,11 @@
 package auth
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -183,43 +185,46 @@ func TestGoogleSignUpAndSignIn(t *testing.T) {
 		}
 	}
 
-	// A new Google account: the web gets a ticket, and goes on to a phone.
-	v := a.roundTrip("/practice/DAY1?tab=math", a.claims("g-1"))
+	// A new Google account: an account at once, with no phone (the content
+	// waits for one), the email and a copy of the photo.
+	img := photoServer(t)
+	a.svc.photos.allowHTTP = true
+	claims := a.claims("g-1")
+	claims["picture"] = img.URL + "/me.png"
+	v := a.roundTrip("/practice/DAY1?tab=math", claims)
 	if v.Get("return") != "/practice/DAY1?tab=math" || v.Get("ticket") == "" {
 		t.Fatalf("fragment = %v", v)
 	}
 	r := a.trade(v.Get("ticket"))
-	if r.status != http.StatusOK || r.body["status"] != "needs_phone" || r.body["first_name"] != "Malika" ||
-		r.body["last_name"] != "Yusupova" || r.body["email"] != "g-1@gmail.com" || r.body["google_ticket"] == "" {
+	user, _ := r.body["user"].(map[string]any)
+	if r.status != http.StatusOK || r.body["token"] == "" || user["status"] != StatusRegistered || user["phone"] != nil ||
+		user["email"] != "g-1@gmail.com" || user["google"] != true || user["has_password"] != false || user["first_name"] != "Malika" {
 		t.Fatalf("trade: %d %v", r.status, r.body)
 	}
 	if r := a.trade(v.Get("ticket")); r.code() != CodeInvalidTicket {
 		t.Errorf("ticket traded twice: %d %v", r.status, r.body)
 	}
-	googleTicket := r.body["google_ticket"].(string)
-	if r := a.trade(googleTicket); r.code() != CodeInvalidTicket {
-		t.Errorf("a sign-up ticket traded as a callback ticket: %d %v", r.status, r.body)
-	}
-
-	// Sign-up with the phone and no password.
-	r = a.do("POST", "/v1/auth/signup", "", signupBody(a.ticket("+998903000003", PurposeSignup, googleID(googleTicket)), googleID(googleTicket), "Malika", "Yusupova", nil))
-	if r.status != http.StatusOK || r.body["existing"] != false {
-		t.Fatalf("signup: %d %v", r.status, r.body)
-	}
-	user := r.body["user"].(map[string]any)
-	if user["google"] != true || user["has_password"] != false || user["must_change_password"] != false || user["status"] != StatusRegistered {
-		t.Errorf("user = %v", user)
-	}
-	id := user["id"]
 	token := r.body["token"].(string)
-	if r := a.do("PUT", "/v1/me/profile", token, map[string]any{"first_name": "Mali", "last_name": "Yusupova"}); r.status != http.StatusOK {
-		t.Errorf("a Google-only account is fully signed in: %d %v", r.status, r.body)
+	me := a.do("GET", "/v1/me", token, nil)
+	photo, _ := me.body["photo_url"].(string)
+	if !strings.HasPrefix(photo, "/v1/photos/") {
+		t.Fatalf("photo_url = %v", me.body["photo_url"])
+	}
+	resp, err := a.srv.Client().Get(a.srv.URL + photo) //nolint:noctx // test
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "image/png" || !bytes.Equal(body, pngBytes) ||
+		!strings.Contains(resp.Header.Get("Cache-Control"), "max-age=31536000") {
+		t.Errorf("photo: %d %v", resp.StatusCode, resp.Header)
 	}
 
 	// From then on Google signs them in.
+	id := user["id"]
 	r = a.trade(a.roundTrip("/", a.claims("g-1")).Get("ticket"))
-	if r.status != http.StatusOK || r.body["status"] != "signed_in" || r.body["token"] == "" ||
-		r.body["user"].(map[string]any)["id"] != id || r.body["user"].(map[string]any)["first_name"] != "Mali" {
+	if r.status != http.StatusOK || r.body["user"].(map[string]any)["id"] != id {
 		t.Errorf("sign in: %d %v", r.status, r.body)
 	}
 
@@ -231,48 +236,48 @@ func TestGoogleSignUpAndSignIn(t *testing.T) {
 		t.Errorf("return = %q", v.Get("return"))
 	}
 
-	// A password later: then phone + password works as well (reset by SMS).
-	r = a.do("POST", "/v1/auth/reset", "", map[string]string{"ticket": a.ticket("+998903000003", PurposeReset, nil), "password": "now a password"})
-	if r.status != http.StatusOK || r.body["user"].(map[string]any)["has_password"] != true || r.body["user"].(map[string]any)["google"] != true {
+	// A first password, in Profile.
+	if r := a.do("POST", "/v1/auth/password", token, map[string]string{"current_password": "", "new_password": "now a password"}); r.status != http.StatusNoContent {
 		t.Errorf("first password: %d %v", r.status, r.body)
 	}
-	a.mustLogin("+998903000003", "now a password")
+	a.mustLogin("g-1@gmail.com", "now a password")
 }
 
+// A Google account whose email someone has: linked to them; several Google
+// accounts per person.
 func TestGoogleOnAnExistingAccount(t *testing.T) {
 	a := setupGoogle(t)
-
-	// Two tabs started with the same new Google account.
-	first := a.trade(a.roundTrip("/", a.claims("g-2")).Get("ticket")).body["google_ticket"].(string)
-	second := a.trade(a.roundTrip("/", a.claims("g-2")).Get("ticket")).body["google_ticket"].(string)
-	if r := a.do("POST", "/v1/auth/signup", "", signupBody(a.ticket("+998903000004", PurposeSignup, googleID(first)), googleID(first), "A", "B", nil)); r.status != http.StatusOK {
-		t.Fatalf("first signup: %d %v", r.status, r.body)
+	_, u := a.emailSignup("g-2@gmail.com", "Email")
+	r := a.trade(a.roundTrip("/", a.claims("g-2")).Get("ticket"))
+	if r.status != http.StatusOK || r.body["user"].(map[string]any)["id"] != u["id"] || r.body["user"].(map[string]any)["google"] != true {
+		t.Fatalf("by email: %d %v", r.status, r.body)
 	}
-	// The other links the same Google account to student 1: taken.
-	ticket := a.ticket("+998902001234", PurposeSignup, googleID(second))
-	if r := a.do("POST", "/v1/auth/signup", "", signupBody(ticket, googleID(second), "Aziz", "Karimov", nil)); r.status != http.StatusConflict || r.code() != CodeGoogleTaken {
-		t.Fatalf("taken: %d %v", r.status, r.body)
-	}
-
-	// Their own Google account (and with it, the phone again).
-	own := a.trade(a.roundTrip("/", a.claims("g-3")).Get("ticket")).body["google_ticket"].(string)
-	r := a.do("POST", "/v1/auth/signup", "", signupBody(a.ticket("+998902001234", PurposeSignup, googleID(own)), googleID(own), nil, nil, nil))
-	if r.status != http.StatusOK || r.body["existing"] != true {
-		t.Fatalf("link to student 1: %d %v", r.status, r.body)
-	}
-	// Still on the default password: they must choose one, as at a login.
-	if u := r.body["user"].(map[string]any); u["id"] != float64(1) || u["google"] != true || u["must_change_password"] != true || u["has_password"] != false {
-		t.Errorf("user = %v", u)
+	if _, err := a.pool.Exec(t.Context(), "UPDATE credentials SET email = 'g-3@gmail.com' WHERE person_id = $1", int32(u["id"].(float64))); err != nil {
+		t.Fatal(err)
 	}
 	r = a.trade(a.roundTrip("/", a.claims("g-3")).Get("ticket"))
-	token, _ := r.body["token"].(string)
-	if r.body["status"] != "signed_in" || r.body["user"].(map[string]any)["must_change_password"] != true {
-		t.Errorf("google sign-in: %v", r.body)
+	if r.body["user"].(map[string]any)["id"] != u["id"] {
+		t.Errorf("second Google account: %v", r.body)
 	}
-	if r := a.do("PUT", "/v1/auth/username", token, map[string]string{"username": "aziz"}); r.code() != CodePasswordChangeRequired {
-		t.Errorf("default password still in use: %d %v", r.status, r.body)
+	var n int
+	if err := a.pool.QueryRow(t.Context(), "SELECT count(*) FROM google_links WHERE person_id = $1", int32(u["id"].(float64))).Scan(&n); err != nil || n != 2 {
+		t.Errorf("Google links = %d %v", n, err)
 	}
-	if r := a.do("POST", "/v1/auth/password", token, map[string]string{"current_password": "1234", "new_password": "chosen at last"}); r.status != http.StatusNoContent {
-		t.Errorf("change password: %d %v", r.status, r.body)
+	// Both sign in.
+	if r := a.trade(a.roundTrip("/", a.claims("g-2")).Get("ticket")); r.body["user"].(map[string]any)["id"] != u["id"] {
+		t.Errorf("first again: %v", r.body)
 	}
+}
+
+var pngBytes = append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{7}, 64)...)
+
+// photoServer serves a small PNG at any path, like a provider's CDN.
+func photoServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream") // what the bytes are counts
+		_, _ = w.Write(pngBytes)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }

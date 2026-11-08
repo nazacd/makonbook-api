@@ -38,7 +38,6 @@ The project builds one binary, `makonbook`:
 | `makonbook serve` | Run the HTTP API. Refuses to start if migrations are pending. |
 | `makonbook worker` | Run the HolliHop sync forever: incremental every `SYNC_INTERVAL`, full once a day after `SYNC_FULL_AT`. |
 | `makonbook sync full\|incremental` | Run one sync now and print a summary. Add `--allow-mass-change` to apply a run the guard blocked, after checking the change is real. |
-| `makonbook telegram webhook <public URL>` | Register the Telegram sign-in bot's webhook (after setting `TELEGRAM_LOGIN_*`). |
 | `makonbook reset-password student\|teacher <id>` | Back to the default password, unlock, log out everywhere — for someone who forgot their password. `<id>` is the HolliHop client id (students) or teacher id. |
 | `makonbook migrate up` | Apply pending migrations. Run this before `serve` on every deploy. |
 | `makonbook migrate down` | Roll back the last migration. |
@@ -72,9 +71,7 @@ All configuration comes from environment variables (see `.env.example`).
 | `SMTP_PORT` | `587` | 587 (STARTTLS) or 465 (TLS) |
 | `SMTP_USERNAME`, `SMTP_PASSWORD` | — | If the server wants a login. The password is a secret |
 | `MAIL_FROM` | — | Required with a mail server, e.g. `SATMAKON <no-reply@makonbook.uz>` |
-| `TELEGRAM_LOGIN_BOT_TOKEN` | — (off) | The Telegram sign-in bot (its own bot): sign-in and phone checks (spec 21.5). Secret |
-| `TELEGRAM_LOGIN_BOT_USERNAME` | — | Its username, without @ |
-| `TELEGRAM_LOGIN_WEBHOOK_SECRET` | — | Secret header Telegram sends to `/v1/telegram/webhook`; register with `makonbook telegram webhook <public URL>` |
+| `TELEGRAM_CLIENT_ID`, `TELEGRAM_CLIENT_SECRET` | — (off) | Telegram sign-in (OpenID Connect; @BotFather → Login Widget); set both, with `WEB_ORIGIN`. The secret is a secret |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | — (off) | Google sign-in; set both. The secret is a secret |
 | `WEB_ORIGIN` | — | The web app's origin (`https://sat.makonbook.uz`), required with Google: the redirect URI is `${WEB_ORIGIN}/v1/auth/google/callback` |
 | `TEST_DATABASE_URL` | — | Tests only; database tests are skipped without it |
@@ -142,16 +139,17 @@ starts again from the default password. Details: spec section 7.
 
 ## Accounts in one paragraph
 
-Anyone can sign up on the web as a student: first an email, proved by a
-6-digit code sent to it, Google or Telegram; then an Uzbek phone, proved by a
-code by SMS (Eskiz.uz) or by sharing it with the Telegram sign-in bot. They can sign in with the phone or the email afterwards. A
-SAT MAKON student's or teacher's phone signs into their account instead (once
-they confirm it is them); a phone someone already signed up with is refused. These
-"registered" students are rows of `students` with `source = 'self'` and ids
-from −1000001 down; the sync never touches them, except that a new HolliHop
-student with the same verified phone takes over the row (re-keyed to the
-ClientId, everything kept). Registered students see the practice tests DAY1–DAY10
-only. Everyone can set their own name, which the sync never overwrites.
+Anyone can sign in or sign up on the web as a student with an email code,
+Google or Telegram (which can share a verified phone). An account without a
+phone is locked from practice and vocabulary until it adds one (an SMS code
+via Eskiz.uz, or Telegram); proving a number someone else has merges the two
+accounts. These "registered" students are rows of `students` with
+`source = 'self'` and ids from −1000001 down; the sync never touches them,
+except that a new HolliHop student with the same verified phone takes over the
+row (re-keyed to the ClientId, everything kept). Registered students see the
+practice tests DAY1–DAY10 only. Photos from Google or Telegram are copied and
+served from `/v1/photos/`. Everyone can set their own name, which the sync
+never overwrites.
 Details: spec section 21.
 
 ## Deploying

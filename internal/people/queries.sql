@@ -228,8 +228,45 @@ FROM teachers WHERE id = @id;
 -- name: InsertSelfStudent :one
 WITH n AS (SELECT nextval('self_student_ids')::int AS id)
 INSERT INTO students (client_id, hh_student_id, first_name, last_name, phone_raw, login_phone, hh_status_id, office_ids, source)
-SELECT n.id, n.id, @first_name, @last_name, @phone::text, @phone::text, NULL, '{}', 'self' FROM n
+SELECT n.id, n.id, @first_name, @last_name, coalesce(sqlc.narg('phone')::text, ''), sqlc.narg('phone')::text, NULL, '{}', 'self' FROM n
 RETURNING client_id;
+
+-- A registered student without a phone proves one (spec 21.4).
+-- name: SetSelfPhone :execrows
+UPDATE students SET login_phone = @phone::text, phone_raw = @phone::text
+WHERE client_id = @client_id AND source = 'self' AND login_phone IS NULL;
+
+-- Merging a registered student into another person (spec 21.4): what they
+-- did moves to a student (practice and vocabulary rows are keyed by the
+-- student; the people feature owns the merge as it owns the enrolment
+-- link), and then they are removed. Goals move only when the other has none.
+-- name: MoveStudentAttempts :exec
+UPDATE practice_attempts SET student_client_id = @to_id WHERE student_client_id = @from_id;
+
+-- name: MoveStudentReviews :exec
+UPDATE vocab_reviews SET student_client_id = @to_id WHERE student_client_id = @from_id;
+
+-- name: MoveStudentParked :exec
+UPDATE parked_questions SET student_client_id = @to_id WHERE student_client_id = @from_id;
+
+-- name: MoveStudentReports :exec
+UPDATE practice_reports SET student_client_id = @to_id WHERE student_client_id = @from_id;
+
+-- name: MoveStudentGoals :exec
+UPDATE student_goals AS s SET student_client_id = @to_id::int
+WHERE s.student_client_id = @from_id::int
+  AND NOT EXISTS (SELECT 1 FROM student_goals g WHERE g.student_client_id = @to_id::int);
+
+-- Rows a teacher can't take: removed with the student.
+-- name: DeleteStudentAttempts :exec
+DELETE FROM practice_attempts WHERE student_client_id = @client_id;
+
+-- name: DeleteStudentReviews :exec
+DELETE FROM vocab_reviews WHERE student_client_id = @client_id;
+
+-- The rest goes with them (foreign keys cascade).
+-- name: DeleteSelfStudent :execrows
+DELETE FROM students WHERE client_id = @client_id AND source = 'self';
 
 -- Name overrides: NULL clears one (back to HolliHop's name).
 -- name: SetStudentNames :execrows
