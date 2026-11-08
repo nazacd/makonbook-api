@@ -279,7 +279,7 @@ WHERE id = @id;
 
 -- Groups a student is enrolled in now or later.
 -- name: StudentGroups :many
-SELECT g.id, g.name, g.discipline, g.learning_type, coalesce(o.name, '')::text AS office
+SELECT g.id, g.name, g.discipline, g.level, g.learning_type, coalesce(o.name, '')::text AS office
 FROM groups g
 LEFT JOIN offices o ON o.id = g.office_id
 WHERE g.removed_at IS NULL
@@ -291,7 +291,7 @@ ORDER BY g.discipline, g.name;
 
 -- Groups a teacher teaches now or later.
 -- name: TeacherGroups :many
-SELECT g.id, g.name, g.discipline, g.learning_type, coalesce(o.name, '')::text AS office
+SELECT g.id, g.name, g.discipline, g.level, g.learning_type, coalesce(o.name, '')::text AS office
 FROM groups g
 LEFT JOIN offices o ON o.id = g.office_id
 WHERE g.removed_at IS NULL
@@ -340,11 +340,21 @@ ORDER BY i.kind, i.person_kind, 8, 7;
 DELETE FROM roadmap_assessments AS a
 WHERE a.student_client_id = @from_id::int AND a.finished_at IS NULL
   AND EXISTS (SELECT 1 FROM roadmap_assessments b
-              WHERE b.student_client_id = @to_id::int AND b.finished_at IS NULL AND b.lesson_id = a.lesson_id
-                AND b.kind = a.kind AND coalesce(b.homework_index, -1) = coalesce(a.homework_index, -1));
+              WHERE b.student_client_id = @to_id::int AND b.finished_at IS NULL
+                AND b.lesson_id IS NOT DISTINCT FROM a.lesson_id AND b.kind = a.kind
+                AND coalesce(b.homework_index, -1) = coalesce(a.homework_index, -1)
+                AND b.assignment_id IS NOT DISTINCT FROM a.assignment_id);
 
 -- name: MoveStudentAssessments :exec
 UPDATE roadmap_assessments SET student_client_id = @to_id WHERE student_client_id = @from_id;
+
+-- Notifications (spec 23.5) have no foreign key to people: a merge moves or
+-- deletes them.
+-- name: MoveStudentNotifications :exec
+UPDATE notifications SET person_id = @to_id WHERE person_kind = 'student' AND person_id = @from_id;
+
+-- name: DeleteStudentNotifications :exec
+DELETE FROM notifications WHERE person_kind = 'student' AND person_id = @from_id;
 
 -- name: MoveStudentChoices :exec
 UPDATE roadmap_choices AS c SET student_client_id = @to_id::int

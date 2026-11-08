@@ -197,17 +197,13 @@ func (h *Handler) assessment(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, r, http.StatusOK, a)
 }
 
-type answersBody struct {
-	Answers map[string]*string `json:"answers"`
-}
-
 func (h *Handler) saveAnswers(w http.ResponseWriter, r *http.Request) {
 	who, _ := h.who(r)
-	var in answersBody
+	var in Answers
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
-	if err := h.svc.SaveAnswers(r.Context(), who, r.PathValue("id"), in.Answers); err != nil {
+	if err := h.svc.SaveAnswers(r.Context(), who, r.PathValue("id"), in); err != nil {
 		h.fail(w, r, "save answers", err)
 		return
 	}
@@ -216,11 +212,11 @@ func (h *Handler) saveAnswers(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) submit(w http.ResponseWriter, r *http.Request) {
 	who, _ := h.who(r)
-	var in answersBody
+	var in Answers
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
-	a, err := h.svc.Submit(r.Context(), who, r.PathValue("id"), in.Answers)
+	a, err := h.svc.Submit(r.Context(), who, r.PathValue("id"), in)
 	if err != nil {
 		h.fail(w, r, "submit assessment", err)
 		return

@@ -203,6 +203,15 @@ func (q *Queries) DeleteStudentAttempts(ctx context.Context, clientID int32) err
 	return err
 }
 
+const deleteStudentNotifications = `-- name: DeleteStudentNotifications :exec
+DELETE FROM notifications WHERE person_kind = 'student' AND person_id = $1
+`
+
+func (q *Queries) DeleteStudentNotifications(ctx context.Context, fromID int32) error {
+	_, err := q.db.Exec(ctx, deleteStudentNotifications, fromID)
+	return err
+}
+
 const deleteStudentReviews = `-- name: DeleteStudentReviews :exec
 DELETE FROM vocab_reviews WHERE student_client_id = $1
 `
@@ -216,8 +225,10 @@ const dropClashingAssessments = `-- name: DropClashingAssessments :exec
 DELETE FROM roadmap_assessments AS a
 WHERE a.student_client_id = $1::int AND a.finished_at IS NULL
   AND EXISTS (SELECT 1 FROM roadmap_assessments b
-              WHERE b.student_client_id = $2::int AND b.finished_at IS NULL AND b.lesson_id = a.lesson_id
-                AND b.kind = a.kind AND coalesce(b.homework_index, -1) = coalesce(a.homework_index, -1))
+              WHERE b.student_client_id = $2::int AND b.finished_at IS NULL
+                AND b.lesson_id IS NOT DISTINCT FROM a.lesson_id AND b.kind = a.kind
+                AND coalesce(b.homework_index, -1) = coalesce(a.homework_index, -1)
+                AND b.assignment_id IS NOT DISTINCT FROM a.assignment_id)
 `
 
 type DropClashingAssessmentsParams struct {
@@ -626,6 +637,22 @@ func (q *Queries) MoveStudentGoals(ctx context.Context, arg MoveStudentGoalsPara
 	return err
 }
 
+const moveStudentNotifications = `-- name: MoveStudentNotifications :exec
+UPDATE notifications SET person_id = $1 WHERE person_kind = 'student' AND person_id = $2
+`
+
+type MoveStudentNotificationsParams struct {
+	ToID   int32
+	FromID int32
+}
+
+// Notifications (spec 23.5) have no foreign key to people: a merge moves or
+// deletes them.
+func (q *Queries) MoveStudentNotifications(ctx context.Context, arg MoveStudentNotificationsParams) error {
+	_, err := q.db.Exec(ctx, moveStudentNotifications, arg.ToID, arg.FromID)
+	return err
+}
+
 const moveStudentOnboarding = `-- name: MoveStudentOnboarding :exec
 UPDATE onboarding AS o SET student_client_id = $1::int
 WHERE o.student_client_id = $2::int
@@ -1007,7 +1034,7 @@ func (q *Queries) SetTeacherNames(ctx context.Context, arg SetTeacherNamesParams
 }
 
 const studentGroups = `-- name: StudentGroups :many
-SELECT g.id, g.name, g.discipline, g.learning_type, coalesce(o.name, '')::text AS office
+SELECT g.id, g.name, g.discipline, g.level, g.learning_type, coalesce(o.name, '')::text AS office
 FROM groups g
 LEFT JOIN offices o ON o.id = g.office_id
 WHERE g.removed_at IS NULL
@@ -1027,6 +1054,7 @@ type StudentGroupsRow struct {
 	ID           int32
 	Name         string
 	Discipline   string
+	Level        string
 	LearningType string
 	Office       string
 }
@@ -1045,6 +1073,7 @@ func (q *Queries) StudentGroups(ctx context.Context, arg StudentGroupsParams) ([
 			&i.ID,
 			&i.Name,
 			&i.Discipline,
+			&i.Level,
 			&i.LearningType,
 			&i.Office,
 		); err != nil {
@@ -1059,7 +1088,7 @@ func (q *Queries) StudentGroups(ctx context.Context, arg StudentGroupsParams) ([
 }
 
 const teacherGroups = `-- name: TeacherGroups :many
-SELECT g.id, g.name, g.discipline, g.learning_type, coalesce(o.name, '')::text AS office
+SELECT g.id, g.name, g.discipline, g.level, g.learning_type, coalesce(o.name, '')::text AS office
 FROM groups g
 LEFT JOIN offices o ON o.id = g.office_id
 WHERE g.removed_at IS NULL
@@ -1079,6 +1108,7 @@ type TeacherGroupsRow struct {
 	ID           int32
 	Name         string
 	Discipline   string
+	Level        string
 	LearningType string
 	Office       string
 }
@@ -1097,6 +1127,7 @@ func (q *Queries) TeacherGroups(ctx context.Context, arg TeacherGroupsParams) ([
 			&i.ID,
 			&i.Name,
 			&i.Discipline,
+			&i.Level,
 			&i.LearningType,
 			&i.Office,
 		); err != nil {

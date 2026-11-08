@@ -36,30 +36,56 @@ INSERT INTO roadmap_choices (student_client_id, roadmap_id) VALUES (@student, @r
 ON CONFLICT DO NOTHING;
 
 -- Every finished assessment's lesson, kind, set and best score: progress.
+-- Custom homework (no lesson) isn't on any roadmap.
 -- name: Progress :many
-SELECT lesson_id, kind, coalesce(homework_index, -1)::int AS homework_index, max(percent)::int AS best
+SELECT coalesce(lesson_id, '')::text AS lesson_id, kind, coalesce(homework_index, -1)::int AS homework_index,
+       max(percent)::int AS best
 FROM roadmap_assessments
-WHERE student_client_id = @student AND finished_at IS NOT NULL
+WHERE student_client_id = @student AND finished_at IS NOT NULL AND lesson_id IS NOT NULL
 GROUP BY lesson_id, kind, homework_index;
+
+-- Progress of several students at once (a group's, for its teachers).
+-- name: ProgressOf :many
+SELECT student_client_id, coalesce(lesson_id, '')::text AS lesson_id, kind,
+       coalesce(homework_index, -1)::int AS homework_index, max(percent)::int AS best
+FROM roadmap_assessments
+WHERE student_client_id = ANY (@students::int[]) AND finished_at IS NOT NULL AND lesson_id IS NOT NULL
+GROUP BY student_client_id, lesson_id, kind, homework_index;
 
 -- name: LessonAssessments :many
 SELECT * FROM roadmap_assessments
 WHERE student_client_id = @student AND lesson_id = @lesson_id
 ORDER BY created_at, id;
 
+-- The unfinished one of a lesson's level check or homework set: an assigned
+-- one first (spec 23.3), then the roadmap's own.
 -- name: OpenAssessment :one
 SELECT * FROM roadmap_assessments
-WHERE student_client_id = @student AND lesson_id = @lesson_id AND kind = @kind
-  AND coalesce(homework_index, -1) = @homework_index::int AND finished_at IS NULL;
+WHERE student_client_id = @student AND lesson_id = @lesson_id::text AND kind = @kind
+  AND coalesce(homework_index, -1) = @homework_index::int AND finished_at IS NULL
+ORDER BY assignment_id IS NULL, created_at
+LIMIT 1;
+
+-- The roadmap's own unfinished one (no assignment): what InsertAssessment
+-- may have lost a race to.
+-- name: OpenOwnAssessment :one
+SELECT * FROM roadmap_assessments
+WHERE student_client_id = @student AND lesson_id = @lesson_id::text AND kind = @kind
+  AND coalesce(homework_index, -1) = @homework_index::int AND finished_at IS NULL AND assignment_id IS NULL;
+
+-- name: OpenAssigned :one
+SELECT * FROM roadmap_assessments
+WHERE student_client_id = @student AND assignment_id = @assignment_id AND finished_at IS NULL;
 
 -- Questions the student has had in any roadmap assessment.
 -- name: SeenQuestions :many
 SELECT DISTINCT unnest(question_ids)::uuid AS id FROM roadmap_assessments WHERE student_client_id = @student;
 
 -- name: InsertAssessment :one
-INSERT INTO roadmap_assessments (student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids)
-VALUES (@student, @roadmap_id, @lesson_id, @kind, @homework_index, @question_ids::uuid[])
-ON CONFLICT (student_client_id, lesson_id, kind, coalesce(homework_index, -1)) WHERE finished_at IS NULL DO NOTHING
+INSERT INTO roadmap_assessments (student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, assignment_id)
+VALUES (@student, @roadmap_id, @lesson_id, @kind, @homework_index, @question_ids::uuid[], @assignment_id)
+ON CONFLICT (student_client_id, coalesce(lesson_id, ''), kind, coalesce(homework_index, -1),
+             coalesce(assignment_id, '00000000-0000-0000-0000-000000000000'::uuid)) WHERE finished_at IS NULL DO NOTHING
 RETURNING *;
 
 -- name: GetAssessment :one
@@ -69,12 +95,16 @@ SELECT * FROM roadmap_assessments WHERE id = @id;
 SELECT * FROM roadmap_assessments WHERE id = @id FOR UPDATE;
 
 -- name: SaveAnswers :exec
-UPDATE roadmap_assessments SET answers = @answers WHERE id = @id;
+UPDATE roadmap_assessments SET answers = @answers, times = @times WHERE id = @id;
 
 -- name: FinishAssessment :exec
 UPDATE roadmap_assessments
-SET answers = @answers, finished_at = now(), correct = @correct, total = @total, percent = @percent
+SET answers = @answers, times = @times, finished_at = now(), correct = @correct, total = @total, percent = @percent
 WHERE id = @id;
+
+-- The assignment an assessment was started from (spec 23).
+-- name: AssessmentAssignment :one
+SELECT id, kind, title, subject, due_at FROM assignments WHERE id = @id;
 
 -- name: LogoHashes :many
 SELECT slug, sha256 FROM university_logos;
