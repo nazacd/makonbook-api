@@ -122,7 +122,8 @@ func SetSelfPhone(ctx context.Context, db peopledb.DBTX, id int32, phone string)
 
 // MergeSelfStudent folds a registered student into another person (spec
 // 21.4), inside the caller's transaction: their attempts, reviews, parked
-// questions, reports and (if the other has none) goals move to toStudent; when
+// questions, reports, roadmap assessments and choices, and (if the other has
+// none) goals and onboarding move to toStudent; when
 // the other is a teacher (toStudent 0) those that can't move are deleted.
 // Then the registered student is removed (the rest cascades).
 func MergeSelfStudent(ctx context.Context, db peopledb.DBTX, from, toStudent int32) error {
@@ -143,6 +144,18 @@ func MergeSelfStudent(ctx context.Context, db peopledb.DBTX, from, toStudent int
 			},
 			func(ctx context.Context) error {
 				return q.MoveStudentGoals(ctx, peopledb.MoveStudentGoalsParams{ToID: toStudent, FromID: from})
+			},
+			func(ctx context.Context) error {
+				return q.DropClashingAssessments(ctx, peopledb.DropClashingAssessmentsParams{ToID: toStudent, FromID: from})
+			},
+			func(ctx context.Context) error {
+				return q.MoveStudentAssessments(ctx, peopledb.MoveStudentAssessmentsParams{ToID: toStudent, FromID: from})
+			},
+			func(ctx context.Context) error {
+				return q.MoveStudentChoices(ctx, peopledb.MoveStudentChoicesParams{ToID: toStudent, FromID: from})
+			},
+			func(ctx context.Context) error {
+				return q.MoveStudentOnboarding(ctx, peopledb.MoveStudentOnboardingParams{ToID: toStudent, FromID: from})
 			},
 		} {
 			if err := move(ctx); err != nil {

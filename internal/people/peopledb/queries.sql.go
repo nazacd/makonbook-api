@@ -212,6 +212,26 @@ func (q *Queries) DeleteStudentReviews(ctx context.Context, clientID int32) erro
 	return err
 }
 
+const dropClashingAssessments = `-- name: DropClashingAssessments :exec
+DELETE FROM roadmap_assessments AS a
+WHERE a.student_client_id = $1::int AND a.finished_at IS NULL
+  AND EXISTS (SELECT 1 FROM roadmap_assessments b
+              WHERE b.student_client_id = $2::int AND b.finished_at IS NULL AND b.lesson_id = a.lesson_id
+                AND b.kind = a.kind AND coalesce(b.homework_index, -1) = coalesce(a.homework_index, -1))
+`
+
+type DropClashingAssessmentsParams struct {
+	FromID int32
+	ToID   int32
+}
+
+// Roadmaps (spec 22): an open assessment the other already has for the
+// same set gives way; the rest moves.
+func (q *Queries) DropClashingAssessments(ctx context.Context, arg DropClashingAssessmentsParams) error {
+	_, err := q.db.Exec(ctx, dropClashingAssessments, arg.FromID, arg.ToID)
+	return err
+}
+
 const findByLoginPhone = `-- name: FindByLoginPhone :many
 
 SELECT 'student'::text AS kind, client_id AS id, coalesce(first_name_custom, first_name)::text AS first_name,
@@ -542,6 +562,20 @@ func (q *Queries) MarkStudentsMissing(ctx context.Context, presentIds []int32) (
 	return result.RowsAffected(), nil
 }
 
+const moveStudentAssessments = `-- name: MoveStudentAssessments :exec
+UPDATE roadmap_assessments SET student_client_id = $1 WHERE student_client_id = $2
+`
+
+type MoveStudentAssessmentsParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentAssessments(ctx context.Context, arg MoveStudentAssessmentsParams) error {
+	_, err := q.db.Exec(ctx, moveStudentAssessments, arg.ToID, arg.FromID)
+	return err
+}
+
 const moveStudentAttempts = `-- name: MoveStudentAttempts :exec
 UPDATE practice_attempts SET student_client_id = $1 WHERE student_client_id = $2
 `
@@ -560,6 +594,22 @@ func (q *Queries) MoveStudentAttempts(ctx context.Context, arg MoveStudentAttemp
 	return err
 }
 
+const moveStudentChoices = `-- name: MoveStudentChoices :exec
+UPDATE roadmap_choices AS c SET student_client_id = $1::int
+WHERE c.student_client_id = $2::int
+  AND NOT EXISTS (SELECT 1 FROM roadmap_choices d WHERE d.student_client_id = $1::int AND d.roadmap_id = c.roadmap_id)
+`
+
+type MoveStudentChoicesParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentChoices(ctx context.Context, arg MoveStudentChoicesParams) error {
+	_, err := q.db.Exec(ctx, moveStudentChoices, arg.ToID, arg.FromID)
+	return err
+}
+
 const moveStudentGoals = `-- name: MoveStudentGoals :exec
 UPDATE student_goals AS s SET student_client_id = $1::int
 WHERE s.student_client_id = $2::int
@@ -573,6 +623,22 @@ type MoveStudentGoalsParams struct {
 
 func (q *Queries) MoveStudentGoals(ctx context.Context, arg MoveStudentGoalsParams) error {
 	_, err := q.db.Exec(ctx, moveStudentGoals, arg.ToID, arg.FromID)
+	return err
+}
+
+const moveStudentOnboarding = `-- name: MoveStudentOnboarding :exec
+UPDATE onboarding AS o SET student_client_id = $1::int
+WHERE o.student_client_id = $2::int
+  AND NOT EXISTS (SELECT 1 FROM onboarding p WHERE p.student_client_id = $1::int)
+`
+
+type MoveStudentOnboardingParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentOnboarding(ctx context.Context, arg MoveStudentOnboardingParams) error {
+	_, err := q.db.Exec(ctx, moveStudentOnboarding, arg.ToID, arg.FromID)
 	return err
 }
 

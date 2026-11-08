@@ -333,3 +333,25 @@ WHERE i.resolved_at IS NULL
               SELECT 1 FROM schedule_items s JOIN groups g ON g.id = s.group_id AND g.removed_at IS NULL
               WHERE i.person_id = ANY (s.teacher_ids) AND g.office_id = ANY (@office_ids::int[]))))
 ORDER BY i.kind, i.person_kind, 8, 7;
+
+-- Roadmaps (spec 22): an open assessment the other already has for the
+-- same set gives way; the rest moves.
+-- name: DropClashingAssessments :exec
+DELETE FROM roadmap_assessments AS a
+WHERE a.student_client_id = @from_id::int AND a.finished_at IS NULL
+  AND EXISTS (SELECT 1 FROM roadmap_assessments b
+              WHERE b.student_client_id = @to_id::int AND b.finished_at IS NULL AND b.lesson_id = a.lesson_id
+                AND b.kind = a.kind AND coalesce(b.homework_index, -1) = coalesce(a.homework_index, -1));
+
+-- name: MoveStudentAssessments :exec
+UPDATE roadmap_assessments SET student_client_id = @to_id WHERE student_client_id = @from_id;
+
+-- name: MoveStudentChoices :exec
+UPDATE roadmap_choices AS c SET student_client_id = @to_id::int
+WHERE c.student_client_id = @from_id::int
+  AND NOT EXISTS (SELECT 1 FROM roadmap_choices d WHERE d.student_client_id = @to_id::int AND d.roadmap_id = c.roadmap_id);
+
+-- name: MoveStudentOnboarding :exec
+UPDATE onboarding AS o SET student_client_id = @to_id::int
+WHERE o.student_client_id = @from_id::int
+  AND NOT EXISTS (SELECT 1 FROM onboarding p WHERE p.student_client_id = @to_id::int);

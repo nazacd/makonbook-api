@@ -23,6 +23,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/platform/render"
 	"github.com/nazacd/makonbook-api/internal/platform/sms"
 	"github.com/nazacd/makonbook-api/internal/practice"
+	"github.com/nazacd/makonbook-api/internal/roadmap"
 	"github.com/nazacd/makonbook-api/internal/system"
 	"github.com/nazacd/makonbook-api/internal/system/systemdb"
 	"github.com/nazacd/makonbook-api/internal/vocab"
@@ -113,6 +114,9 @@ func Handler(d Deps) http.Handler {
 	// The content is locked for registered students until they add a phone.
 	practice.NewHandler(practiceSvc, d.Location, authHandler.RequireContent).Register(mux)
 	vocab.NewHandler(vocab.NewService(d.Pool, signer(d.Uploads)), d.Location, authHandler.RequireContent).Register(mux)
+	roadmapSvc := roadmap.NewService(d.Pool, practiceSvc, directory)
+	authSvc.WithOnboarded(roadmapSvc.Onboarded)
+	roadmap.NewHandler(roadmapSvc, d.Location, authSvc.Profile, authHandler.Require, authHandler.RequireContent).Register(mux)
 	panel := admin.Panel{
 		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory, Practice: practiceSvc, Parents: parentsSvc,
 		Location: d.Location, WriteEnabled: d.HolliHopWriteEnabled,

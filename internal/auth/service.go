@@ -102,12 +102,23 @@ type Service struct {
 	telegram   *telegramOIDC
 	photos     photoFetcher
 	photoLimit *ratelimit.Limiter // own photo uploads per person
+
+	// onboarded says whether a registered student has done onboarding
+	// (roadmaps, spec 22); nil: none has.
+	onboarded func(ctx context.Context, student int32) (bool, error)
 }
 
 func NewService(db DB, p People, h *Hasher) *Service {
 	return &Service{db: db, q: authdb.New(db), people: p, hasher: h, now: time.Now, log: slog.New(slog.DiscardHandler),
 		photos:     photoFetcher{client: &http.Client{Timeout: 10 * time.Second}},
 		photoLimit: ratelimit.New(photoUploads, photoUploadWindow)}
+}
+
+// WithOnboarded tells the service how to know whether a registered student
+// has done onboarding (Profile.onboarded).
+func (s *Service) WithOnboarded(f func(ctx context.Context, student int32) (bool, error)) *Service {
+	s.onboarded = f
+	return s
 }
 
 // WithLog sets the logger for what fails quietly (photo copies, background
@@ -406,14 +417,17 @@ type Profile struct {
 	MustChangePassword bool    `json:"must_change_password"`
 	// Status: "registered" (signed up themselves, not a SAT MAKON student
 	// yet) or "enrolled" (in HolliHop; teachers too).
-	Status      string             `json:"status"`
-	Phone       *string            `json:"phone"`        // the login phone, E.164
-	Email       *string            `json:"email"`        // their email (sign-in and sign-up), lower case
-	Google      bool               `json:"google"`       // a Google account is linked
-	Telegram    bool               `json:"telegram"`     // a Telegram account is linked
-	PhotoURL    *string            `json:"photo_url"`    // /v1/photos/…, same origin
-	HasPassword bool               `json:"has_password"` // their own, not the default one
-	Groups      []people.GroupInfo `json:"groups"`
+	Status      string  `json:"status"`
+	Phone       *string `json:"phone"`        // the login phone, E.164
+	Email       *string `json:"email"`        // their email (sign-in and sign-up), lower case
+	Google      bool    `json:"google"`       // a Google account is linked
+	Telegram    bool    `json:"telegram"`     // a Telegram account is linked
+	PhotoURL    *string `json:"photo_url"`    // /v1/photos/…, same origin
+	HasPassword bool    `json:"has_password"` // their own, not the default one
+	// Onboarded: a registered student has done onboarding (spec 22.3);
+	// always true for enrolled students and teachers.
+	Onboarded bool               `json:"onboarded"`
+	Groups    []people.GroupInfo `json:"groups"`
 }
 
 // Profile statuses.
@@ -458,8 +472,15 @@ func (s *Service) Profile(ctx context.Context, pr Principal, today time.Time) (P
 		HasPassword:        hasPassword,
 		Groups:             groups,
 	}
+	prof.Onboarded = true
 	if p.Registered {
 		prof.Status = StatusRegistered
+		prof.Onboarded = false
+		if s.onboarded != nil {
+			if prof.Onboarded, err = s.onboarded(ctx, p.ID); err != nil {
+				return Profile{}, fmt.Errorf("onboarded: %w", err)
+			}
+		}
 	}
 	if p.LoginPhone != "" {
 		prof.Phone = &p.LoginPhone

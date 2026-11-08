@@ -206,37 +206,47 @@ func packageHash(p Package) string {
 func (s *Service) publishImages(ctx context.Context, q *practicedb.Queries, pkg *Package) (int64, error) {
 	var total int64
 	for key := range pkg.Images {
-		obj, err := s.Figure(ctx, key)
-		if err != nil {
-			return 0, fmt.Errorf("image %s: %w", key, err)
-		}
-		cfg, format, err := image.DecodeConfig(bytes.NewReader(obj.Body))
-		t, ok := imageTypes[format]
-		if err != nil || !ok {
-			return 0, fmt.Errorf("image %s: not a PNG, JPEG, GIF or WebP image", key)
-		}
-		sum := sha256.Sum256(obj.Body)
-		file := hex.EncodeToString(sum[:20]) + "." + t.ext
-		img := PackageImage{File: file, Bytes: int32(len(obj.Body)), Width: int32(cfg.Width), Height: int32(cfg.Height)} //nolint:gosec // ≤ 15 MB, small sides
-		have, err := q.PublishedImages(ctx, []string{file})
+		img, err := s.publishImage(ctx, q, key)
 		if err != nil {
 			return 0, err
-		}
-		if len(have) == 0 {
-			if err := s.uploads.Put(ctx, ImagePrefix+file, obj.Body, t.contentType); err != nil {
-				return 0, fmt.Errorf("image %s: %w", key, err)
-			}
-			err = q.InsertPublishedImage(ctx, practicedb.InsertPublishedImageParams{
-				File: file, ContentType: t.contentType, Bytes: img.Bytes, Width: img.Width, Height: img.Height,
-			})
-			if err != nil {
-				return 0, err
-			}
 		}
 		pkg.Images[key] = img
 		total += int64(img.Bytes)
 	}
 	return total, nil
+}
+
+// publishImage copies a figure into MakonBook's bucket, once per file (they
+// are named by their bytes), and returns its file.
+func (s *Service) publishImage(ctx context.Context, q *practicedb.Queries, key string) (PackageImage, error) {
+	obj, err := s.Figure(ctx, key)
+	if err != nil {
+		return PackageImage{}, fmt.Errorf("image %s: %w", key, err)
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(obj.Body))
+	t, ok := imageTypes[format]
+	if err != nil || !ok {
+		return PackageImage{}, fmt.Errorf("image %s: not a PNG, JPEG, GIF or WebP image", key)
+	}
+	sum := sha256.Sum256(obj.Body)
+	file := hex.EncodeToString(sum[:20]) + "." + t.ext
+	img := PackageImage{File: file, Bytes: int32(len(obj.Body)), Width: int32(cfg.Width), Height: int32(cfg.Height)} //nolint:gosec // ≤ 15 MB, small sides
+	have, err := q.PublishedImages(ctx, []string{file})
+	if err != nil {
+		return PackageImage{}, err
+	}
+	if len(have) == 0 {
+		if err := s.uploads.Put(ctx, ImagePrefix+file, obj.Body, t.contentType); err != nil {
+			return PackageImage{}, fmt.Errorf("image %s: %w", key, err)
+		}
+		err = q.InsertPublishedImage(ctx, practicedb.InsertPublishedImageParams{
+			File: file, ContentType: t.contentType, Bytes: img.Bytes, Width: img.Width, Height: img.Height,
+		})
+		if err != nil {
+			return PackageImage{}, err
+		}
+	}
+	return img, nil
 }
 
 // PublishLoop publishes what is ready now and then every interval, until ctx
