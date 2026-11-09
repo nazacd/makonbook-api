@@ -1,6 +1,7 @@
 package practice
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -68,8 +69,17 @@ func TestAddDrafts(t *testing.T) {
 		t.Errorf("accepted %v %v", accepted, err)
 	}
 
-	// Approving one in the panel runs the save's checks, and it passes.
+	// The editors' queue lists them, with no tests (an empty list, not null).
 	svc := NewService(pool, nil)
+	queue, total, err := svc.Questions(ctx, Filter{Status: "review", Limit: 50})
+	if err != nil || total != 2 {
+		t.Fatalf("queue: %d %v", total, err)
+	}
+	if b, _ := json.Marshal(queue[0]); !strings.Contains(string(b), `"places":[]`) {
+		t.Errorf("queue item %s", b)
+	}
+
+	// Approving one in the panel runs the save's checks, and it passes.
 	q, err := svc.SetApproval(ctx, added.IDs[0], "editor@satmakon", 1, true)
 	if err != nil || q.Status != "approved" {
 		t.Fatalf("approve: %+v %v", q, err)

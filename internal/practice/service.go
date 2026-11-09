@@ -152,7 +152,7 @@ func (s *Service) Test(ctx context.Context, code string) (TestDetail, error) {
 	for _, sl := range slots {
 		d.Slots = append(d.Slots, QuestionSummary{
 			ID: uuidString(sl.ID), Subject: sl.Subject, Type: sl.Type, Status: sl.Status, AIRisk: textPtr(sl.AiRisk),
-			Preview: preview(sl.Passage, sl.Stem), Version: sl.Version, Places: places[uuidString(sl.ID)],
+			Preview: preview(sl.Passage, sl.Stem), Version: sl.Version, Places: placesOf(places, uuidString(sl.ID)),
 			Position: &Place{Test: t.Code, Subject: sl.Subject, Module: sl.Module, Position: sl.Position},
 		})
 	}
@@ -191,7 +191,7 @@ func (s *Service) Questions(ctx context.Context, f Filter) ([]QuestionSummary, i
 	for _, r := range rows {
 		out = append(out, QuestionSummary{
 			ID: uuidString(r.ID), Subject: r.Subject, Type: r.Type, Status: r.Status, AIRisk: textPtr(r.AiRisk),
-			Preview: preview(r.Passage, r.Stem), Version: r.Version, Places: places[uuidString(r.ID)],
+			Preview: preview(r.Passage, r.Stem), Version: r.Version, Places: placesOf(places, uuidString(r.ID)),
 		})
 	}
 	return out, total, nil
@@ -208,6 +208,15 @@ func (s *Service) places(ctx context.Context, q *practicedb.Queries, ids []pgtyp
 		out[id] = append(out[id], Place{Test: r.Code, Subject: r.Subject, Module: r.Module, Position: r.Position})
 	}
 	return out, nil
+}
+
+// placesOf is a question's places, empty (not null) for a question in no
+// test, such as one added with `makonbook practice add`.
+func placesOf(places map[string][]Place, id string) []Place {
+	if p := places[id]; p != nil {
+		return p
+	}
+	return []Place{}
 }
 
 // Content is what an editor sees and changes.
@@ -302,10 +311,7 @@ func (s *Service) Question(ctx context.Context, id string) (Question, error) {
 	if err != nil {
 		return Question{}, err
 	}
-	out.Places = places[id]
-	if out.Places == nil {
-		out.Places = []Place{}
-	}
+	out.Places = placesOf(places, id)
 	reviews, err := q.QuestionReviews(ctx, uid)
 	if err != nil {
 		return Question{}, err
