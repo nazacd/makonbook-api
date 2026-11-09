@@ -1970,8 +1970,8 @@ paths:
       summary: The student's assignments (spec 23)
       description: |
         Homework, level checks and exams the teachers of the student's current
-        groups set, once open: the open and overdue ones, and closed ones the
-        student has work on. Soonest deadline first. `mine` is how the student
+        groups set: scheduled ones (locked until they open), the open and
+        overdue ones, and closed ones the student has work on. Soonest deadline first. `mine` is how the student
         stands: the first finished work is the result; later tries count in
         `tries` and `best`. Teachers and registered students get an empty list.
       operationId: myAssignments
@@ -4226,7 +4226,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         kind: { $ref: "#/components/schemas/AssignmentKind" }
-        status: { type: string, enum: [open, overdue, closed] }
+        status: { type: string, enum: [scheduled, open, overdue, closed], description: "scheduled: not open yet (until opens_at); students see it locked, and starting it answers 409 not_open" }
         title: { type: string }
         instructions: { type: string }
         subject: { type: string, enum: [math, english] }

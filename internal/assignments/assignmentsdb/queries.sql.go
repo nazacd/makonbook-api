@@ -460,52 +460,6 @@ func (q *Queries) Notifications(ctx context.Context, arg NotificationsParams) ([
 	return items, nil
 }
 
-const openedAssignments = `-- name: OpenedAssignments :many
-SELECT id, group_id, teacher_id, kind, title, instructions, subject, course, lesson_id, homework_index, test_code, sections, question_ids, skills, mix, opens_at, due_at, closed_at, created_at, updated_at FROM assignments WHERE group_id = ANY ($1::int[]) AND opens_at <= now() ORDER BY due_at, id
-`
-
-// Those students see: open already, soonest deadline first.
-func (q *Queries) OpenedAssignments(ctx context.Context, groupIds []int32) ([]Assignment, error) {
-	rows, err := q.db.Query(ctx, openedAssignments, groupIds)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Assignment
-	for rows.Next() {
-		var i Assignment
-		if err := rows.Scan(
-			&i.ID,
-			&i.GroupID,
-			&i.TeacherID,
-			&i.Kind,
-			&i.Title,
-			&i.Instructions,
-			&i.Subject,
-			&i.Course,
-			&i.LessonID,
-			&i.HomeworkIndex,
-			&i.TestCode,
-			&i.Sections,
-			&i.QuestionIds,
-			&i.Skills,
-			&i.Mix,
-			&i.OpensAt,
-			&i.DueAt,
-			&i.ClosedAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const rosters = `-- name: Rosters :many
 SELECT DISTINCT e.group_id, st.client_id, st.first_name, st.last_name
 FROM enrollments e JOIN students st ON st.client_id = e.student_client_id
@@ -571,6 +525,52 @@ func (q *Queries) SeenByStudents(ctx context.Context, students []int32) ([]pgtyp
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const studentAssignments = `-- name: StudentAssignments :many
+SELECT id, group_id, teacher_id, kind, title, instructions, subject, course, lesson_id, homework_index, test_code, sections, question_ids, skills, mix, opens_at, due_at, closed_at, created_at, updated_at FROM assignments WHERE group_id = ANY ($1::int[]) ORDER BY due_at, id
+`
+
+// Those students see, soonest deadline first (scheduled ones too, locked until they open).
+func (q *Queries) StudentAssignments(ctx context.Context, groupIds []int32) ([]Assignment, error) {
+	rows, err := q.db.Query(ctx, studentAssignments, groupIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Assignment
+	for rows.Next() {
+		var i Assignment
+		if err := rows.Scan(
+			&i.ID,
+			&i.GroupID,
+			&i.TeacherID,
+			&i.Kind,
+			&i.Title,
+			&i.Instructions,
+			&i.Subject,
+			&i.Course,
+			&i.LessonID,
+			&i.HomeworkIndex,
+			&i.TestCode,
+			&i.Sections,
+			&i.QuestionIds,
+			&i.Skills,
+			&i.Mix,
+			&i.OpensAt,
+			&i.DueAt,
+			&i.ClosedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

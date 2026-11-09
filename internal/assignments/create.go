@@ -78,6 +78,10 @@ func (s *Service) Create(ctx context.Context, teacher int32, in Input, day time.
 	}
 	title := "New " + kindWords[r.Kind] + ": " + r.Title
 	body := group.Name + " · Due " + r.DueAt.Time.In(s.location).Format("2 January, 15:04")
+	if s.now().Before(r.OpensAt.Time) {
+		body = group.Name + " · Opens " + r.OpensAt.Time.In(s.location).Format("2 January, 15:04") +
+			" · Due " + r.DueAt.Time.In(s.location).Format("2 January, 15:04")
+	}
 	for _, st := range roster {
 		err := q.InsertNotification(ctx, assignmentsdb.InsertNotificationParams{
 			PersonKind: "student", PersonID: st.ClientID, Kind: "assignment", Title: title, Body: body,

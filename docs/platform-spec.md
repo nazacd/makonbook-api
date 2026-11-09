@@ -1099,8 +1099,8 @@ such assignment), and students get `403` from every teacher endpoint.
   1–60). The set is never drawn again: it is the assignment.
 
 ### 23.3 Students (`/v1/me/assignments`)
-- `GET /v1/me/assignments`: the assignments of the student's current groups once opened, soonest deadline
-  first, each with its lesson (when from the curriculum), its test (exams) and `mine`: `status` (`new`,
+- `GET /v1/me/assignments`: the assignments of the student's current groups, soonest deadline first, scheduled
+  ones included (`status: scheduled` until `opens_at`: the apps show them locked, with when they open), each with its lesson (when from the curriculum), its test (exams) and `mine`: `status` (`new`,
   `in_progress`, `done`), the open or first finished assessment, `finished_at`, `late` (finished after the
   deadline), `percent`/`correct`/`total`, `passed` (a level check at ≥ 70 %; homework once done), the exam's
   `scores` and `total_score`, `tries` and `best`. Registered students and teachers get an empty list.
@@ -1145,7 +1145,8 @@ such assignment), and students get `403` from every teacher endpoint.
 - `notifications`: one row per person and event. When an assignment is created, every student enrolled in the
   group then gets one (`kind: assignment`, the title, the deadline, a link to the tab). Nothing is sent outside
   the app yet (Telegram later). As built: the title "New homework: <title>" ("New level check: …", "New exam:
-  …"), the body "<group> · Due 12 November, 18:00" in Tashkent time, the link `/homework`, `/level-checks` or
+  …"), the body "<group> · Due 12 November, 18:00" in Tashkent time ("<group> · Opens 10 November, 08:00 · Due
+  …" for one that opens later), the link `/homework`, `/level-checks` or
   `/exams`. Deleting the assignment deletes them. A merge (21.4) moves a registered student's notifications
   (deletes them when merged into a teacher); there is no foreign key to people.
 - `GET /v1/me/notifications`: newest first, 100 at most, with `unread`; `PUT /v1/me/notifications/read {ids}`
