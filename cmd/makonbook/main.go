@@ -6,7 +6,7 @@
 //	makonbook migrate up|down|status     manage database migrations
 //	makonbook reset-password student|teacher <id>
 //	makonbook admin …                    admin panel access (see adminUsage)
-//	makonbook practice import|list|publish|picture   practice tests (see practiceUsage)
+//	makonbook practice import|add|list|publish|picture   practice tests (see practiceUsage)
 //	makonbook vocab import <path>        the word lists (see vocabUsage)
 //	makonbook curriculum import|coverage the roadmaps' curriculum (see curriculumUsage)
 //	makonbook review-bot                 the teachers' Telegram group review

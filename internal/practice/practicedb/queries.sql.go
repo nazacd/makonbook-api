@@ -857,6 +857,53 @@ func (q *Queries) InsertAttempt(ctx context.Context, arg InsertAttemptParams) (i
 	return result.RowsAffected(), nil
 }
 
+const insertDraft = `-- name: InsertDraft :one
+INSERT INTO questions (subject, type, content_hash, passage, stem, choices, figures, correct, accepted,
+                       explanation, domain, skill, difficulty, status)
+VALUES ($1, $2, $3, $4, $5, $6, '[]',
+        $7, $8::text[], $9, $10, $11,
+        $12, 'review')
+ON CONFLICT (content_hash) DO NOTHING
+RETURNING id
+`
+
+type InsertDraftParams struct {
+	Subject     string
+	Type        string
+	ContentHash string
+	Passage     pgtype.Text
+	Stem        string
+	Choices     []byte
+	Correct     pgtype.Text
+	Accepted    []string
+	Explanation string
+	Domain      string
+	Skill       string
+	Difficulty  pgtype.Text
+}
+
+// A question written outside the review waits for an editor; a repeat of a
+// stored question is skipped.
+func (q *Queries) InsertDraft(ctx context.Context, arg InsertDraftParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, insertDraft,
+		arg.Subject,
+		arg.Type,
+		arg.ContentHash,
+		arg.Passage,
+		arg.Stem,
+		arg.Choices,
+		arg.Correct,
+		arg.Accepted,
+		arg.Explanation,
+		arg.Domain,
+		arg.Skill,
+		arg.Difficulty,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const insertFigureFile = `-- name: InsertFigureFile :exec
 INSERT INTO figure_files (key, file) VALUES ($1, $2)
 ON CONFLICT (key) DO UPDATE SET file = excluded.file
