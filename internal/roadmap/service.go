@@ -124,7 +124,7 @@ func (s *Service) assigned(ctx context.Context, who Who, today time.Time) ([]ass
 			return nil, err
 		}
 		for _, g := range groups {
-			if id, ok := DisciplineCourse(g.Discipline); ok {
+			if id, ok := GroupCourse(g.Discipline, g.Level); ok {
 				picks = append(picks, pick{id: id, source: SourceGroup, group: &g.Name})
 			}
 		}
@@ -154,10 +154,34 @@ func (s *Service) assigned(ctx context.Context, who Who, today time.Time) ([]ass
 // the level from FOUNDATION, PRE SAT (PRE-SAT, PRESAT) or ADV (ADVANCED).
 // A discipline without both gives none.
 func DisciplineCourse(discipline string) (string, bool) {
-	words := strings.FieldsFunc(strings.ToUpper(discipline), func(r rune) bool {
+	subject, level := courseWords(discipline)
+	if subject == "" || level == "" {
+		return "", false
+	}
+	return subject + "-" + level, true
+}
+
+// GroupCourse is the course a group teaches: its discipline's, or when the
+// discipline names the subject but no level ("SAT MATH"), the subject with
+// HolliHop's group level read the same way (D38). Without a subject, or
+// still without a level, none.
+func GroupCourse(discipline, level string) (string, bool) {
+	if id, ok := DisciplineCourse(discipline); ok {
+		return id, true
+	}
+	subject, _ := courseWords(discipline)
+	_, lvl := courseWords(level)
+	if subject == "" || lvl == "" {
+		return "", false
+	}
+	return subject + "-" + lvl, true
+}
+
+// courseWords reads a subject and a level from HolliHop's words.
+func courseWords(s string) (subject, level string) {
+	words := strings.FieldsFunc(strings.ToUpper(s), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	})
-	subject, level := "", ""
 	for i, w := range words {
 		switch w {
 		case "MATH", "MATHS", "MATHEMATICS":
@@ -176,10 +200,7 @@ func DisciplineCourse(discipline string) (string, bool) {
 			level = "advanced"
 		}
 	}
-	if subject == "" || level == "" {
-		return "", false
-	}
-	return subject + "-" + level, true
+	return subject, level
 }
 
 // progress is what a person has finished, by lesson id (so it holds
@@ -189,22 +210,31 @@ type progress struct {
 	homework map[string]map[int]bool // lesson → finished sets
 }
 
+func newProgress() progress {
+	return progress{best: map[string]int{}, homework: map[string]map[int]bool{}}
+}
+
+// add counts a finished level check or homework set's best.
+func (p progress) add(lesson, kind string, index, best int) {
+	switch kind {
+	case kindLevelCheck:
+		p.best[lesson] = best
+	case kindHomework:
+		if p.homework[lesson] == nil {
+			p.homework[lesson] = map[int]bool{}
+		}
+		p.homework[lesson][index] = true
+	}
+}
+
 func (s *Service) progress(ctx context.Context, student int32) (progress, error) {
 	rows, err := roadmapdb.New(s.pool).Progress(ctx, student)
 	if err != nil {
 		return progress{}, err
 	}
-	p := progress{best: map[string]int{}, homework: map[string]map[int]bool{}}
+	p := newProgress()
 	for _, r := range rows {
-		switch r.Kind {
-		case kindLevelCheck:
-			p.best[r.LessonID] = int(r.Best)
-		case kindHomework:
-			if p.homework[r.LessonID] == nil {
-				p.homework[r.LessonID] = map[int]bool{}
-			}
-			p.homework[r.LessonID][int(r.HomeworkIndex)] = true
-		}
+		p.add(r.LessonID, r.Kind, int(r.HomeworkIndex), int(r.Best))
 	}
 	return p, nil
 }
@@ -329,12 +359,14 @@ type Current struct {
 	LessonID    string `json:"lesson_id"`
 	LessonTitle string `json:"lesson_title"`
 	University  string `json:"university"`
+	// LogoURL is the university's logo (/v1/logos/…, same origin), or null.
+	LogoURL *string `json:"logo_url"`
 }
 
 var subjectNames = map[string]string{"math": "Math", "english": "English"}
 var levelNames = map[string]string{"foundation": "Foundation", "pre-sat": "Pre-SAT", "advanced": "Advanced"}
 
-func summaryOf(a assignment, l layout) Summary {
+func summaryOf(a assignment, l layout, logos map[string]string) Summary {
 	c := a.course
 	sum := Summary{
 		ID: c.ID(), Subject: c.Subject, Level: c.Level, Title: subjectNames[c.Subject] + " · " + levelNames[c.Level],
@@ -353,7 +385,7 @@ func summaryOf(a assignment, l layout) Summary {
 		} else if sum.Current == nil {
 			sum.Current = &Current{
 				UnitID: pl.unit.ID, UnitTitle: pl.unit.Title, LessonID: pl.lesson.ID, LessonTitle: pl.lesson.Title,
-				University: pl.unit.Stop.University,
+				University: pl.unit.Stop.University, LogoURL: logoURL(logos, pl.unit.Stop.University),
 			}
 		}
 	}
@@ -374,8 +406,12 @@ func (s *Service) Roadmaps(ctx context.Context, who Who, today time.Time) ([]Sum
 	if err != nil {
 		return nil, err
 	}
+	logos, err := s.logoHashes(ctx)
+	if err != nil {
+		return nil, err
+	}
 	for _, a := range as {
-		out = append(out, summaryOf(a, lay(a.course, who.Registered, p)))
+		out = append(out, summaryOf(a, lay(a.course, who.Registered, p), logos))
 	}
 	return out, nil
 }
@@ -402,10 +438,17 @@ type UnitView struct {
 	Title   string       `json:"title"`
 	Domain  string       `json:"domain"`
 	Summary string       `json:"summary"`
-	Stop    Stop         `json:"stop"`
+	Stop    StopView     `json:"stop"`
 	Status  string       `json:"status"`
 	Lock    *string      `json:"lock"`
 	Lessons []LessonItem `json:"lessons"`
+}
+
+// StopView is a unit's stop with its university's logo (/v1/logos/…, same
+// origin), or null.
+type StopView struct {
+	Stop
+	LogoURL *string `json:"logo_url"`
 }
 
 // LessonItem is a lesson on the map.
@@ -456,7 +499,11 @@ func (s *Service) Roadmap(ctx context.Context, who Who, id string, today time.Ti
 		return Detail{}, err
 	}
 	c := a.course
-	d := Detail{Summary: summaryOf(a, l), Countries: []CountryView{}, Units: []UnitView{}}
+	logos, err := s.logoHashes(ctx)
+	if err != nil {
+		return Detail{}, err
+	}
+	d := Detail{Summary: summaryOf(a, l, logos), Countries: []CountryView{}, Units: []UnitView{}}
 	for _, co := range c.Countries {
 		cv := CountryView{ID: co.ID, Name: co.Name, Units: co.Units}
 		if code, ok := countryCodes[co.ID]; ok {
@@ -467,7 +514,8 @@ func (s *Service) Roadmap(ctx context.Context, who Who, id string, today time.Ti
 	for _, us := range l.units {
 		u := us.unit
 		uv := UnitView{
-			ID: u.ID, Title: u.Title, Domain: u.Domain, Summary: u.Summary, Stop: u.Stop, Status: us.status, Lock: us.lock,
+			ID: u.ID, Title: u.Title, Domain: u.Domain, Summary: u.Summary, Stop: StopView{Stop: u.Stop, LogoURL: logoURL(logos, u.Stop.University)},
+			Status: us.status, Lock: us.lock,
 			Lessons: []LessonItem{},
 		}
 		for li := range u.Lessons {
@@ -589,7 +637,7 @@ func (s *Service) Lesson(ctx context.Context, who Who, roadmapID, lessonID strin
 	if best, ok := p.best[l.ID]; ok {
 		d.LevelCheck.Best = &best
 	}
-	rows, err := roadmapdb.New(s.pool).LessonAssessments(ctx, roadmapdb.LessonAssessmentsParams{Student: who.ID, LessonID: l.ID})
+	rows, err := roadmapdb.New(s.pool).LessonAssessments(ctx, roadmapdb.LessonAssessmentsParams{Student: who.ID, LessonID: text(l.ID)})
 	if err != nil {
 		return LessonDetail{}, err
 	}
@@ -605,12 +653,14 @@ func (s *Service) Lesson(ctx context.Context, who Who, roadmapID, lessonID strin
 			d.LevelCheck.Attempts = append([]AttemptRef{{ID: id, Percent: int(r.Percent.Int16), FinishedAt: r.FinishedAt.Time.UTC()}},
 				d.LevelCheck.Attempts...)
 		case r.Kind == kindLevelCheck:
-			d.LevelCheck.Open = &OpenRef{ID: id}
+			if d.LevelCheck.Open == nil || r.AssignmentID.Valid { // an assigned one is the one Start continues
+				d.LevelCheck.Open = &OpenRef{ID: id}
+			}
 		case r.Kind == kindHomework && r.HomeworkIndex.Valid && int(r.HomeworkIndex.Int16) < len(d.Homework):
 			h := &d.Homework[r.HomeworkIndex.Int16]
 			if r.FinishedAt.Valid {
 				h.Attempt = &AttemptRef{ID: id, Percent: int(r.Percent.Int16), FinishedAt: r.FinishedAt.Time.UTC()}
-			} else {
+			} else if h.Open == nil || r.AssignmentID.Valid {
 				h.Open = &OpenRef{ID: id}
 			}
 		}

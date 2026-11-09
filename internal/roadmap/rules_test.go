@@ -73,6 +73,24 @@ func TestDisciplineCourse(t *testing.T) {
 	}
 }
 
+func TestGroupCourse(t *testing.T) {
+	for _, c := range []struct{ discipline, level, want string }{
+		{"PRE SAT MATH", "ADVANCED", "math-pre-sat"}, // the discipline's level first
+		{"SAT MATH", "PRE SAT", "math-pre-sat"},      // D38: HolliHop's level
+		{"SAT ENG", "Foundation", "english-foundation"},
+		{"SAT MATH", "ADV 2", "math-advanced"},
+		{"SAT MATH", "B1", ""},       // still no level
+		{"SAT MATH", "", ""},         // still no level
+		{"OLYMPIAD", "ADVANCED", ""}, // no subject
+		{"FOUNDATION", "MATH", ""},   // the subject comes from the discipline only
+	} {
+		got, ok := GroupCourse(c.discipline, c.level)
+		if got != c.want || ok != (c.want != "") {
+			t.Errorf("%q, %q: %q %v, want %q", c.discipline, c.level, got, ok, c.want)
+		}
+	}
+}
+
 func TestOnboardingLevels(t *testing.T) {
 	n := func(v int) *int { return &v }
 	valid := func() Onboarding {
@@ -271,7 +289,7 @@ func TestLay(t *testing.T) {
 	if l.freeUnits == nil || *l.freeUnits != 1 {
 		t.Errorf("free units: %v", l.freeUnits)
 	}
-	sum := summaryOf(assignment{course: &c, source: SourceOnboarding}, l)
+	sum := summaryOf(assignment{course: &c, source: SourceOnboarding}, l, nil)
 	if sum.LessonsDone != 2 || sum.UnitsDone != 1 || sum.LessonsTotal != 4 || sum.UnitsTotal != 3 || sum.Current == nil ||
 		sum.Current.LessonID != "m-2-1" || sum.Title != "Math · Foundation" {
 		t.Errorf("free summary: %+v", sum)
@@ -279,7 +297,7 @@ func TestLay(t *testing.T) {
 
 	// Enrolled, everything done: no current lesson.
 	p.best["m-3-1"], p.homework["m-3-1"] = 100, map[int]bool{0: true}
-	sum = summaryOf(assignment{course: &c, source: SourceGroup}, lay(&c, false, p))
+	sum = summaryOf(assignment{course: &c, source: SourceGroup}, lay(&c, false, p), nil)
 	if sum.Current != nil || sum.LessonsDone != 4 || sum.UnitsDone != 3 || sum.FreeUnits != nil {
 		t.Errorf("all done: %+v", sum)
 	}

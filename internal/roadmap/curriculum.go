@@ -99,8 +99,8 @@ type Mix struct {
 	Hard   int `json:"hard"`
 }
 
-// counts is the mix by difficulty name.
-func (m Mix) counts() map[string]int {
+// Counts is the mix by difficulty name.
+func (m Mix) Counts() map[string]int {
 	return map[string]int{"easy": m.Easy, "medium": m.Medium, "hard": m.Hard}
 }
 
@@ -130,6 +130,19 @@ type placed struct {
 	unit   *Unit
 	lesson *Lesson
 }
+
+// Lesson finds a lesson of the course, with its unit.
+func (c *Course) Lesson(id string) (*Unit, *Lesson, bool) {
+	for _, pl := range c.lessons() {
+		if pl.lesson.ID == id {
+			return pl.unit, pl.lesson, true
+		}
+	}
+	return nil, nil, false
+}
+
+// Title is the course's name ("Math · Pre-SAT").
+func (c *Course) Title() string { return subjectNames[c.Subject] + " · " + levelNames[c.Level] }
 
 // ParseCourse reads a course file.
 func ParseCourse(data []byte) (Course, error) {
@@ -536,7 +549,7 @@ func coverageOf(c *Course, version int32, counts map[string]map[string]int) Cove
 	}
 	for _, pl := range c.lessons() {
 		l := pl.lesson
-		set(l.ID, "level check", l.LevelCheck.Skills, l.LevelCheck.Mix.counts())
+		set(l.ID, "level check", l.LevelCheck.Skills, l.LevelCheck.Mix.Counts())
 		for i, h := range l.Homework {
 			set(l.ID, fmt.Sprintf("homework %d", i+1), h.Skills, map[string]int{h.Difficulty: h.Questions})
 		}

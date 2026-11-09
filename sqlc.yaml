@@ -106,3 +106,11 @@ sql:
         package: roadmapdb
         out: internal/roadmap/roadmapdb
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/assignments/queries.sql
+    gen:
+      go:
+        package: assignmentsdb
+        out: internal/assignments/assignmentsdb
+        sql_package: pgx/v5

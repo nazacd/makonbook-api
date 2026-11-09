@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 
 import { ApiError, describe } from '../api/client';
 import { useSignIn } from '../api/hooks';
+import { ShieldMark } from '../components/brand/Logo';
 
 function message(error: unknown): string {
   if (!(error instanceof ApiError)) return describe(error);
@@ -34,8 +35,8 @@ export function SignIn() {
     <div className="signin">
       <form onSubmit={submit} noValidate>
         <div className="signin-head">
-          <img src="/logo.png" alt="" />
-          <h1>MakonBook Admin</h1>
+          <ShieldMark size={64} />
+          <h1>SATMAKON Admin</h1>
           <p className="muted" style={{ margin: 0 }}>
             Sign in with your HolliHop login and password.
           </p>
@@ -73,7 +74,7 @@ export function SignIn() {
           </button>
         </div>
         <p className="small faint" style={{ textAlign: 'center', margin: 0 }}>
-          MakonBook doesn’t store your HolliHop password.
+          SATMAKON doesn’t store your HolliHop password.
         </p>
       </form>
     </div>

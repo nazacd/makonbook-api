@@ -1,8 +1,9 @@
+import { CircleAlert } from 'lucide-react';
 import { Link } from 'react-router';
 
 import type { Schemas } from '../api/client';
 import { useDataQuality } from '../api/hooks';
-import { Empty, ErrorNotice, Loading, OfficeSelect, useOfficeParam } from '../components/ui';
+import { Empty, ErrorNotice, Loading, OfficeSelect, useOfficeParam, PageIcon } from '../components/ui';
 import { shortDate } from '../lib/dates';
 
 type GroupIssue = Schemas['GroupIssue'];
@@ -50,7 +51,9 @@ export function IssuesPage() {
     <div className="stack">
       <div className="page-head">
         <div>
-          <h1>HolliHop issues</h1>
+          <h1>
+            <PageIcon icon={CircleAlert} />
+            HolliHop issues</h1>
           <p className="muted">Fix these in HolliHop; they clear here after the next sync, within 15 minutes.</p>
         </div>
         <div className="toolbar">

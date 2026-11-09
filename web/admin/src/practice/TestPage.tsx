@@ -1,7 +1,8 @@
+import { BookOpenCheck } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
 
 import { usePracticeTest, type QuestionSummary } from "../api/hooks";
-import { ErrorNotice, Loading } from "../components/ui";
+import { ErrorNotice, Loading, PageIcon } from "../components/ui";
 import { AlsoIn, RiskChip, StatusChip, SUBJECT } from "./common";
 
 // One test, module by module, worst questions marked.
@@ -30,7 +31,9 @@ export function PracticeTestPage() {
           <div className="small">
             <Link to="/practice">Practice tests</Link>
           </div>
-          <h1>{t.title}</h1>
+          <h1>
+            <PageIcon icon={BookOpenCheck} />
+            {t.title}</h1>
           <p className="muted">
             {t.approved}/{t.questions} approved · {t.red} red, {t.yellow} yellow
             to go ·{" "}

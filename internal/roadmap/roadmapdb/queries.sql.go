@@ -11,6 +11,32 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const assessmentAssignment = `-- name: AssessmentAssignment :one
+SELECT id, kind, title, subject, due_at FROM assignments WHERE id = $1
+`
+
+type AssessmentAssignmentRow struct {
+	ID      pgtype.UUID
+	Kind    string
+	Title   string
+	Subject string
+	DueAt   pgtype.Timestamptz
+}
+
+// The assignment an assessment was started from (spec 23).
+func (q *Queries) AssessmentAssignment(ctx context.Context, id pgtype.UUID) (AssessmentAssignmentRow, error) {
+	row := q.db.QueryRow(ctx, assessmentAssignment, id)
+	var i AssessmentAssignmentRow
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.Title,
+		&i.Subject,
+		&i.DueAt,
+	)
+	return i, err
+}
+
 const choices = `-- name: Choices :many
 SELECT roadmap_id FROM roadmap_choices WHERE student_client_id = $1 ORDER BY created_at, roadmap_id
 `
@@ -63,12 +89,13 @@ func (q *Queries) DeleteChoices(ctx context.Context, student int32) error {
 
 const finishAssessment = `-- name: FinishAssessment :exec
 UPDATE roadmap_assessments
-SET answers = $1, finished_at = now(), correct = $2, total = $3, percent = $4
-WHERE id = $5
+SET answers = $1, times = $2, finished_at = now(), correct = $3, total = $4, percent = $5
+WHERE id = $6
 `
 
 type FinishAssessmentParams struct {
 	Answers []byte
+	Times   []byte
 	Correct pgtype.Int2
 	Total   pgtype.Int2
 	Percent pgtype.Int2
@@ -78,6 +105,7 @@ type FinishAssessmentParams struct {
 func (q *Queries) FinishAssessment(ctx context.Context, arg FinishAssessmentParams) error {
 	_, err := q.db.Exec(ctx, finishAssessment,
 		arg.Answers,
+		arg.Times,
 		arg.Correct,
 		arg.Total,
 		arg.Percent,
@@ -87,7 +115,7 @@ func (q *Queries) FinishAssessment(ctx context.Context, arg FinishAssessmentPara
 }
 
 const getAssessment = `-- name: GetAssessment :one
-SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent FROM roadmap_assessments WHERE id = $1
+SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times FROM roadmap_assessments WHERE id = $1
 `
 
 func (q *Queries) GetAssessment(ctx context.Context, id pgtype.UUID) (RoadmapAssessment, error) {
@@ -107,7 +135,26 @@ func (q *Queries) GetAssessment(ctx context.Context, id pgtype.UUID) (RoadmapAss
 		&i.Correct,
 		&i.Total,
 		&i.Percent,
+		&i.AssignmentID,
+		&i.Times,
 	)
+	return i, err
+}
+
+const getLogo = `-- name: GetLogo :one
+SELECT content_type, body, sha256 FROM university_logos WHERE slug = $1
+`
+
+type GetLogoRow struct {
+	ContentType string
+	Body        []byte
+	Sha256      string
+}
+
+func (q *Queries) GetLogo(ctx context.Context, slug string) (GetLogoRow, error) {
+	row := q.db.QueryRow(ctx, getLogo, slug)
+	var i GetLogoRow
+	err := row.Scan(&i.ContentType, &i.Body, &i.Sha256)
 	return i, err
 }
 
@@ -139,19 +186,21 @@ func (q *Queries) HasOnboarding(ctx context.Context, student int32) (bool, error
 }
 
 const insertAssessment = `-- name: InsertAssessment :one
-INSERT INTO roadmap_assessments (student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids)
-VALUES ($1, $2, $3, $4, $5, $6::uuid[])
-ON CONFLICT (student_client_id, lesson_id, kind, coalesce(homework_index, -1)) WHERE finished_at IS NULL DO NOTHING
-RETURNING id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent
+INSERT INTO roadmap_assessments (student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, assignment_id)
+VALUES ($1, $2, $3, $4, $5, $6::uuid[], $7)
+ON CONFLICT (student_client_id, coalesce(lesson_id, ''), kind, coalesce(homework_index, -1),
+             coalesce(assignment_id, '00000000-0000-0000-0000-000000000000'::uuid)) WHERE finished_at IS NULL DO NOTHING
+RETURNING id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times
 `
 
 type InsertAssessmentParams struct {
 	Student       int32
-	RoadmapID     string
-	LessonID      string
+	RoadmapID     pgtype.Text
+	LessonID      pgtype.Text
 	Kind          string
 	HomeworkIndex pgtype.Int2
 	QuestionIds   []pgtype.UUID
+	AssignmentID  pgtype.UUID
 }
 
 func (q *Queries) InsertAssessment(ctx context.Context, arg InsertAssessmentParams) (RoadmapAssessment, error) {
@@ -162,6 +211,7 @@ func (q *Queries) InsertAssessment(ctx context.Context, arg InsertAssessmentPara
 		arg.Kind,
 		arg.HomeworkIndex,
 		arg.QuestionIds,
+		arg.AssignmentID,
 	)
 	var i RoadmapAssessment
 	err := row.Scan(
@@ -178,6 +228,8 @@ func (q *Queries) InsertAssessment(ctx context.Context, arg InsertAssessmentPara
 		&i.Correct,
 		&i.Total,
 		&i.Percent,
+		&i.AssignmentID,
+		&i.Times,
 	)
 	return i, err
 }
@@ -294,14 +346,14 @@ func (q *Queries) LatestVersions(ctx context.Context) ([]LatestVersionsRow, erro
 }
 
 const lessonAssessments = `-- name: LessonAssessments :many
-SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent FROM roadmap_assessments
+SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times FROM roadmap_assessments
 WHERE student_client_id = $1 AND lesson_id = $2
 ORDER BY created_at, id
 `
 
 type LessonAssessmentsParams struct {
 	Student  int32
-	LessonID string
+	LessonID pgtype.Text
 }
 
 func (q *Queries) LessonAssessments(ctx context.Context, arg LessonAssessmentsParams) ([]RoadmapAssessment, error) {
@@ -327,6 +379,8 @@ func (q *Queries) LessonAssessments(ctx context.Context, arg LessonAssessmentsPa
 			&i.Correct,
 			&i.Total,
 			&i.Percent,
+			&i.AssignmentID,
+			&i.Times,
 		); err != nil {
 			return nil, err
 		}
@@ -339,7 +393,7 @@ func (q *Queries) LessonAssessments(ctx context.Context, arg LessonAssessmentsPa
 }
 
 const lockAssessment = `-- name: LockAssessment :one
-SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent FROM roadmap_assessments WHERE id = $1 FOR UPDATE
+SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times FROM roadmap_assessments WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockAssessment(ctx context.Context, id pgtype.UUID) (RoadmapAssessment, error) {
@@ -359,14 +413,47 @@ func (q *Queries) LockAssessment(ctx context.Context, id pgtype.UUID) (RoadmapAs
 		&i.Correct,
 		&i.Total,
 		&i.Percent,
+		&i.AssignmentID,
+		&i.Times,
 	)
 	return i, err
 }
 
+const logoHashes = `-- name: LogoHashes :many
+SELECT slug, sha256 FROM university_logos
+`
+
+type LogoHashesRow struct {
+	Slug   string
+	Sha256 string
+}
+
+func (q *Queries) LogoHashes(ctx context.Context) ([]LogoHashesRow, error) {
+	rows, err := q.db.Query(ctx, logoHashes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LogoHashesRow
+	for rows.Next() {
+		var i LogoHashesRow
+		if err := rows.Scan(&i.Slug, &i.Sha256); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const openAssessment = `-- name: OpenAssessment :one
-SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent FROM roadmap_assessments
-WHERE student_client_id = $1 AND lesson_id = $2 AND kind = $3
+SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times FROM roadmap_assessments
+WHERE student_client_id = $1 AND lesson_id = $2::text AND kind = $3
   AND coalesce(homework_index, -1) = $4::int AND finished_at IS NULL
+ORDER BY assignment_id IS NULL, created_at
+LIMIT 1
 `
 
 type OpenAssessmentParams struct {
@@ -376,6 +463,8 @@ type OpenAssessmentParams struct {
 	HomeworkIndex int32
 }
 
+// The unfinished one of a lesson's level check or homework set: an assigned
+// one first (spec 23.3), then the roadmap's own.
 func (q *Queries) OpenAssessment(ctx context.Context, arg OpenAssessmentParams) (RoadmapAssessment, error) {
 	row := q.db.QueryRow(ctx, openAssessment,
 		arg.Student,
@@ -398,14 +487,93 @@ func (q *Queries) OpenAssessment(ctx context.Context, arg OpenAssessmentParams) 
 		&i.Correct,
 		&i.Total,
 		&i.Percent,
+		&i.AssignmentID,
+		&i.Times,
+	)
+	return i, err
+}
+
+const openAssigned = `-- name: OpenAssigned :one
+SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times FROM roadmap_assessments
+WHERE student_client_id = $1 AND assignment_id = $2 AND finished_at IS NULL
+`
+
+type OpenAssignedParams struct {
+	Student      int32
+	AssignmentID pgtype.UUID
+}
+
+func (q *Queries) OpenAssigned(ctx context.Context, arg OpenAssignedParams) (RoadmapAssessment, error) {
+	row := q.db.QueryRow(ctx, openAssigned, arg.Student, arg.AssignmentID)
+	var i RoadmapAssessment
+	err := row.Scan(
+		&i.ID,
+		&i.StudentClientID,
+		&i.RoadmapID,
+		&i.LessonID,
+		&i.Kind,
+		&i.HomeworkIndex,
+		&i.QuestionIds,
+		&i.Answers,
+		&i.CreatedAt,
+		&i.FinishedAt,
+		&i.Correct,
+		&i.Total,
+		&i.Percent,
+		&i.AssignmentID,
+		&i.Times,
+	)
+	return i, err
+}
+
+const openOwnAssessment = `-- name: OpenOwnAssessment :one
+SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times FROM roadmap_assessments
+WHERE student_client_id = $1 AND lesson_id = $2::text AND kind = $3
+  AND coalesce(homework_index, -1) = $4::int AND finished_at IS NULL AND assignment_id IS NULL
+`
+
+type OpenOwnAssessmentParams struct {
+	Student       int32
+	LessonID      string
+	Kind          string
+	HomeworkIndex int32
+}
+
+// The roadmap's own unfinished one (no assignment): what InsertAssessment
+// may have lost a race to.
+func (q *Queries) OpenOwnAssessment(ctx context.Context, arg OpenOwnAssessmentParams) (RoadmapAssessment, error) {
+	row := q.db.QueryRow(ctx, openOwnAssessment,
+		arg.Student,
+		arg.LessonID,
+		arg.Kind,
+		arg.HomeworkIndex,
+	)
+	var i RoadmapAssessment
+	err := row.Scan(
+		&i.ID,
+		&i.StudentClientID,
+		&i.RoadmapID,
+		&i.LessonID,
+		&i.Kind,
+		&i.HomeworkIndex,
+		&i.QuestionIds,
+		&i.Answers,
+		&i.CreatedAt,
+		&i.FinishedAt,
+		&i.Correct,
+		&i.Total,
+		&i.Percent,
+		&i.AssignmentID,
+		&i.Times,
 	)
 	return i, err
 }
 
 const progress = `-- name: Progress :many
-SELECT lesson_id, kind, coalesce(homework_index, -1)::int AS homework_index, max(percent)::int AS best
+SELECT coalesce(lesson_id, '')::text AS lesson_id, kind, coalesce(homework_index, -1)::int AS homework_index,
+       max(percent)::int AS best
 FROM roadmap_assessments
-WHERE student_client_id = $1 AND finished_at IS NOT NULL
+WHERE student_client_id = $1 AND finished_at IS NOT NULL AND lesson_id IS NOT NULL
 GROUP BY lesson_id, kind, homework_index
 `
 
@@ -417,6 +585,7 @@ type ProgressRow struct {
 }
 
 // Every finished assessment's lesson, kind, set and best score: progress.
+// Custom homework (no lesson) isn't on any roadmap.
 func (q *Queries) Progress(ctx context.Context, student int32) ([]ProgressRow, error) {
 	rows, err := q.db.Query(ctx, progress, student)
 	if err != nil {
@@ -442,17 +611,84 @@ func (q *Queries) Progress(ctx context.Context, student int32) ([]ProgressRow, e
 	return items, nil
 }
 
+const progressOf = `-- name: ProgressOf :many
+SELECT student_client_id, coalesce(lesson_id, '')::text AS lesson_id, kind,
+       coalesce(homework_index, -1)::int AS homework_index, max(percent)::int AS best
+FROM roadmap_assessments
+WHERE student_client_id = ANY ($1::int[]) AND finished_at IS NOT NULL AND lesson_id IS NOT NULL
+GROUP BY student_client_id, lesson_id, kind, homework_index
+`
+
+type ProgressOfRow struct {
+	StudentClientID int32
+	LessonID        string
+	Kind            string
+	HomeworkIndex   int32
+	Best            int32
+}
+
+// Progress of several students at once (a group's, for its teachers).
+func (q *Queries) ProgressOf(ctx context.Context, students []int32) ([]ProgressOfRow, error) {
+	rows, err := q.db.Query(ctx, progressOf, students)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProgressOfRow
+	for rows.Next() {
+		var i ProgressOfRow
+		if err := rows.Scan(
+			&i.StudentClientID,
+			&i.LessonID,
+			&i.Kind,
+			&i.HomeworkIndex,
+			&i.Best,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const saveAnswers = `-- name: SaveAnswers :exec
-UPDATE roadmap_assessments SET answers = $1 WHERE id = $2
+UPDATE roadmap_assessments SET answers = $1, times = $2 WHERE id = $3
 `
 
 type SaveAnswersParams struct {
 	Answers []byte
+	Times   []byte
 	ID      pgtype.UUID
 }
 
 func (q *Queries) SaveAnswers(ctx context.Context, arg SaveAnswersParams) error {
-	_, err := q.db.Exec(ctx, saveAnswers, arg.Answers, arg.ID)
+	_, err := q.db.Exec(ctx, saveAnswers, arg.Answers, arg.Times, arg.ID)
+	return err
+}
+
+const saveLogo = `-- name: SaveLogo :exec
+INSERT INTO university_logos (slug, content_type, body, sha256) VALUES ($1, $2, $3, $4)
+ON CONFLICT (slug) DO UPDATE SET content_type = excluded.content_type, body = excluded.body,
+    sha256 = excluded.sha256, updated_at = now()
+`
+
+type SaveLogoParams struct {
+	Slug        string
+	ContentType string
+	Body        []byte
+	Sha256      string
+}
+
+func (q *Queries) SaveLogo(ctx context.Context, arg SaveLogoParams) error {
+	_, err := q.db.Exec(ctx, saveLogo,
+		arg.Slug,
+		arg.ContentType,
+		arg.Body,
+		arg.Sha256,
+	)
 	return err
 }
 

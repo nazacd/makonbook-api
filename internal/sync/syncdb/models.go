@@ -35,6 +35,29 @@ type AppSetting struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type Assignment struct {
+	ID            pgtype.UUID
+	GroupID       int32
+	TeacherID     int32
+	Kind          string
+	Title         string
+	Instructions  string
+	Subject       string
+	Course        pgtype.Text
+	LessonID      pgtype.Text
+	HomeworkIndex pgtype.Int2
+	TestCode      pgtype.Text
+	Sections      []string
+	QuestionIds   []pgtype.UUID
+	Skills        []string
+	Mix           []byte
+	OpensAt       pgtype.Timestamptz
+	DueAt         pgtype.Timestamptz
+	ClosedAt      pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type AttendanceAudit struct {
 	ID              int64
 	SessionID       pgtype.UUID
@@ -255,6 +278,19 @@ type LessonDay struct {
 	Date            pgtype.Date
 	Minutes         int32
 	ScheduleItemIds []int32
+}
+
+type Notification struct {
+	ID           int64
+	PersonKind   string
+	PersonID     int32
+	Kind         string
+	Title        string
+	Body         string
+	Link         pgtype.Text
+	AssignmentID pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	ReadAt       pgtype.Timestamptz
 }
 
 type OauthState struct {
@@ -487,8 +523,8 @@ type ReviewBot struct {
 type RoadmapAssessment struct {
 	ID              pgtype.UUID
 	StudentClientID int32
-	RoadmapID       string
-	LessonID        string
+	RoadmapID       pgtype.Text
+	LessonID        pgtype.Text
 	Kind            string
 	HomeworkIndex   pgtype.Int2
 	QuestionIds     []pgtype.UUID
@@ -498,6 +534,8 @@ type RoadmapAssessment struct {
 	Correct         pgtype.Int2
 	Total           pgtype.Int2
 	Percent         pgtype.Int2
+	AssignmentID    pgtype.UUID
+	Times           []byte
 }
 
 type RoadmapChoice struct {
@@ -595,6 +633,14 @@ type TelegramPhoneCheck struct {
 	ExpiresAt       pgtype.Timestamptz
 	VerifiedAt      pgtype.Timestamptz
 	UsedAt          pgtype.Timestamptz
+}
+
+type UniversityLogo struct {
+	Slug        string
+	ContentType string
+	Body        []byte
+	Sha256      string
+	UpdatedAt   pgtype.Timestamptz
 }
 
 type VocabDeck struct {

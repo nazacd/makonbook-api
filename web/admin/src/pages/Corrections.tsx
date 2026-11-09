@@ -1,7 +1,8 @@
+import { PenLine } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router';
 
 import { useCorrections } from '../api/hooks';
-import { Empty, ErrorNotice, Loading, MarkChip, OfficeSelect, useOfficeParam } from '../components/ui';
+import { Empty, ErrorNotice, Loading, MarkChip, OfficeSelect, useOfficeParam, PageIcon } from '../components/ui';
 import { addDays, dateTime, isDate, schoolToday, shortDate } from '../lib/dates';
 import { useNow } from '../lib/now';
 
@@ -36,7 +37,9 @@ export function CorrectionsPage() {
     <div className="stack">
       <div className="page-head">
         <div>
-          <h1>Teacher corrections</h1>
+          <h1>
+            <PageIcon icon={PenLine} />
+            Teacher corrections</h1>
           <p className="muted">Marks teachers changed by hand, for lessons in the period.</p>
         </div>
         <div className="toolbar">

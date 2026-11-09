@@ -452,3 +452,21 @@ WHERE f.key = ANY (@keys::text[]);
 -- name: InsertFigureFile :exec
 INSERT INTO figure_files (key, file) VALUES (@key, @file)
 ON CONFLICT (key) DO UPDATE SET file = excluded.file;
+
+-- Approved questions for teachers to put in a homework (spec 23.2), newest
+-- approved first. q is an ILIKE pattern.
+-- name: ApprovedQuestions :many
+SELECT id, type, domain, skill, difficulty, passage, stem FROM questions
+WHERE status = 'approved' AND subject = @subject
+  AND (sqlc.narg(skill)::text IS NULL OR lower(skill) = lower(sqlc.narg(skill)::text))
+  AND (sqlc.narg(difficulty)::text IS NULL OR difficulty = sqlc.narg(difficulty)::text)
+  AND (sqlc.narg(q)::text IS NULL OR stem ILIKE sqlc.narg(q)::text OR passage ILIKE sqlc.narg(q)::text)
+ORDER BY approved_at DESC, id
+LIMIT @lim OFFSET @off;
+
+-- name: CountApprovedQuestions :one
+SELECT count(*)::int FROM questions
+WHERE status = 'approved' AND subject = @subject
+  AND (sqlc.narg(skill)::text IS NULL OR lower(skill) = lower(sqlc.narg(skill)::text))
+  AND (sqlc.narg(difficulty)::text IS NULL OR difficulty = sqlc.narg(difficulty)::text)
+  AND (sqlc.narg(q)::text IS NULL OR stem ILIKE sqlc.narg(q)::text OR passage ILIKE sqlc.narg(q)::text);

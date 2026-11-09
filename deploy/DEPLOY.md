@@ -186,7 +186,10 @@ forgotten `migrate up` shows up immediately as containers restarting.
 **Pin a version** instead of `latest`: set `API_IMAGE=nazacd/makonbook-api:sha-<commit>`
 in `.env`. **Roll back:** set the previous sha and `docker compose up -d`
 (migrations only ever add; an older image runs fine on a newer schema unless
-the release notes say otherwise).
+the release notes say otherwise). One exception: images from before migration
+00038 (assignments) can't read custom homework (a roadmap assessment without a
+lesson). To go back past it, run `migrate down` with the newer image first: it
+deletes the assignments, their notifications and custom homework.
 
 ## Attendance write-back to HolliHop
 
@@ -337,9 +340,13 @@ material, so it is **never committed**; copy the files to the server instead:
 ```bash
 ssh root@makonbook.uz 'mkdir -p /opt/curriculum && chmod 700 /opt/curriculum'
 scp math-*.json english-*.json root@makonbook.uz:/opt/curriculum/
+ssh root@makonbook.uz 'chown -R 65532:65532 /opt/curriculum'
 ```
 
-Then, in `/opt/makonbook-api` (after `migrate up` has applied 00036):
+The container runs as distroless's nonroot user (uid 65532), so the folder
+belongs to it: root and the import can read the files, nobody else can.
+
+Then, in `/opt/makonbook-api` (after `migrate up` has applied 00036 and 00037):
 
 ```bash
 docker compose run --rm -v /opt/curriculum:/curriculum:ro api curriculum import /curriculum
@@ -353,6 +360,30 @@ approved questions at each difficulty (`have/want`), with `SHORT` where the bank
 can't fill it as asked (students then get questions of a neighbouring
 difficulty, or fewer). `curriculum coverage` prints it again at any time, e.g.
 after more questions are approved. Run the import again whenever the files change.
+
+**University logos.** The stops show their university's logo, used with the
+universities' permission. Logos are trademarks, so they are **never committed**
+either: they go in `/opt/curriculum/logos/`, one file per university, named by
+its slug with `.svg`, `.png` or `.webp` (at most 1 MB; the import checks the
+bytes, not the name). To see which file names are wanted:
+
+```bash
+docker compose run --rm api curriculum logos
+```
+
+Copy the files, give them to uid 65532 like the JSON, and import again:
+
+```bash
+ssh root@makonbook.uz 'mkdir -p /opt/curriculum/logos'
+scp logos/*.svg logos/*.png root@makonbook.uz:/opt/curriculum/logos/
+ssh root@makonbook.uz 'chown -R 65532:65532 /opt/curriculum'
+docker compose run --rm -v /opt/curriculum:/curriculum:ro api curriculum import /curriculum
+```
+
+The import prints the logos loaded, unchanged and skipped (with the reason: an
+unknown name, not a valid SVG/PNG/WebP, over 1 MB, a second file for one
+university) and the universities still without one. A changed file replaces
+the stored logo; students' browsers fetch the new one at once (its URL changes).
 
 ## Question pictures (renderer)
 
@@ -605,6 +636,7 @@ docker exec db psql -U postgres -d makonbook_api -c \
 | Load the word lists (folder with `words.jsonl` or `words.csv`, and `images/`) | `docker compose run --rm -v /opt/vocab:/vocab:ro api vocab import /vocab` |
 | Load or update the roadmaps' curriculum (below) | `docker compose run --rm -v /opt/curriculum:/curriculum:ro api curriculum import /curriculum` |
 | How well the bank covers the roadmaps | `docker compose run --rm api curriculum coverage` |
+| Which universities have a logo, and the file name each takes | `docker compose run --rm api curriculum logos` |
 | Review bot: what it did | `docker compose logs --tail 100 bot` |
 | Draw a question picture | `docker compose run --rm -v /tmp:/out api practice picture DAY3 english-m2-04 fix /out/q.png` |
 | Test the app as a real teacher and student | `/opt/makonbook-api/test-accounts.sh` (below) |

@@ -1,7 +1,8 @@
+import { ListChecks } from 'lucide-react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 
 import { usePracticeQueue, type QueueFilter } from '../api/hooks';
-import { Empty, ErrorNotice, Loading } from '../components/ui';
+import { Empty, ErrorNotice, Loading, PageIcon } from '../components/ui';
 import { placeLabel, RiskChip, StatusChip, SUBJECT } from './common';
 
 const RISKS = ['red', 'yellow', 'green'] as const;
@@ -42,7 +43,9 @@ export function PracticeQueuePage() {
           <div className="small">
             <Link to="/practice">Practice tests</Link>
           </div>
-          <h1>Questions to fix</h1>
+          <h1>
+            <PageIcon icon={ListChecks} />
+            Questions to fix</h1>
           <p className="muted">Red first, then yellow. A question several tests share appears once.</p>
         </div>
         <div className="toolbar">

@@ -132,3 +132,54 @@ func (s *Service) FigureLinks(ctx context.Context, keys []string) (map[string]Im
 	}
 	return out, nil
 }
+
+// QuestionFilter picks approved questions for a teacher (spec 23.2): a
+// subject, and optionally one skill (any case), a difficulty and text in
+// the stem or passage.
+type QuestionFilter struct {
+	Subject, Skill, Difficulty, Text string
+	Limit, Offset                    int32
+}
+
+// QuestionPreview is an approved question at a glance.
+type QuestionPreview struct {
+	ID         string  `json:"id"`
+	Type       string  `json:"type"`
+	Domain     string  `json:"domain"`
+	Skill      string  `json:"skill"`
+	Difficulty *string `json:"difficulty"`
+	Preview    string  `json:"preview"` // the start of the question, as plain text
+}
+
+// ApprovedQuestions lists approved questions matching f, newest approved
+// first, and how many match in all.
+func (s *Service) ApprovedQuestions(ctx context.Context, f QuestionFilter) ([]QuestionPreview, int, error) {
+	q := practicedb.New(s.pool)
+	skill, diff, text := optText(strings.TrimSpace(f.Skill)), optText(f.Difficulty), pgtype.Text{}
+	if t := strings.TrimSpace(f.Text); t != "" {
+		text = pgtype.Text{String: "%" + likeEscaper.Replace(t) + "%", Valid: true}
+	}
+	rows, err := q.ApprovedQuestions(ctx, practicedb.ApprovedQuestionsParams{
+		Subject: f.Subject, Skill: skill, Difficulty: diff, Q: text, Lim: f.Limit, Off: f.Offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := q.CountApprovedQuestions(ctx, practicedb.CountApprovedQuestionsParams{
+		Subject: f.Subject, Skill: skill, Difficulty: diff, Q: text,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]QuestionPreview, len(rows))
+	for i, r := range rows {
+		out[i] = QuestionPreview{
+			ID: uuidString(r.ID), Type: r.Type, Domain: r.Domain, Skill: r.Skill, Difficulty: textPtr(r.Difficulty),
+			Preview: preview(r.Passage, r.Stem),
+		}
+	}
+	return out, int(total), nil
+}
+
+// likeEscaper makes text match itself in an ILIKE pattern.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)

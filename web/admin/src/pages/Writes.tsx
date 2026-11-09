@@ -1,8 +1,9 @@
+import { Send } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router';
 
 import { describe } from '../api/client';
 import { useRetryWrite, useWrites, type WriteStatus } from '../api/hooks';
-import { Empty, ErrorNotice, Loading, Notice, OfficeSelect, useOfficeParam, WRITE_STATUS, WriteChip } from '../components/ui';
+import { Empty, ErrorNotice, Loading, Notice, OfficeSelect, useOfficeParam, WRITE_STATUS, WriteChip, PageIcon } from '../components/ui';
 import { dateTime, shortDate } from '../lib/dates';
 
 const ORDER: WriteStatus[] = ['failed', 'set_manually', 'pending', 'sent', 'unchanged', 'dry_run', 'superseded'];
@@ -31,7 +32,9 @@ export function WritesPage() {
     <div className="stack">
       <div className="page-head">
         <div>
-          <h1>HolliHop writes</h1>
+          <h1>
+            <PageIcon icon={Send} />
+            HolliHop writes</h1>
           <p className="muted">Attendance the app sends to HolliHop after each lesson.</p>
         </div>
         <div className="toolbar">

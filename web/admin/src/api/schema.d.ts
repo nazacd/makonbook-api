@@ -1280,6 +1280,300 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/logos/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A roadmap stop's university logo
+         * @description No sign-in (for `<img>`). Spec 22.7. SVG, PNG or WebP with its
+         *     content type; `ETag` is its sha-256 (If-None-Match → 304) and
+         *     `Cache-Control: public, max-age=86400`. Every answer carries
+         *     `X-Content-Type-Options: nosniff` and `Content-Security-Policy:
+         *     default-src 'none'; style-src 'unsafe-inline'; img-src data:;
+         *     sandbox`. Link it with the `logo_url` the roadmap gives.
+         */
+        get: operations["getLogo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/assignments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The student's assignments (spec 23)
+         * @description Homework, level checks and exams the teachers of the student's current
+         *     groups set, once open: the open and overdue ones, and closed ones the
+         *     student has work on. Soonest deadline first. `mine` is how the student
+         *     stands: the first finished work is the result; later tries count in
+         *     `tries` and `best`. Teachers and registered students get an empty list.
+         */
+        get: operations["myAssignments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/assignments/{id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start an assigned homework or level check, or continue it
+         * @description The student's open assessment for this assignment, else a new one with
+         *     the assignment's questions (the same for everyone in the group). Then
+         *     `GET /v1/me/assessments/{id}`, `PUT …/answers` and `POST …/submit` as
+         *     for a roadmap lesson's. A finished one can be started again for
+         *     practice; the first finished one stays the result. Exams are taken as
+         *     the mock test itself (`/v1/practice/…`): the attempts count by themselves.
+         */
+        post: operations["startAssignment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The person's notifications, newest first (spec 23.5) */
+        get: operations["myNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/notifications/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Mark notifications read */
+        put: operations["readNotifications"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/teacher/assignments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The assignments of the teacher's groups (spec 23) */
+        get: operations["teacherAssignments"];
+        put?: never;
+        /**
+         * Give a group an assignment
+         * @description Any teacher of the group (on its schedule now or later). A homework's
+         *     or level check's questions are sent as drawn (`POST …/draw`) and
+         *     swapped: 1–60 approved questions of the subject, in order. An exam
+         *     names a published test and the sections to take. The title defaults
+         *     to the lesson's, the set's or the test's. Every student of the group
+         *     gets a notification.
+         */
+        post: operations["createAssignment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/teacher/assignments/draw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Draw questions for a homework or level check, without saving
+         * @description From a curriculum lesson's level check (`course`, `lesson_id`), one of
+         *     its homework sets (`homework_index` too), or custom (`subject`,
+         *     `skills`, `mix`): approved questions of the subject with one of the
+         *     skills, as many of each difficulty as asked, from the neighbouring
+         *     difficulty when short, then any; fewer when still short, never none.
+         *     With `group_id`, questions none of the group's students has had come
+         *     first. With `question_ids` (and `subject`) it returns those questions
+         *     in that order instead, in full: the way to see a set after swapping a
+         *     question.
+         */
+        post: operations["drawAssignment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/teacher/assignments/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** An assignment with its questions (its group's teachers) */
+        get: operations["teacherAssignment"];
+        /**
+         * Change an assignment's title, instructions or dates, or close it
+         * @description Every field is sent. `closed` true closes it (no more starts; work in progress can still be finished); false opens it again.
+         */
+        put: operations["updateAssignment"];
+        post?: never;
+        /** Delete an assignment nobody has started */
+        delete: operations["deleteAssignment"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/teacher/assignments/{id}/results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** How the group did: each student, each question, the weakest skills */
+        get: operations["assignmentResults"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/teacher/assignments/{id}/results/{client_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One student's work on the assignment
+         * @description Their first finished assessment, with the keys and the explanations, or for an exam the attempt that counted, with its answers.
+         */
+        get: operations["assignmentStudentResult"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/teacher/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Approved questions to put in a homework (teachers) */
+        get: operations["teacherQuestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/teacher/taxonomy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Domains and skills, with how many approved questions each has (teachers) */
+        get: operations["teacherTaxonomy"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/teacher/curriculum": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The imported courses, to pick a lesson's level check or homework (teachers) */
+        get: operations["teacherCurriculum"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/teacher/groups/{id}/roadmap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A group's roadmap progress (its teachers)
+         * @description The course or courses the group teaches (its discipline, or HolliHop's level for it), every lesson in order, and each student's standing per lesson as their own roadmap lays it out.
+         */
+        get: operations["groupRoadmap"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/parent-code": {
         parameters: {
             query?: never;
@@ -2463,6 +2757,8 @@ export interface components {
                 lesson_id: string;
                 lesson_title: string;
                 university: string;
+                /** @description The university's logo: /v1/logos/{slug}?v=…, relative to the API; null if none */
+                logo_url: string | null;
             };
             /** @description Free accounts: how many units are open (the first country's); null for enrolled students */
             free_units: number | null;
@@ -2471,6 +2767,8 @@ export interface components {
             university: string;
             city: string;
             country: string;
+            /** @description The university's logo, /v1/logos/{slug}?v=<first 8 of its sha-256> (relative to the API; the version changes with the file, so it can be cached); null if none */
+            logo_url: string | null;
         };
         Roadmap: components["schemas"]["RoadmapSummary"] & {
             countries: {
@@ -2581,15 +2879,30 @@ export interface components {
             answers: {
                 [key: string]: string | null;
             };
+            /** @description Question id → seconds spent on it so far (each replaces that question's); for the teacher's statistics */
+            times?: {
+                [key: string]: number;
+            };
         };
         Assessment: {
             /** Format: uuid */
             id: string;
             /** @enum {string} */
             kind: "level_check" | "homework";
-            roadmap_id: string;
-            lesson_id: string;
+            /** @description The course; null for a custom homework assignment */
+            roadmap_id: string | null;
+            /** @description null for a custom homework assignment */
+            lesson_id: string | null;
             homework_index: number | null;
+            /** @description The assignment it was started from (spec 23); null for the roadmap's own */
+            assignment: null | {
+                /** Format: uuid */
+                id: string;
+                kind: components["schemas"]["AssignmentKind"];
+                title: string;
+                /** Format: date-time */
+                due_at: string;
+            };
             title: string;
             /** @enum {string} */
             subject: "math" | "english";
@@ -2634,6 +2947,10 @@ export interface components {
             answers: {
                 [key: string]: string | null;
             };
+            /** @description Question id → seconds spent, as the client sent them */
+            times: {
+                [key: string]: number;
+            };
             result: null | {
                 /** @description Rounded down */
                 percent: number;
@@ -2653,6 +2970,427 @@ export interface components {
                     explanation: string;
                 }[];
             };
+        };
+        /** @enum {string} */
+        AssignmentKind: "homework" | "level_check" | "exam";
+        /**
+         * @description scheduled: not open yet; open; overdue: the deadline passed, work is still taken and marked late; closed: the teacher closed it, no more starts
+         * @enum {string}
+         */
+        AssignmentStatus: "scheduled" | "open" | "overdue" | "closed";
+        /** @description The curriculum lesson an assignment comes from */
+        AssignmentLesson: {
+            /** @example math-pre-sat */
+            course: string;
+            lesson_id: string;
+            title: string;
+            unit_id: string;
+            unit_title: string;
+        };
+        /** @description The mock test of an exam */
+        AssignmentTest: {
+            /** @example DAY12 */
+            code: string;
+            title: string;
+            /** @description The sections to take */
+            sections: ("english" | "math")[];
+            /** @description Questions in Reading and Writing */
+            english: number;
+            /** @description Questions in Math */
+            math: number;
+        };
+        AssignmentMix: {
+            easy: number;
+            medium: number;
+            hard: number;
+        };
+        /** @description A figure's key (in ![alt](r2:key)) → a link an <img> loads (signed, https, works for 6 hours). A figure that can't be had is missing. */
+        ImageLinks: {
+            [key: string]: {
+                url: string;
+                width: number;
+                height: number;
+            };
+        };
+        /** @description A question as the teacher sees it, whole */
+        AssignmentQuestion: {
+            /** Format: uuid */
+            id: string;
+            /** @description From 1 */
+            position: number;
+            /** @enum {string} */
+            type: "mcq" | "grid_in";
+            passage: string | null;
+            stem: string;
+            choices: {
+                [key: string]: string;
+            } | null;
+            figures: components["schemas"]["PracticeFigure"][];
+            /** @description The letter, for mcq */
+            correct: string | null;
+            /** @description Grid-in: the accepted forms */
+            accepted: string[] | null;
+            explanation: string;
+            domain: string;
+            skill: string;
+            /** @enum {string|null} */
+            difficulty: "easy" | "medium" | "hard" | null;
+        };
+        QuestionPreview: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            type: "mcq" | "grid_in";
+            domain: string;
+            skill: string;
+            /** @enum {string|null} */
+            difficulty: "easy" | "medium" | "hard" | null;
+            /** @description The start of the question as plain text */
+            preview: string;
+        };
+        /** @description How the group stands on an assignment */
+        AssignmentSummary: {
+            /** @description In the group now */
+            students: number;
+            done: number;
+            /** @description Done after the deadline */
+            late: number;
+            /** @description Homework and level checks started and not finished */
+            in_progress: number;
+            /** @description Homework and level checks: the mean percent of those done */
+            average_percent: number | null;
+            /** @description Exams: the mean total (one section: its score) of those done */
+            average_score: number | null;
+        };
+        Assignment: {
+            /** Format: uuid */
+            id: string;
+            group_id: number;
+            group_name: string;
+            /** @description Who gave it */
+            teacher_id: number;
+            kind: components["schemas"]["AssignmentKind"];
+            status: components["schemas"]["AssignmentStatus"];
+            title: string;
+            instructions: string;
+            /** @enum {string} */
+            subject: "math" | "english";
+            lesson: null | components["schemas"]["AssignmentLesson"];
+            /** @description The lesson's homework set it comes from */
+            homework_index: number | null;
+            test: null | components["schemas"]["AssignmentTest"];
+            skills: string[];
+            mix: null | components["schemas"]["AssignmentMix"];
+            /** @description How many */
+            questions: number;
+            /** Format: date-time */
+            opens_at: string;
+            /** Format: date-time */
+            due_at: string;
+            /** Format: date-time */
+            closed_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            summary: components["schemas"]["AssignmentSummary"];
+        };
+        AssignmentDetail: components["schemas"]["Assignment"] & {
+            /** @description The set, in order; empty for an exam */
+            items: components["schemas"]["AssignmentQuestion"][];
+            images: components["schemas"]["ImageLinks"];
+        };
+        AssignmentInput: {
+            group_id: number;
+            kind: components["schemas"]["AssignmentKind"];
+            /** @description Defaults to the lesson's, the set's or the test's */
+            title?: string;
+            instructions?: string;
+            /**
+             * Format: date-time
+             * @description Default now
+             */
+            opens_at?: string;
+            /** Format: date-time */
+            due_at: string;
+            /**
+             * @description With lesson_id: the curriculum course
+             * @example math-pre-sat
+             */
+            course?: string;
+            /** @description Level checks, and homework from the curriculum */
+            lesson_id?: string;
+            /** @description Homework from the curriculum: the lesson's set */
+            homework_index?: number;
+            /**
+             * @description Custom homework (without a lesson)
+             * @enum {string}
+             */
+            subject?: "math" | "english";
+            /** @description Custom homework: for the record */
+            skills?: string[];
+            mix?: components["schemas"]["AssignmentMix"];
+            /** @description Homework and level checks: the set, in order */
+            question_ids?: string[];
+            /** @description Exams: a published test's code */
+            test?: string;
+            /** @description Exams: the sections to take */
+            sections?: ("english" | "math")[];
+        };
+        AssignmentUpdate: {
+            title: string;
+            instructions: string;
+            /** Format: date-time */
+            opens_at: string;
+            /** Format: date-time */
+            due_at: string;
+            closed: boolean;
+        };
+        DrawInput: {
+            /** @description Prefer questions none of this group's students has had */
+            group_id?: number;
+            course?: string;
+            lesson_id?: string;
+            homework_index?: number;
+            /** @enum {string} */
+            subject?: "math" | "english";
+            skills?: string[];
+            mix?: components["schemas"]["AssignmentMix"];
+            /** @description These questions */
+            question_ids?: string[];
+        };
+        DrawResult: {
+            /** @enum {string} */
+            subject: "math" | "english";
+            skills: string[];
+            /** @description What was asked for; null for a set given by ids */
+            mix: null | components["schemas"]["AssignmentMix"];
+            items: components["schemas"]["AssignmentQuestion"][];
+            images: components["schemas"]["ImageLinks"];
+        };
+        /** @description Per section taken (english, math) */
+        SectionScores: {
+            [key: string]: {
+                /** @description Questions right */
+                raw: number;
+                questions: number;
+                /** @description Estimated, 200–800 */
+                score: number;
+            };
+        };
+        /** @description How a student stands on an assignment: the first finished work is the result */
+        AssignmentStanding: {
+            /** @enum {string} */
+            status: "new" | "in_progress" | "done";
+            /**
+             * Format: uuid
+             * @description Homework and level checks: the open one, or the first finished
+             */
+            assessment_id: string | null;
+            /**
+             * Format: uuid
+             * @description Exams: the attempt that counted
+             */
+            attempt_id: string | null;
+            /** Format: date-time */
+            started_at: string | null;
+            /** Format: date-time */
+            finished_at: string | null;
+            /** @description Finished after the deadline */
+            late: boolean;
+            /** @description Homework and level checks */
+            percent: number | null;
+            correct: number | null;
+            total: number | null;
+            /** @description Level checks: 70 % or more; homework: true once done; exams: null */
+            passed: boolean | null;
+            /** @description Exams */
+            scores: null | components["schemas"]["SectionScores"];
+            /** @description Exams: both sections' sum, or the one section's score */
+            total_score: number | null;
+            /** @description Finished ones */
+            tries: number;
+            /** @description The best percent (exams: the best total or section score) */
+            best: number | null;
+        };
+        StudentAssignment: {
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["AssignmentKind"];
+            /** @enum {string} */
+            status: "open" | "overdue" | "closed";
+            title: string;
+            instructions: string;
+            /** @enum {string} */
+            subject: "math" | "english";
+            group_id: number;
+            group_name: string;
+            lesson: null | components["schemas"]["AssignmentLesson"];
+            test: null | components["schemas"]["AssignmentTest"];
+            /** @description How many; for an exam, in the sections to take */
+            questions: number;
+            /** Format: date-time */
+            opens_at: string;
+            /** Format: date-time */
+            due_at: string;
+            /** Format: date-time */
+            closed_at: string | null;
+            mine: components["schemas"]["AssignmentStanding"];
+        };
+        AssignmentStudentResult: components["schemas"]["AssignmentStanding"] & {
+            client_id: number;
+            first_name: string;
+            last_name: string;
+        };
+        AssignmentQuestionStats: {
+            /** Format: uuid */
+            question_id: string;
+            /** @description From 1 */
+            position: number;
+            /** @enum {string} */
+            subject: "math" | "english";
+            /** @description Exams */
+            module: number | null;
+            skill: string;
+            /** @enum {string|null} */
+            difficulty: "easy" | "medium" | "hard" | null;
+            /** @description Students whose counted work has the question (a blank counts) */
+            answered: number;
+            correct: number;
+            /** @description mcq: A–D and blank; grid-in: correct, wrong, blank */
+            answers: {
+                [key: string]: number;
+            };
+            /** @description Over the work with a time for it */
+            avg_seconds: number | null;
+        };
+        AssignmentResults: {
+            assignment: components["schemas"]["Assignment"];
+            /** @description The group's roster now */
+            students: components["schemas"]["AssignmentStudentResult"][];
+            questions: components["schemas"]["AssignmentQuestionStats"][];
+            /** @description Wrong answers per skill, most first */
+            skills: {
+                skill: string;
+                wrong: number;
+                total: number;
+            }[];
+        };
+        PracticeOwnAttempt: components["schemas"]["PracticeAttempt"] & {
+            answers: components["schemas"]["PracticeAnswer"][];
+        };
+        AssignmentStudentWork: {
+            /** @description Homework and level checks */
+            assessment: null | components["schemas"]["Assessment"];
+            /** @description Exams */
+            attempt: null | components["schemas"]["PracticeOwnAttempt"];
+        };
+        TeacherCurriculum: {
+            courses: {
+                /** @example math-pre-sat */
+                id: string;
+                /** @enum {string} */
+                subject: "math" | "english";
+                /** @enum {string} */
+                level: "foundation" | "pre-sat" | "advanced";
+                /** @example Math · Pre-SAT */
+                title: string;
+                units: {
+                    id: string;
+                    title: string;
+                    university: string;
+                    lessons: {
+                        id: string;
+                        title: string;
+                        skills: string[];
+                        level_check: {
+                            questions: number;
+                            mix: components["schemas"]["AssignmentMix"];
+                            skills: string[];
+                        };
+                        homework: {
+                            index: number;
+                            title: string;
+                            /** @enum {string} */
+                            difficulty: "easy" | "medium" | "hard";
+                            questions: number;
+                            skills: string[];
+                        }[];
+                    }[];
+                }[];
+            }[];
+        };
+        TeacherTaxonomy: {
+            /** @description math and english: the domains, each with its skills and approved counts */
+            subjects: {
+                [key: string]: {
+                    domain: string;
+                    skills: {
+                        skill: string;
+                        /** @description Approved questions at this difficulty */
+                        easy: number;
+                        medium: number;
+                        hard: number;
+                        /** @description Approved questions */
+                        total: number;
+                    }[];
+                }[];
+            };
+        };
+        GroupRoadmap: {
+            /** @description Math first; empty when the group maps to no course */
+            courses: {
+                id: string;
+                /** @enum {string} */
+                subject: "math" | "english";
+                /** @enum {string} */
+                level: "foundation" | "pre-sat" | "advanced";
+                title: string;
+                /** @description In course order */
+                lessons: {
+                    id: string;
+                    title: string;
+                    unit_id: string;
+                    unit_title: string;
+                    university: string;
+                    homework_sets: number;
+                }[];
+            }[];
+            /** @description The roster now, by name */
+            students: {
+                client_id: number;
+                first_name: string;
+                last_name: string;
+                /** @description By course id; lessons in the course's order */
+                courses: {
+                    [key: string]: {
+                        lessons_done: number;
+                        lessons_total: number;
+                        /** @description The first lesson not done; null when all are */
+                        current_lesson_id: string | null;
+                        lessons: {
+                            /** @enum {string} */
+                            status: "done" | "open" | "locked";
+                            passed: boolean;
+                            best: number | null;
+                            homework_done: number;
+                        }[];
+                    };
+                };
+            }[];
+        };
+        Notification: {
+            id: number;
+            /** @enum {string} */
+            kind: "assignment";
+            title: string;
+            body: string;
+            /** @description A path in the web app, e.g. /homework */
+            link: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            read_at: string | null;
         };
         AdminPracticeReport: components["schemas"]["PracticeQuestionRef"] & {
             /** Format: uuid */
@@ -3058,7 +3796,7 @@ export interface components {
                  * @description Stable machine-readable code.
                  * @enum {string}
                  */
-                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "invalid_email" | "email_taken" | "email_unavailable" | "telegram_unavailable" | "telegram_no_phone" | "phone_already_set" | "phone_required" | "photo_too_large" | "invalid_photo" | "google_unavailable" | "enrolled_only";
+                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "invalid_email" | "email_taken" | "email_unavailable" | "telegram_unavailable" | "telegram_no_phone" | "phone_already_set" | "phone_required" | "photo_too_large" | "invalid_photo" | "google_unavailable" | "enrolled_only" | "invalid_onboarding" | "not_needed" | "lesson_locked" | "no_questions" | "finished" | "invalid_answers" | "invalid_assessment" | "invalid_assignment" | "assignment_closed" | "not_open" | "not_an_assessment" | "has_work";
                 /** @description Human-readable explanation; may change. */
                 message: string;
                 /** @description For a rejected form (`invalid_question`): what is wrong, per field (e.g. `stem`, `choices.B`). */
@@ -5723,6 +6461,592 @@ export interface operations {
             };
             /** @description `invalid_answers` */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getLogo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The logo */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/svg+xml": string;
+                    "image/png": string;
+                    "image/webp": string;
+                };
+            };
+            /** @description Unchanged (If-None-Match) */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No logo for this slug */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    myAssignments: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The assignments with the student's standing in each */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        assignments: components["schemas"]["StudentAssignment"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `phone_required` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    startAssignment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The assessment, open or new */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Assessment"];
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `phone_required`; `forbidden`: not a student */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found`: no such assignment of the student's groups */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_an_assessment`: an exam; `not_open`: it hasn't opened yet; `assignment_closed`: the teacher closed it; `no_questions`: its questions are gone from the bank */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    myNotifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description At most 100, and how many are unread */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Notification"][];
+                        unread: number;
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    readNotifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description These (another person's are ignored) */
+                    ids?: number[];
+                    /** @description Every one of the person's */
+                    all?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description How many are unread now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        unread: number;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+        };
+    };
+    teacherAssignments: {
+        parameters: {
+            query?: {
+                /** @description Only this group (one of theirs) */
+                group_id?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest first, each with its summary */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        assignments: components["schemas"]["Assignment"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a teacher, or not this group's */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    createAssignment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignmentInput"];
+            };
+        };
+        responses: {
+            /** @description The assignment */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignmentDetail"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a teacher of the group */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_assignment`: a value is wrong (the message says which; `fields` names them) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    drawAssignment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DrawInput"];
+            };
+        };
+        responses: {
+            /** @description The questions, easy to hard, with keys, explanations and image links */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DrawResult"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a teacher */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found`: no such course, lesson or set */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `no_questions`: the bank has no approved question for the set */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_assignment`: the request names neither a lesson, nor skills and a mix, nor questions; or a value is wrong */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    teacherAssignment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The assignment, its questions whole, and image links */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignmentDetail"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    updateAssignment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignmentUpdate"];
+            };
+        };
+        responses: {
+            /** @description The assignment as it is now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignmentDetail"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `invalid_assignment` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteAssignment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `has_work`: a student has started it (close it instead) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    assignmentResults: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The results */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignmentResults"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    assignmentStudentResult: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                client_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The assessment or the attempt; both null while they haven't finished */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignmentStudentWork"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            /** @description `not_found`: no such assignment of theirs, or the student isn't in the group */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    teacherQuestions: {
+        parameters: {
+            query: {
+                subject: "math" | "english";
+                /** @description One skill */
+                skill?: string;
+                difficulty?: "easy" | "medium" | "hard";
+                /** @description Text in the question */
+                q?: string;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Previews, newest approved first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        questions: components["schemas"]["QuestionPreview"][];
+                        total: number;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    teacherTaxonomy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per subject, the domains and their skills */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherTaxonomy"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    teacherCurriculum: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Every course, math first, with its units, lessons and their set specs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherCurriculum"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    groupRoadmap: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The courses and the students */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupRoadmap"];
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a teacher, or not this group's */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

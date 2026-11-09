@@ -1,8 +1,9 @@
+import { ShieldCheck } from 'lucide-react';
 import { useDeferredValue, useState } from 'react';
 
 import { ApiError, describe } from '../api/client';
 import { useAccess, useGrant, useMe, useRevoke, useStaffSearch, type Access } from '../api/hooks';
-import { Empty, ErrorNotice, Loading, Notice } from '../components/ui';
+import { Empty, ErrorNotice, Loading, Notice, PageIcon } from '../components/ui';
 import { dateTime } from '../lib/dates';
 
 type Member = { type: 'employee' | 'teacher'; id: number; name: string };
@@ -17,7 +18,7 @@ function grantError(error: unknown): string {
       case 'fired':
         return 'HolliHop lists this person as fired.';
       case 'not_found':
-        return 'HolliHop (or, for a teacher, MakonBook) has no one with this id.';
+        return 'HolliHop (or, for a teacher, SATMAKON) has no one with this id.';
     }
   }
   return describe(error);
@@ -47,7 +48,9 @@ export function AccessPage() {
     <div className="stack">
       <div className="page-head">
         <div>
-          <h1>Admins</h1>
+          <h1>
+            <PageIcon icon={ShieldCheck} />
+            Admins</h1>
           <p className="muted">
             They sign in with their own HolliHop login. Branch admins see only their branches; editors fix practice tests.
             Super admins are added and removed on the server, not here.

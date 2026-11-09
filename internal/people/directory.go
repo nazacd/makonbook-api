@@ -122,9 +122,9 @@ func SetSelfPhone(ctx context.Context, db peopledb.DBTX, id int32, phone string)
 
 // MergeSelfStudent folds a registered student into another person (spec
 // 21.4), inside the caller's transaction: their attempts, reviews, parked
-// questions, reports, roadmap assessments and choices, and (if the other has
-// none) goals and onboarding move to toStudent; when
-// the other is a teacher (toStudent 0) those that can't move are deleted.
+// questions, reports, roadmap assessments and choices, notifications, and (if
+// the other has none) goals and onboarding move to toStudent; when the other
+// is a teacher (toStudent 0) those that can't move are deleted.
 // Then the registered student is removed (the rest cascades).
 func MergeSelfStudent(ctx context.Context, db peopledb.DBTX, from, toStudent int32) error {
 	q := peopledb.New(db)
@@ -155,6 +155,9 @@ func MergeSelfStudent(ctx context.Context, db peopledb.DBTX, from, toStudent int
 				return q.MoveStudentChoices(ctx, peopledb.MoveStudentChoicesParams{ToID: toStudent, FromID: from})
 			},
 			func(ctx context.Context) error {
+				return q.MoveStudentNotifications(ctx, peopledb.MoveStudentNotificationsParams{ToID: toStudent, FromID: from})
+			},
+			func(ctx context.Context) error {
 				return q.MoveStudentOnboarding(ctx, peopledb.MoveStudentOnboardingParams{ToID: toStudent, FromID: from})
 			},
 		} {
@@ -167,6 +170,9 @@ func MergeSelfStudent(ctx context.Context, db peopledb.DBTX, from, toStudent int
 			return fmt.Errorf("merge %d: %w", from, err)
 		}
 		if err := q.DeleteStudentReviews(ctx, from); err != nil {
+			return fmt.Errorf("merge %d: %w", from, err)
+		}
+		if err := q.DeleteStudentNotifications(ctx, from); err != nil {
 			return fmt.Errorf("merge %d: %w", from, err)
 		}
 	}
@@ -220,9 +226,12 @@ func notFound(err error) error {
 
 // GroupInfo is a group as shown to its students and teachers.
 type GroupInfo struct {
-	ID           int32  `json:"id"`
-	Name         string `json:"name"`
-	Discipline   string `json:"discipline"`
+	ID         int32  `json:"id"`
+	Name       string `json:"name"`
+	Discipline string `json:"discipline"`
+	// Level is HolliHop's group level; roadmaps fall back to it when the
+	// discipline names no level (spec 22.2, D38). Not in /v1/me.
+	Level        string `json:"-"`
 	LearningType string `json:"learning_type"`
 	Office       string `json:"office"`
 	Schedule     []Slot `json:"schedule"`
@@ -251,7 +260,7 @@ func (d *Directory) Groups(ctx context.Context, kind string, id int32, today tim
 			return nil, fmt.Errorf("student groups: %w", err)
 		}
 		for _, r := range rows {
-			groups = append(groups, GroupInfo{ID: r.ID, Name: r.Name, Discipline: r.Discipline, LearningType: r.LearningType, Office: r.Office})
+			groups = append(groups, GroupInfo{ID: r.ID, Name: r.Name, Discipline: r.Discipline, Level: r.Level, LearningType: r.LearningType, Office: r.Office})
 		}
 	case KindTeacher:
 		rows, err := d.q.TeacherGroups(ctx, peopledb.TeacherGroupsParams{TeacherID: id, Today: day})
@@ -259,7 +268,7 @@ func (d *Directory) Groups(ctx context.Context, kind string, id int32, today tim
 			return nil, fmt.Errorf("teacher groups: %w", err)
 		}
 		for _, r := range rows {
-			groups = append(groups, GroupInfo{ID: r.ID, Name: r.Name, Discipline: r.Discipline, LearningType: r.LearningType, Office: r.Office})
+			groups = append(groups, GroupInfo{ID: r.ID, Name: r.Name, Discipline: r.Discipline, Level: r.Level, LearningType: r.LearningType, Office: r.Office})
 		}
 	default:
 		return nil, ErrNotFound

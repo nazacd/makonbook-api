@@ -31,7 +31,7 @@ export async function uploadImage(file: File): Promise<string> {
   try {
     res = await fetch('/v1/admin/practice/images', { method: 'POST', body, credentials: 'same-origin', headers: { 'X-MakonBook-Admin': '1' } });
   } catch {
-    throw new ApiError(0, 'network', 'Can’t reach MakonBook. Check the connection and try again.');
+    throw new ApiError(0, 'network', 'Can’t reach SATMAKON. Check the connection and try again.');
   }
   const json = (await res.json().catch(() => ({}))) as { key?: string; error?: { code?: string; message?: string } };
   if (!res.ok || !json.key) throw new ApiError(res.status, json.error?.code ?? 'unknown', json.error?.message ?? 'Couldn’t upload the image.');

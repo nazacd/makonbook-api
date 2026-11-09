@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -20,16 +22,20 @@ const curriculumUsage = `
                             level; a folder: its *.json files). Everything is checked first and
                             nothing is stored unless all of it passes; each changed course
                             becomes a new version, live at once (progress is kept by lesson id).
-                            Then prints the coverage report
+                            Then loads the universities' logos from logos/ beside the files
+                            (<slug>.svg, .png or .webp; never committed) and prints the
+                            coverage report
   curriculum coverage       how many approved questions each level check and homework set has,
                             per difficulty; SHORT marks a set the bank can't fill as asked
+  curriculum logos          every university of the roadmaps, the logo file name it takes
+                            (<slug>.svg/.png/.webp) and whether it has one
 `
 
 func validCurriculumArgs(args []string) bool {
 	switch args[1] {
 	case "import":
 		return len(args) >= 3
-	case "coverage":
+	case "coverage", "logos":
 		return len(args) == 2
 	}
 	return false
@@ -60,6 +66,9 @@ func runCurriculum(ctx context.Context, cfg config.Config, args []string, stdout
 	}
 	defer pool.Close()
 	svc := roadmap.NewService(pool, practice.NewService(pool, nil), nil)
+	if args[1] == "logos" {
+		return printUniversities(ctx, svc, stdout)
+	}
 	var ids []string
 	if args[1] == "import" {
 		done, err := svc.Import(ctx, courses)
@@ -75,6 +84,11 @@ func runCurriculum(ctx context.Context, cfg config.Config, args []string, stdout
 			}
 		}
 		fmt.Fprintln(stdout)
+		logos, err := svc.ImportLogos(ctx, logoDirs(args[2:]), courses)
+		if err != nil {
+			return err
+		}
+		printLogos(stdout, logos)
 	}
 	report, err := svc.Coverage(ctx, ids...)
 	if err != nil {
@@ -101,9 +115,20 @@ func courseFiles(paths []string) ([]string, error) {
 			out = append(out, p)
 			continue
 		}
-		matches, err := filepath.Glob(filepath.Join(p, "*.json"))
+		// ReadDir, not Glob: Glob hides a folder it can't read (the container
+		// runs as distroless's nonroot user, uid 65532) as "no files".
+		entries, err := os.ReadDir(p) //nolint:gosec // the operator's own folder
 		if err != nil {
+			if errors.Is(err, fs.ErrPermission) {
+				return nil, fmt.Errorf("%s: can't read the folder (the import runs as uid 65532; chown -R 65532:65532 it): %w", p, err)
+			}
 			return nil, err
+		}
+		var matches []string
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+				matches = append(matches, filepath.Join(p, e.Name()))
+			}
 		}
 		if len(matches) == 0 {
 			return nil, fmt.Errorf("%s: no .json files", p)
@@ -131,4 +156,58 @@ func printCoverage(w io.Writer, c roadmap.Coverage) {
 		fmt.Fprintf(w, "  skills with no approved question: %s\n", strings.Join(c.Unknown, "; "))
 	}
 	fmt.Fprintln(w)
+}
+
+// logoDirs are the logos/ folders beside the curriculum: in each folder
+// given, and in the folder of each file given.
+func logoDirs(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		dir := p
+		if info, err := os.Stat(p); err == nil && !info.IsDir() { //nolint:gosec // the operator's own files
+			dir = filepath.Dir(p)
+		}
+		if d := filepath.Join(dir, "logos"); !slices.Contains(out, d) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func printLogos(w io.Writer, r roadmap.LogoReport) {
+	fmt.Fprintf(w, "Logos: %d loaded, %d unchanged, %d skipped\n", len(r.Loaded), len(r.Unchanged), len(r.Skipped))
+	for _, slug := range r.Loaded {
+		fmt.Fprintf(w, "  loaded     %s\n", slug)
+	}
+	for _, sk := range r.Skipped {
+		fmt.Fprintf(w, "  skipped    %s: %s\n", sk.File, sk.Reason)
+	}
+	if len(r.Missing) > 0 {
+		fmt.Fprintf(w, "No logo yet (%d; file names: curriculum logos):\n", len(r.Missing))
+		for _, n := range r.Missing {
+			fmt.Fprintf(w, "  %s\n", n)
+		}
+	}
+	fmt.Fprintln(w)
+}
+
+func printUniversities(ctx context.Context, svc *roadmap.Service, w io.Writer) error {
+	us, err := svc.Universities(ctx)
+	if err != nil {
+		return err
+	}
+	if len(us) == 0 {
+		fmt.Fprintln(w, "No curriculum imported yet.")
+		return nil
+	}
+	have := 0
+	for _, u := range us {
+		mark := "no logo"
+		if u.HasLogo {
+			mark, have = "logo", have+1
+		}
+		fmt.Fprintf(w, "%-8s %s   (%s)\n", mark, u.Slug, u.Name)
+	}
+	fmt.Fprintf(w, "\n%d of %d have a logo. Files go in logos/ beside the curriculum, named <slug>.svg, .png or .webp.\n", have, len(us))
+	return nil
 }

@@ -20,3 +20,7 @@ Signing in needs `HOLLIHOP_BASE_URL` and `HOLLIHOP_AUTHKEY` on the local API
   so a contract change shows up as a type error here.
 - Every request carries `X-MakonBook-Admin` (CSRF; see `src/api/client.ts`).
 - Times are shown in the school's time zone (`src/lib/dates.ts`).
+- The look is sat.makonbook.uz's design system (makonbook-web `docs/design.md`):
+  its tokens are copied into `src/styles.css` (light and dark; the toggle is in
+  the sidebar) and the logo into `src/components/brand`. Keep them in step by
+  hand when the web's change.
