@@ -1315,8 +1315,8 @@ export interface paths {
         /**
          * The student's assignments (spec 23)
          * @description Homework, level checks and exams the teachers of the student's current
-         *     groups set, once open: the open and overdue ones, and closed ones the
-         *     student has work on. Soonest deadline first. `mine` is how the student
+         *     groups set: scheduled ones (locked until they open), the open and
+         *     overdue ones, and closed ones the student has work on. Soonest deadline first. `mine` is how the student
          *     stands: the first finished work is the result; later tries count in
          *     `tries` and `best`. Teachers and registered students get an empty list.
          */
@@ -3217,8 +3217,11 @@ export interface components {
             /** Format: uuid */
             id: string;
             kind: components["schemas"]["AssignmentKind"];
-            /** @enum {string} */
-            status: "open" | "overdue" | "closed";
+            /**
+             * @description scheduled: not open yet (until opens_at); students see it locked, and starting it answers 409 not_open
+             * @enum {string}
+             */
+            status: "scheduled" | "open" | "overdue" | "closed";
             title: string;
             instructions: string;
             /** @enum {string} */

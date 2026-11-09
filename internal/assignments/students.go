@@ -17,7 +17,7 @@ import (
 type StudentAssignment struct {
 	ID           string     `json:"id"`
 	Kind         string     `json:"kind"`
-	Status       string     `json:"status"` // open, overdue or closed
+	Status       string     `json:"status"` // scheduled (locked until opens_at), open, overdue or closed
 	Title        string     `json:"title"`
 	Instructions string     `json:"instructions"`
 	Subject      string     `json:"subject"`
@@ -32,9 +32,9 @@ type StudentAssignment struct {
 	Mine         Standing   `json:"mine"`
 }
 
-// Mine lists the assignments of the student's current groups once open,
-// soonest deadline first: open and overdue ones, and closed ones the
-// student has work on.
+// Mine lists the assignments of the student's current groups, soonest
+// deadline first: scheduled ones (shown locked until they open), open and
+// overdue ones, and closed ones the student has work on.
 func (s *Service) Mine(ctx context.Context, student int32, day time.Time) ([]StudentAssignment, error) {
 	out := []StudentAssignment{}
 	q := assignmentsdb.New(s.pool)
@@ -42,7 +42,7 @@ func (s *Service) Mine(ctx context.Context, student int32, day time.Time) ([]Stu
 	if err != nil || len(groups) == 0 {
 		return out, err
 	}
-	rows, err := q.OpenedAssignments(ctx, groups)
+	rows, err := q.StudentAssignments(ctx, groups)
 	if err != nil {
 		return nil, err
 	}

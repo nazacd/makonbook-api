@@ -57,9 +57,9 @@ SELECT * FROM assignments WHERE id = @id;
 -- name: GroupAssignments :many
 SELECT * FROM assignments WHERE group_id = ANY (@group_ids::int[]) ORDER BY created_at DESC, id;
 
--- Those students see: open already, soonest deadline first.
--- name: OpenedAssignments :many
-SELECT * FROM assignments WHERE group_id = ANY (@group_ids::int[]) AND opens_at <= now() ORDER BY due_at, id;
+-- Those students see, soonest deadline first (scheduled ones too, locked until they open).
+-- name: StudentAssignments :many
+SELECT * FROM assignments WHERE group_id = ANY (@group_ids::int[]) ORDER BY due_at, id;
 
 -- name: UpdateAssignment :one
 UPDATE assignments

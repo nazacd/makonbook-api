@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -388,16 +389,22 @@ func TestAssignments(t *testing.T) {
 		t.Errorf("another group's student notified: %v", r)
 	}
 
-	// Students see it once open; a scheduled one stays hidden.
-	r = do("POST", "/v1/teacher/assignments", teacher, with(custom, "opens_at", at(24*time.Hour), "title", "Later"))
+	// Students see a scheduled one too, locked: it can't be started before it
+	// opens, and its notification says when it opens.
+	r = do("POST", "/v1/teacher/assignments", teacher, with(custom, "opens_at", at(24*time.Hour), "due_at", at(72*time.Hour), "title", "Later"))
 	if r.status != http.StatusCreated || r.body["status"] != StatusScheduled || r.body["title"] != "Later" {
 		t.Fatalf("a scheduled homework: %v", r)
 	}
 	scheduled := r.body["id"].(string)
 	r = do("GET", "/v1/me/assignments", s1, nil)
-	if as := r.list("assignments"); r.status != http.StatusOK || len(as) != 1 || obj(as[0])["id"] != lc || obj(obj(as[0])["mine"])["status"] != StandingNew ||
-		obj(as[0])["status"] != StatusOpen || obj(obj(as[0])["lesson"])["lesson_id"] != "mp-1-1" {
+	if as := r.list("assignments"); r.status != http.StatusOK || len(as) != 2 || obj(as[0])["id"] != lc || obj(obj(as[0])["mine"])["status"] != StandingNew ||
+		obj(as[0])["status"] != StatusOpen || obj(obj(as[0])["lesson"])["lesson_id"] != "mp-1-1" ||
+		obj(as[1])["id"] != scheduled || obj(as[1])["status"] != StatusScheduled || obj(obj(as[1])["mine"])["status"] != StandingNew {
 		t.Errorf("a student's list: %v", r)
+	}
+	if n := obj(do("GET", "/v1/me/notifications", s1, nil).list("items")[0]); n["title"] != "New homework: Later" ||
+		!strings.Contains(n["body"].(string), " · Opens ") || !strings.Contains(n["body"].(string), " · Due ") {
+		t.Errorf("a scheduled homework's notification: %v", n)
 	}
 	if r := do("GET", "/v1/me/assignments", s3, nil); len(r.list("assignments")) != 0 {
 		t.Errorf("another group's assignments: %v", r)
