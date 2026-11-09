@@ -3511,10 +3511,10 @@ export interface components {
             versions: {
                 version: number;
                 /**
-                 * @description ai_fix: the fix the AI review proposed, applied to a question it approved
+                 * @description ai_fix: the fix the AI review proposed, applied to a question it approved; group: a fix the review group approved; draft: a question added with `makonbook practice add`, written outside the AI review
                  * @enum {string}
                  */
-                source: "import" | "ai_fix" | "editor";
+                source: "import" | "ai_fix" | "group" | "editor" | "draft";
                 created_by: string | null;
                 /** Format: date-time */
                 created_at: string;

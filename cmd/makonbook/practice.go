@@ -22,6 +22,11 @@ const practiceUsage = `
                             a test folder, its questions.jsonl, or the checkout itself (every
                             test in it). Tests already loaded are skipped; --replace reloads
                             them, as long as no question in them was approved or edited
+  practice add <file>       add questions written outside the AI review (a teacher's, or drafts
+                            for teachers to check): one JSON object per line with subject, type,
+                            stem, choices and correct (or accepted), explanation, domain, skill,
+                            difficulty and an optional passage. They wait in review until an
+                            editor approves them in the admin panel; repeats are skipped
   practice list             tests and how far their review has come
   practice publish          publish every test whose questions are all approved and that changed
                             since its last version (the worker does this every few minutes)
@@ -37,6 +42,8 @@ func validPracticeArgs(args []string) bool {
 		return true
 	case len(args) == 6 && args[1] == "picture":
 		return args[4] == "original" || args[4] == "fix" || args[4] == "question"
+	case len(args) == 3 && args[1] == "add":
+		return true
 	case len(args) >= 3 && args[1] == "import":
 		return args[2] != "--replace" || len(args) >= 4
 	}
@@ -51,6 +58,9 @@ func runPractice(ctx context.Context, cfg config.Config, args []string, stdout i
 	defer pool.Close()
 	im := practice.Importer{Pool: pool, Uploads: uploadsClient(cfg)} // the figures the fix step drew
 
+	if args[1] == "add" {
+		return practiceAdd(ctx, cfg, pool, args[2], stdout)
+	}
 	if args[1] == "picture" {
 		return practicePicture(ctx, cfg, pool, args[2], args[3], args[4], args[5], stdout)
 	}
@@ -135,6 +145,37 @@ func runPractice(ctx context.Context, cfg config.Config, args []string, stdout i
 	}
 	if failed > 0 {
 		return fmt.Errorf("%d of %d tests not loaded", failed, len(files))
+	}
+	return nil
+}
+
+// practiceAdd stores a drafts file's questions in review and prints where
+// editors find them.
+func practiceAdd(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, path string, stdout io.Writer) error {
+	f, err := os.Open(path) //nolint:gosec // the operator's own file
+	if err != nil {
+		return err
+	}
+	defer f.Close() //nolint:errcheck // read only
+	drafts, err := practice.ReadDrafts(f)
+	if err != nil {
+		return fmt.Errorf("%s: nothing added: %w", path, err)
+	}
+	added, err := practice.AddDrafts(ctx, pool, drafts)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "%d questions added to review", len(added.IDs))
+	if len(added.Repeats) > 0 {
+		fmt.Fprintf(stdout, "; %d already stored, skipped (lines %v)", len(added.Repeats), added.Repeats)
+	}
+	fmt.Fprintln(stdout, ".")
+	base := "/practice/questions/"
+	if cfg.AdminHost != "" {
+		base = "https://" + cfg.AdminHost + base
+	}
+	for _, id := range added.IDs {
+		fmt.Fprintln(stdout, "  "+base+id)
 	}
 	return nil
 }

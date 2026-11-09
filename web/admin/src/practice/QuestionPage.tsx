@@ -734,7 +734,9 @@ function History({ question: q, onLoad }: { question: Question; onLoad: (content
                   ? 'Loaded from the AI review'
                   : v.source === 'ai_fix'
                     ? 'Fixed by the AI review (its proposed fix)'
-                    : `Edited by ${v.created_by ?? 'an editor'}`}
+                    : v.source === 'draft'
+                      ? 'Added as a draft, written outside the AI review'
+                      : `Edited by ${v.created_by ?? 'an editor'}`}
                 <span className="small faint"> · {dateTime(v.created_at)}</span>
               </span>
               {v.version !== q.version && (

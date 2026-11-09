@@ -39,6 +39,17 @@ VALUES (@subject, @type, @content_hash, sqlc.narg('passage'), @stem, sqlc.narg('
 ON CONFLICT (content_hash) DO NOTHING
 RETURNING id;
 
+-- A question written outside the review waits for an editor; a repeat of a
+-- stored question is skipped.
+-- name: InsertDraft :one
+INSERT INTO questions (subject, type, content_hash, passage, stem, choices, figures, correct, accepted,
+                       explanation, domain, skill, difficulty, status)
+VALUES (@subject, @type, @content_hash, sqlc.narg('passage'), @stem, sqlc.narg('choices'), '[]',
+        sqlc.narg('correct'), sqlc.narg('accepted')::text[], @explanation, @domain, @skill,
+        sqlc.narg('difficulty'), 'review')
+ON CONFLICT (content_hash) DO NOTHING
+RETURNING id;
+
 -- A repeat of a stored question: keep its content, raise its risk if this
 -- review is worse. A review that isn't green takes an automatic approval back.
 -- name: RaiseRisk :one

@@ -4579,7 +4579,7 @@ components:
                 required: [version, source, created_by, created_at, content]
                 properties:
                   version: { type: integer }
-                  source: { type: string, enum: [import, ai_fix, editor], description: "ai_fix: the fix the AI review proposed, applied to a question it approved" }
+                  source: { type: string, enum: [import, ai_fix, group, editor, draft], description: "ai_fix: the fix the AI review proposed, applied to a question it approved; group: a fix the review group approved; draft: a question added with `makonbook practice add`, written outside the AI review" }
                   created_by: { type: [string, "null"] }
                   created_at: { type: string, format: date-time }
                   content: { type: object }
