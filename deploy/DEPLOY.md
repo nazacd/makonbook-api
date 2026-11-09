@@ -321,6 +321,25 @@ upload button answers "image uploads aren't set up on the server".
 A test in the pilot's old format (DAY1) is refused until its review is re-run.
 Every test stays locked until a teacher has approved all its questions.
 
+**Questions written outside the AI review** (a teacher's, or drafts written
+for teachers to check, e.g. for a skill the roadmaps need and the bank lacks)
+are added from a file with one JSON object per line: `subject`, `type` (`mcq`
+or `grid_in`), an optional `passage`, `stem`, `choices` and `correct` (or
+`accepted`), `explanation`, `domain`, `skill` (spelled as in the editor's
+list) and `difficulty`; no figures. The file is test content: like the
+curriculum, it is never committed. Give it to uid 65532 and load it:
+
+```bash
+docker compose run --rm -v /opt/drafts:/drafts:ro api practice add /drafts/questions.jsonl
+```
+
+Every line is checked as an editor's save is, and nothing is stored unless all
+pass. The questions wait **in review** (Questions to fix, at the end of the
+list; "Added as a draft" in their history) until an editor approves them; the
+command prints each one's admin link. Questions already stored are skipped, so
+loading a file twice is harmless. Once approved, the roadmaps' level checks
+and homework draw them at once (`curriculum coverage` shows the new counts).
+
 **Publishing to students.** The `worker` publishes every test whose questions
 are all approved, within 5 minutes ("practice: published a test" in its log):
 it builds the test's package (a numbered version that never changes), copies
@@ -365,7 +384,10 @@ after more questions are approved. Run the import again whenever the files chang
 universities' permission. Logos are trademarks, so they are **never committed**
 either: they go in `/opt/curriculum/logos/`, one file per university, named by
 its slug with `.svg`, `.png` or `.webp` (at most 1 MB; the import checks the
-bytes, not the name). To see which file names are wanted:
+bytes, not the name). An SVG must be UTF-8: one whose first line declares
+another encoding (`encoding="iso-8859-1"`, as some editors save) is skipped as
+not a valid SVG; change the declaration to `encoding="UTF-8"` if the file
+has only plain ASCII text, or re-save it as UTF-8. To see which file names are wanted:
 
 ```bash
 docker compose run --rm api curriculum logos
