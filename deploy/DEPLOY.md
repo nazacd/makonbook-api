@@ -186,7 +186,10 @@ forgotten `migrate up` shows up immediately as containers restarting.
 **Pin a version** instead of `latest`: set `API_IMAGE=nazacd/makonbook-api:sha-<commit>`
 in `.env`. **Roll back:** set the previous sha and `docker compose up -d`
 (migrations only ever add; an older image runs fine on a newer schema unless
-the release notes say otherwise).
+the release notes say otherwise). One exception: images from before migration
+00038 (assignments) can't read custom homework (a roadmap assessment without a
+lesson). To go back past it, run `migrate down` with the newer image first: it
+deletes the assignments, their notifications and custom homework.
 
 ## Attendance write-back to HolliHop
 

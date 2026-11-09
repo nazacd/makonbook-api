@@ -1051,9 +1051,12 @@ university_logos    (slug PK, content_type, body bytea, sha256, updated_at)     
 
 Teachers give their groups work with deadlines (D37): the reference's Homework, Level Checks and Exams tabs,
 fed by SAT MAKON's own bank, curriculum and mock tests. Built in `internal/assignments` (assignments, drawing,
-results, notifications) on `internal/roadmap`'s assessments and `internal/practice`'s attempts. The admin panel
-has no part in it: **every current teacher of a group** (on its schedule now or later, as `TeachesGroup`) may
-give, change, close and delete its assignments and see its results.
+results, notifications) on `internal/roadmap`'s assessments (it draws with `roadmap.Service.Draw`, starts a set
+with `StartAssigned` and lays out a group's progress with `GroupProgress`) and `internal/practice`'s attempts and
+bank (`ApprovedQuestions` for the swap list). The admin panel has no part in it: **every current teacher of a
+group** (on its schedule now or later, as `TeachesGroup`) may give, change, close and delete its assignments and
+see its results; another teacher gets `403 forbidden` for an assignment of that group (`404` when there is no
+such assignment), and students get `403` from every teacher endpoint.
 
 ### 23.1 Kinds
 - **Homework**: a fixed, ordered set of 1–60 approved questions, built from a curriculum lesson's homework set
@@ -1066,17 +1069,27 @@ give, change, close and delete its assignments and see its results.
   statistics mean something.
 - Fields: `title` (1–120 characters; defaults to the lesson's, the set's or the test's), `instructions` (≤ 2000,
   plain text), `opens_at` (default now; may be later), `due_at` (after `opens_at`), `closed_at`.
+- As built: the default titles are "<lesson> · Level check", the set's title, "Homework" (custom) and the test's
+  title. `subject` is the course's (curriculum), the one sent (custom homework), or an exam's first section in the
+  test's order (`english` for a whole test). `skills` and `mix` are kept for the record: the lesson's level check,
+  a set's skills with `{its difficulty: its questions}`, or what custom homework sent. A wrong value is `422
+  invalid_assignment` with `fields` naming each (`kind`, `title`, `instructions`, `due_at`, `course`, `lesson_id`,
+  `homework_index`, `subject`, `skills`, `mix`, `question_ids`, `test`, `sections`, `group_id`); a group the
+  teacher doesn't teach is `403`. `PUT` takes every field; `closed: true` keeps the first closing time.
 - **Status**: `scheduled` (not open yet), `open`, `overdue` (the deadline passed; work is still taken and marked
   **late**), `closed` (the teacher closed it: no more starts; work in progress can still be finished). Students see
   an assignment once it opens: open and overdue ones, and closed ones they have work on.
-- Deleting is allowed while nobody has started (`409 has_work` otherwise).
+- Deleting is allowed while nobody has started (`409 has_work` otherwise): no assessment of it, or for an exam no
+  counting attempt by a student of the group now. Its notifications go with it.
 
 ### 23.2 Drawing questions (`POST /v1/teacher/assignments/draw`)
 - From a lesson's level check, one of its homework sets, or `subject` + `skills` + `mix`: the approved questions
   of the subject with one of the skills (as 22.5 resolves them), as many of each difficulty as asked, from the
   neighbouring difficulty when short, then any; fewer when still short, never none (`409 no_questions`). With
   `group_id`, questions none of the group's students has had (in any roadmap assessment or assignment) come
-  first. Random within each step; easy to hard.
+  first: the questions in any roadmap assessment of the group's current students, and those given to the group
+  before. Random within each step; easy to hard. A lesson that isn't in the course, or a set it hasn't, is `404`;
+  a group the teacher doesn't teach `403`; a request that asks for nothing (or a mix outside 1–60) `422`.
 - With `question_ids` it returns those questions in that order instead: the preview after a swap.
   `GET /v1/teacher/questions?subject=&skill=&difficulty=&q=` lists approved questions to swap in (previews, 30 at
   a time, `total`); `GET /v1/teacher/taxonomy` the domains and skills with approved counts per difficulty;
@@ -1098,15 +1111,22 @@ give, change, close and delete its assignments and see its results.
   `assignment` (id, title, kind, due date). A finished one may be started again for practice; **the first finished
   one is the result**, later ones count in `tries` and `best`. `409 not_open` before it opens, `409
   assignment_closed` after it is closed, `409 not_an_assessment` for an exam, `404` for a student not in the group.
+  An open one is returned even after the assignment closed (work in progress can be finished); `409 no_questions`
+  when every question of the set has gone from the bank. A student's `status` is `new`, `in_progress` (an open
+  one, nothing finished) or `done`; `late` is against the deadline as it is now, so moving the deadline relabels
+  work. Enrolled now means as `GroupStudents` (enrolment dates around today, the student active).
 - **Exams** are taken as the mock test itself (the web preselects the sections): the student's attempts on the
   test, finished at or after `opens_at`, whose sections include the assignment's, count; the first finished is the
-  result (late after `due_at`), `tries` how many, `best` the best total (one section: its score).
+  result (late after `due_at`), `tries` how many, `best` the best total (one section: its score). Only the assigned
+  sections' scores are given. Attempts are uploaded finished, so an exam is `new` or `done`, never in progress;
+  attempts still count after the teacher closes it.
 - **Roadmap credit** (D37): an assessment with a lesson counts in the student's roadmap like any other, so an
   assigned level check passed at 70 %+ passes the lesson and an assigned homework set finishes it. The roadmap's
   own start (22.5) continues an open assigned one for the same lesson and set rather than drawing another.
 - **Times** (D37): `PUT …/answers` and `POST …/submit` take `times` (question id → seconds spent so far,
   0–21600, each replacing that question's) next to the answers; the assessment returns them. The web's runner
-  counts active time per question.
+  counts active time per question. Whole seconds only; another question's id or a value out of range is `422
+  invalid_answers`. The roadmap's own assessments take times too.
 
 ### 23.4 Results (`GET /v1/teacher/assignments/{id}/results`)
 - Per student of the roster now: status, started and finished, late, the result as above, `tries`, `best`, and
@@ -1116,19 +1136,27 @@ give, change, close and delete its assignments and see its results.
   order): `answered`, `correct`, the `answers` given (`A`–`D` and `blank`; a grid-in: `correct`, `wrong`,
   `blank`), `avg_seconds` (null without times). `skills`: wrong and total per skill. Each assignment's `summary`:
   students, done, late, in progress, the average percent (exams: the average score).
+- As built: a set's questions are graded with the bank's keys as they are now, and questions gone from the bank are
+  left out; an exam's are matched to each counted attempt by their place (section, module, position) in the test's
+  latest version and graded with its keys, numbered from 1 over the assigned sections; a question an attempt has
+  no answer for counts as blank. Skills come most wrong first, then by name.
 
 ### 23.5 Notifications (D39)
 - `notifications`: one row per person and event. When an assignment is created, every student enrolled in the
   group then gets one (`kind: assignment`, the title, the deadline, a link to the tab). Nothing is sent outside
-  the app yet (Telegram later).
+  the app yet (Telegram later). As built: the title "New homework: <title>" ("New level check: …", "New exam:
+  …"), the body "<group> · Due 12 November, 18:00" in Tashkent time, the link `/homework`, `/level-checks` or
+  `/exams`. Deleting the assignment deletes them. A merge (21.4) moves a registered student's notifications
+  (deletes them when merged into a teacher); there is no foreign key to people.
 - `GET /v1/me/notifications`: newest first, 100 at most, with `unread`; `PUT /v1/me/notifications/read {ids}`
-  or `{all: true}` marks them read and answers `unread`. Teachers have none yet.
+  or `{all: true}` marks them read and answers `unread` (another person's ids are ignored; neither is `400
+  bad_request`). Teachers have none yet.
 
 ### 23.6 A group's roadmap, for its teachers
 - `GET /v1/teacher/groups/{id}/roadmap`: the course(s) the group teaches (22.2, with D38's fallback to the
   group's HolliHop level) with every lesson in order, and each student's standing per lesson (`done`, `open`,
   `locked`, the level check passed and its best, homework sets done), as their own roadmap lays it out. A group
-  that maps to no course gives an empty list of courses.
+  that maps to no course gives an empty list of courses. The students' progress is read in one query.
 
 ### 23.7 Tables
 ```
@@ -1138,5 +1166,6 @@ assignments          (id uuid, group_id → groups, teacher_id → teachers, kin
 roadmap_assessments  + assignment_id → assignments (null for the roadmap's own), + times jsonb;
                       roadmap_id and lesson_id nullable (custom homework); one open per student, lesson, kind,
                       set and assignment
-notifications        (id bigserial, person_kind, person_id, kind, title, body, link, created_at, read_at)
+notifications        (id bigserial, person_kind, person_id, kind, title, body, link,
+                      assignment_id → assignments (deleted with it), created_at, read_at)
 ```
