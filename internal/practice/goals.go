@@ -2,6 +2,7 @@ package practice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/nazacd/makonbook-api/internal/practice/practicedb"
+	"github.com/nazacd/makonbook-api/internal/universities"
 )
 
 // Goals (spec 9.6): a student's target score per section and the exam date,
@@ -27,9 +29,13 @@ type Goals struct {
 	TargetMath *int `json:"target_math"`
 	TargetRW   *int `json:"target_rw"`
 	// TargetTotal is the two targets' sum, when both are set.
-	TargetTotal *int       `json:"target_total"`
-	ExamDate    *string    `json:"exam_date"` // YYYY-MM-DD
-	UpdatedAt   *time.Time `json:"updated_at"`
+	TargetTotal *int    `json:"target_total"`
+	ExamDate    *string `json:"exam_date"` // YYYY-MM-DD
+	// UniversityID is the dream university (spec 24.3); University
+	// describes it.
+	UniversityID *string               `json:"university_id"`
+	University   *universities.Summary `json:"university"`
+	UpdatedAt    *time.Time            `json:"updated_at"`
 }
 
 // GoalsInput is what the student sets; each may be null (none).
@@ -37,6 +43,30 @@ type GoalsInput struct {
 	TargetMath *int    `json:"target_math"`
 	TargetRW   *int    `json:"target_rw"`
 	ExamDate   *string `json:"exam_date"`
+	// UniversityID left out keeps the stored one (the phone doesn't send
+	// it); null clears it.
+	UniversityID Optional `json:"university_id"`
+}
+
+// Optional is a field a request may leave out: Set says whether it was sent
+// (null included).
+type Optional struct {
+	Set   bool
+	Value *string
+}
+
+func (o *Optional) UnmarshalJSON(b []byte) error {
+	o.Set = true
+	if string(b) == "null" {
+		o.Value = nil
+		return nil
+	}
+	var v string
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	o.Value = &v
+	return nil
 }
 
 func goalsOf(r practicedb.StudentGoal) Goals {
@@ -57,11 +87,30 @@ func goalsOf(r practicedb.StudentGoal) Goals {
 		d := r.ExamDate.Time.Format(dateLayout)
 		g.ExamDate = &d
 	}
+	if r.UniversityID.Valid {
+		g.UniversityID = &r.UniversityID.String
+	}
 	if r.UpdatedAt.Valid {
 		t := r.UpdatedAt.Time.UTC()
 		g.UpdatedAt = &t
 	}
 	return g
+}
+
+// describe fills in the dream university.
+func (s *Service) describe(ctx context.Context, g Goals) (Goals, error) {
+	if g.UniversityID == nil || s.universities == nil {
+		return g, nil
+	}
+	u, err := s.universities(ctx, *g.UniversityID)
+	if errors.Is(err, universities.ErrNotFound) {
+		return g, nil
+	}
+	if err != nil {
+		return g, err
+	}
+	g.University = &u
+	return g, nil
 }
 
 // Goals returns the student's goals (all null if never set).
@@ -73,7 +122,7 @@ func (s *Service) Goals(ctx context.Context, student int32) (Goals, error) {
 	if err != nil {
 		return Goals{}, err
 	}
-	return goalsOf(r), nil
+	return s.describe(ctx, goalsOf(r))
 }
 
 // SetGoals replaces the student's goals. Targets are 200–800 in steps of 10;
@@ -114,11 +163,24 @@ func (s *Service) SetGoals(ctx context.Context, student int32, in GoalsInput, to
 		}
 		exam = pgtype.Date{Time: d, Valid: true}
 	}
-	r, err := practicedb.New(s.pool).SetGoals(ctx, practicedb.SetGoalsParams{
+	q := practicedb.New(s.pool)
+	var university pgtype.Text
+	if in.UniversityID.Set && in.UniversityID.Value != nil {
+		ok, err := q.ListedUniversity(ctx, *in.UniversityID.Value)
+		if err != nil {
+			return Goals{}, err
+		}
+		if !ok {
+			return Goals{}, &GoalsError{"university_id isn't a university we list"}
+		}
+		university = pgtype.Text{String: *in.UniversityID.Value, Valid: true}
+	}
+	r, err := q.SetGoals(ctx, practicedb.SetGoalsParams{
 		StudentClientID: student, TargetMath: math, TargetRw: rw, ExamDate: exam,
+		UniversityID: university, KeepUniversity: !in.UniversityID.Set,
 	})
 	if err != nil {
 		return Goals{}, err
 	}
-	return goalsOf(r), nil
+	return s.describe(ctx, goalsOf(r))
 }

@@ -216,6 +216,7 @@ func TestRoadmaps(t *testing.T) {
 		func(b map[string]any) { b["graduation"] = 2028 },
 		func(b map[string]any) { b["target"] = map[string]int{"total": 1300, "math": 600, "rw": 650} },
 		func(b map[string]any) { b["schedule"] = map[string]any{"days": []string{}, "minutes": 45} },
+		func(b map[string]any) { b["university_id"] = "nowhere-university" },
 	} {
 		b := map[string]any{}
 		for k, v := range onboarding {
@@ -226,6 +227,11 @@ func TestRoadmaps(t *testing.T) {
 			t.Errorf("invalid onboarding %v: %v", b, r)
 		}
 	}
+	// The dream university (spec 24.3) goes into the goals.
+	if _, err := pool.Exec(ctx, `INSERT INTO universities (id, name, country, list_reason) VALUES ('northbridge-university', 'Northbridge University', 'GB', 'qs')`); err != nil {
+		t.Fatal(err)
+	}
+	onboarding["university_id"] = "northbridge-university"
 	r = do("POST", "/v1/me/onboarding", registered, onboarding)
 	if p := obj(r.body["profile"]); r.status != http.StatusOK || p["onboarded"] != true || len(r.list("roadmaps")) != 1 ||
 		obj(r.list("roadmaps")[0])["id"] != "math-foundation" || obj(r.list("roadmaps")[0])["source"] != SourceOnboarding ||
@@ -238,7 +244,8 @@ func TestRoadmaps(t *testing.T) {
 		t.Errorf("stored onboarding: %v", r)
 	}
 	goals, err := practiceSvc.Goals(ctx, free)
-	if err != nil || goals.TargetMath == nil || *goals.TargetMath != 650 || goals.ExamDate == nil || *goals.ExamDate != today.AddDate(0, 3, 0).Format(dateLayout) {
+	if err != nil || goals.TargetMath == nil || *goals.TargetMath != 650 || goals.ExamDate == nil || *goals.ExamDate != today.AddDate(0, 3, 0).Format(dateLayout) ||
+		goals.UniversityID == nil || *goals.UniversityID != "northbridge-university" {
 		t.Errorf("goals: %+v %v", goals, err)
 	}
 

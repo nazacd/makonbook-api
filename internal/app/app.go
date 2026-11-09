@@ -27,6 +27,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/roadmap"
 	"github.com/nazacd/makonbook-api/internal/system"
 	"github.com/nazacd/makonbook-api/internal/system/systemdb"
+	"github.com/nazacd/makonbook-api/internal/universities"
 	"github.com/nazacd/makonbook-api/internal/vocab"
 	adminweb "github.com/nazacd/makonbook-api/web/admin"
 )
@@ -111,7 +112,13 @@ func Handler(d Deps) http.Handler {
 	}
 	parentsSvc := parents.NewService(d.Pool, directory, attendanceSvc, notifier, adminURL)
 	parents.NewHandler(parentsSvc, d.Location, authHandler.Require, d.TrustProxy, d.Log).Register(mux)
-	practiceSvc := practiceService(d)
+	var logos universities.Store // the uploads bucket, where the import put the logos
+	if d.Uploads != nil {
+		logos = d.Uploads
+	}
+	universitiesSvc := universities.NewService(d.Pool, logos)
+	universities.NewHandler(universitiesSvc, authHandler.Require).Register(mux)
+	practiceSvc := practiceService(d).WithUniversities(universitiesSvc.SummaryOf)
 	// The content is locked for registered students until they add a phone.
 	practice.NewHandler(practiceSvc, d.Location, authHandler.RequireContent).Register(mux)
 	vocab.NewHandler(vocab.NewService(d.Pool, signer(d.Uploads)), d.Location, authHandler.RequireContent).Register(mux)

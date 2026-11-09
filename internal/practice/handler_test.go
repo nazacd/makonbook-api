@@ -190,7 +190,7 @@ func TestHandler(t *testing.T) {
 	}
 
 	// Goals.
-	if status, body := do("GET", "/v1/me/goals", student, nil); status != http.StatusOK || len(body) != 5 || body["target_total"] != nil || body["updated_at"] != nil {
+	if status, body := do("GET", "/v1/me/goals", student, nil); status != http.StatusOK || len(body) != 7 || body["target_total"] != nil || body["university"] != nil || body["updated_at"] != nil {
 		t.Errorf("goals never set: %d %v", status, body)
 	}
 	exam := now.AddDate(0, 1, 0).Format("2006-01-02")

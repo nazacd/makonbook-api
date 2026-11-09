@@ -434,13 +434,20 @@ WHERE id = @id;
 -- name: Goals :one
 SELECT * FROM student_goals WHERE student_client_id = @student_client_id;
 
+-- keep_university keeps the stored dream university (a request that doesn't
+-- mention it, like the phone's).
 -- name: SetGoals :one
-INSERT INTO student_goals (student_client_id, target_math, target_rw, exam_date)
-VALUES (@student_client_id, sqlc.narg('target_math'), sqlc.narg('target_rw'), sqlc.narg('exam_date'))
+INSERT INTO student_goals (student_client_id, target_math, target_rw, exam_date, university_id)
+VALUES (@student_client_id, sqlc.narg('target_math'), sqlc.narg('target_rw'), sqlc.narg('exam_date'),
+        sqlc.narg('university_id'))
 ON CONFLICT (student_client_id) DO UPDATE
 SET target_math = EXCLUDED.target_math, target_rw = EXCLUDED.target_rw, exam_date = EXCLUDED.exam_date,
+    university_id = CASE WHEN @keep_university::boolean THEN student_goals.university_id ELSE EXCLUDED.university_id END,
     updated_at = now()
 RETURNING *;
+
+-- name: ListedUniversity :one
+SELECT EXISTS (SELECT 1 FROM universities WHERE id = @id AND listed);
 
 -- Roadmaps (spec 22) draw their level checks and homework from the bank.
 -- name: BankQuestions :many
