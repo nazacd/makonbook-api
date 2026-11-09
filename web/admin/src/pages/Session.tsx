@@ -1,8 +1,9 @@
+import { CalendarCheck } from 'lucide-react';
 import { Link, useParams } from 'react-router';
 
 import { ApiError, describe } from '../api/client';
 import { useSession, useSetMark, type Mark, type Session } from '../api/hooks';
-import { ErrorNotice, Loading, MarkChip, Notice, Stat, WriteChip } from '../components/ui';
+import { ErrorNotice, Loading, MarkChip, Notice, Stat, WriteChip, PageIcon } from '../components/ui';
 import { clock, dateTime, longDate } from '../lib/dates';
 
 const STATES = [
@@ -43,7 +44,9 @@ export function SessionPage() {
       <BackLink date={s.date} />
       <div className="page-head">
         <div>
-          <h1>{s.group_name}</h1>
+          <h1>
+            <PageIcon icon={CalendarCheck} />
+            {s.group_name}</h1>
           <p className="muted">
             {longDate(s.date)} · {clock(s.starts_at)}–{clock(s.ends_at)}
             {s.office && ` · ${s.office}`}

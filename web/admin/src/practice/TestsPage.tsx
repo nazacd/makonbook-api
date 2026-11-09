@@ -1,7 +1,8 @@
+import { BookOpenCheck } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 
 import { usePracticeTests } from "../api/hooks";
-import { Empty, ErrorNotice, Loading, Stat } from "../components/ui";
+import { Empty, ErrorNotice, Loading, Stat, PageIcon } from "../components/ui";
 
 // Every loaded test and how far its review has come. A test opens to
 // students when every question in it is approved.
@@ -16,7 +17,9 @@ export function PracticeTestsPage() {
     <div className="stack">
       <div className="page-head">
         <div>
-          <h1>Practice tests</h1>
+          <h1>
+            <PageIcon icon={BookOpenCheck} />
+            Practice tests</h1>
           <p className="muted">
             Reviewed by the AI, loaded from the question bank. A test opens to
             students once every question in it is approved.

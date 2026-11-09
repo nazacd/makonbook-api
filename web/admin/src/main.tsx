@@ -18,7 +18,9 @@ import { IssuesPage } from "./pages/Issues";
 import { LessonsPage } from "./pages/Lessons";
 import { ParentsPage } from "./pages/Parents";
 import { SessionPage } from "./pages/Session";
+import { ReportsPage } from "./pages/Reports";
 import { WritesPage } from "./pages/Writes";
+import "@fontsource-variable/nunito/wght.css";
 import "./styles.css";
 
 // Any 401 means the session ended (signed out elsewhere, access removed,
@@ -57,6 +59,7 @@ const router = createBrowserRouter([
       { path: "issues", element: <IssuesPage /> },
       { path: "data-quality", element: <Navigate to="/issues" replace /> },
       { path: "parents", element: <ParentsPage /> },
+      { path: "reports", element: <ReportsPage /> },
       { path: "access", element: <AccessPage /> },
       // Practice pages load on first visit: the editor's math and text
       // libraries are large, and branch admins never need them.

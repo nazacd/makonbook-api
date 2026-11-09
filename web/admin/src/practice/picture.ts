@@ -14,7 +14,7 @@ export async function downloadPicture(id: string, test: string | undefined, body
       headers: { 'Content-Type': 'application/json', 'X-MakonBook-Admin': '1' },
     });
   } catch {
-    throw new ApiError(0, 'network', 'Can’t reach MakonBook. Check the connection and try again.');
+    throw new ApiError(0, 'network', 'Can’t reach SATMAKON. Check the connection and try again.');
   }
   if (!res.ok) {
     const json = (await res.json().catch(() => ({}))) as { error?: { code?: string; message?: string } };

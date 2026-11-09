@@ -1,3 +1,4 @@
+import type { LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 
@@ -109,5 +110,14 @@ export function Stat({ value, label }: { value: number; label: string }) {
       <b>{value}</b>
       <span>{label}</span>
     </div>
+  );
+}
+
+/** A page title's icon tile (the web's page headers). */
+export function PageIcon({ icon: I }: { icon: LucideIcon }) {
+  return (
+    <span className="page-icon" aria-hidden>
+      <I size={19} strokeWidth={2} />
+    </span>
   );
 }

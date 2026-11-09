@@ -1,7 +1,8 @@
+import { CalendarCheck } from 'lucide-react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 
 import { useLessons, type Lesson } from '../api/hooks';
-import { Empty, ErrorNotice, Loading, OfficeSelect, Stat, useOfficeParam } from '../components/ui';
+import { Empty, ErrorNotice, Loading, OfficeSelect, Stat, useOfficeParam, PageIcon } from '../components/ui';
 import { addDays, isDate, longDate, schoolToday } from '../lib/dates';
 import { useNow } from '../lib/now';
 
@@ -75,7 +76,9 @@ export function LessonsPage() {
     <div className="stack">
       <div className="page-head">
         <div>
-          <h1>{date === today ? 'Today' : longDate(date)}</h1>
+          <h1>
+            <PageIcon icon={CalendarCheck} />
+            {date === today ? 'Today' : longDate(date)}</h1>
           <p className="muted">{date === today ? longDate(date) : 'Lessons and their attendance'}</p>
         </div>
         <div className="toolbar">

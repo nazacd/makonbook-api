@@ -394,3 +394,35 @@ export function useParentCodes(q: string, officeId: number | undefined) {
     retry: false, // a person is waiting on the answer
   });
 }
+
+export type PracticeReport = Schemas["AdminPracticeReport"];
+
+/** Students' issue reports on questions (spec 9.6): open or resolved, newest first. */
+export function usePracticeReports(status: "open" | "resolved") {
+  return useQuery({
+    queryKey: ["practice-reports", status],
+    queryFn: async () =>
+      (
+        await call(
+          api.GET("/v1/admin/practice/reports", {
+            params: { query: { status } },
+          }),
+        )
+      ).reports,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useSetReportStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status: "open" | "resolved" }) =>
+      call(
+        api.PUT("/v1/admin/practice/reports/{id}", {
+          params: { path: { id }, header: CSRF },
+          body: { status },
+        }),
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["practice-reports"] }),
+  });
+}

@@ -1,3 +1,4 @@
+import { Users } from "lucide-react";
 import { useState } from "react";
 
 import { describe } from "../api/client";
@@ -14,6 +15,7 @@ import {
   Notice,
   OfficeSelect,
   useOfficeParam,
+  PageIcon,
 } from "../components/ui";
 import { dateTime } from "../lib/dates";
 
@@ -30,7 +32,9 @@ export function ParentsPage() {
     <div className="stack">
       <div className="page-head">
         <div>
-          <h1>Parents</h1>
+          <h1>
+            <PageIcon icon={Users} />
+            Parents</h1>
           <p className="muted">
             Parents follow their child in the app with the child’s 5-digit
             parent code: classes, schedule and attendance, read only. Students
