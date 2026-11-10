@@ -407,6 +407,43 @@ unknown name, not a valid SVG/PNG/WebP, over 1 MB, a second file for one
 university) and the universities still without one. A changed file replaces
 the stored logo; students' browsers fetch the new one at once (its URL changes).
 
+## Universities (onboarding's dream university)
+
+The universities the onboarding's globe shows (spec 24) live in the private
+repository `nazacd/makonbook-universities`: `data/` (the list, the records
+collected so far, the countries) and `logos/`. The server reads a read-only
+checkout, like the question bank's. Once, a deploy key of its own (GitHub
+allows a key on one repository only):
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/universities -N "" -C "makonbook server"
+cat ~/.ssh/universities.pub
+```
+
+On GitHub: **makonbook-universities → Settings → Deploy keys → Add deploy
+key**, paste it, "Allow write access" **off**. Then:
+
+```bash
+GIT_SSH_COMMAND="ssh -i ~/.ssh/universities" \
+  git clone git@github.com:nazacd/makonbook-universities.git /opt/makonbook-universities
+```
+
+After `migrate up` has applied 00040, and each time the data changes:
+
+```bash
+GIT_SSH_COMMAND="ssh -i ~/.ssh/universities" git -C /opt/makonbook-universities pull
+docker compose run --rm -v /opt/makonbook-universities:/universities:ro api universities import /universities
+```
+
+The import checks everything first and stores nothing unless all of it
+passes (it lists the problems otherwise). It uploads the logos that changed
+to MakonBook's bucket (`R2_UPLOADS_*`, as for editors' images: about 25 MB the
+first time, nothing after when unchanged) and prints what it did:
+`1698 universities listed (… new, … changed, … unlisted); … with their whole
+record, … with a logo`. A university gone from the data stays, unlisted, for
+the students who chose it. Students see changes at once (the list's ETag
+moves only when something changed).
+
 ## Question pictures (renderer)
 
 Question pictures (the editors' **Export image**, and later the teachers'
