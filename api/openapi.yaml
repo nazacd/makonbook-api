@@ -1411,7 +1411,10 @@ paths:
         Replaces all three: each may be null (a missing field counts as
         null). Targets are 200–800 in steps of 10. The exam date can't be
         before today (Tashkent), except the date already stored, so a
-        student whose exam has passed can still change a target.
+        student whose exam has passed can still change a target. The dream
+        university (`university_id`) is different: left out, the stored
+        one stays (the phone app doesn't send it); null clears it; an id
+        must be a listed university (`GET /v1/universities`).
       operationId: setGoals
       tags: [practice]
       security: [{ bearer: [] }]
@@ -1425,6 +1428,7 @@ paths:
                 target_math: { type: [integer, "null"], minimum: 200, maximum: 800, multipleOf: 10 }
                 target_rw: { type: [integer, "null"], minimum: 200, maximum: 800, multipleOf: 10 }
                 exam_date: { type: [string, "null"], format: date }
+                university_id: { type: [string, "null"], description: "Left out: kept; null: cleared" }
       responses:
         "200":
           description: The stored goals
@@ -1937,6 +1941,80 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
         "422":
           description: "`invalid_answers`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/universities:
+    get:
+      summary: Every listed university (spec 24.3)
+      description: |
+        For the dream-university globe and its search: every university of
+        the data, in its order (QS's ranking first), with where it is, its QS
+        place, its logo and its SAT figures. About 1500, so the apps load it
+        once: `ETag` is the list's version (If-None-Match → 304), which
+        changes only when an import changes something.
+      operationId: listUniversities
+      tags: [universities]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The universities
+          content: { application/json: { schema: { $ref: "#/components/schemas/UniversityList" } } }
+        "304": { description: Unchanged (If-None-Match) }
+        "401":
+          description: Not signed in
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/universities/{id}:
+    get:
+      summary: A university's card (spec 24.3)
+      description: |
+        Its summary, the whole record collected for it (`details`, spec
+        24.1; null while it is only listed) and its country's record
+        (`country_details`, or null). The collectors' `doubts` are left out.
+        A university no longer listed still answers (students may have
+        chosen it).
+      operationId: getUniversity
+      tags: [universities]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, example: imperial-college-london } }
+      responses:
+        "200":
+          description: The card
+          content: { application/json: { schema: { $ref: "#/components/schemas/UniversityDetail" } } }
+        "401":
+          description: Not signed in
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "404":
+          description: "`not_found`: no such university"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/universities/{id}/logo:
+    get:
+      summary: A university's logo
+      description: |
+        No sign-in (for `<img>`). Square, padded for a circle: SVG or PNG,
+        from MakonBook's bucket. Link it with the `logo_url` a summary gives
+        (`?v=` is the content's hash: such a URL is
+        `Cache-Control: public, max-age=31536000, immutable`). `ETag` is
+        the sha-256 (If-None-Match → 304). Every answer carries
+        `X-Content-Type-Options: nosniff` and `Content-Security-Policy:
+        default-src 'none'; style-src 'unsafe-inline'; img-src data:;
+        sandbox`.
+      operationId: getUniversityLogo
+      tags: [universities]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: v, in: query, required: false, schema: { type: string }, description: "The content's hash, as logo_url gives it" }
+      responses:
+        "200":
+          description: The logo
+          content:
+            image/svg+xml: { schema: { type: string } }
+            image/png: { schema: { type: string, format: binary } }
+        "304": { description: Unchanged (If-None-Match) }
+        "404":
+          description: No such university, or no logo for it
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
   /v1/logos/{slug}:
@@ -3664,6 +3742,90 @@ components:
             created_at: { type: string, format: date-time }
             updated_at: { type: string, format: date-time }
 
+    UniversitySummary:
+      type: object
+      required: [id, name, short_name, country, city, location, qs, logo_url, sat, has_details]
+      properties:
+        id: { type: string, description: "The slug of its English name", example: imperial-college-london }
+        name: { type: string }
+        short_name: { type: [string, "null"], example: Imperial }
+        country: { type: string, description: ISO 3166-1 alpha-2, example: GB }
+        city: { type: [string, "null"] }
+        location:
+          description: The main campus; null when not known yet
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [lat, lng]
+              properties:
+                lat: { type: number }
+                lng: { type: number }
+        qs:
+          description: Its place in the QS World University Rankings; null when it isn't ranked there
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [rank, display]
+              properties:
+                rank: { type: integer, description: "The lower end of a band (601-610 is 601)" }
+                display: { type: string, description: "As QS shows it", example: "=45" }
+        logo_url: { type: [string, "null"], description: "/v1/universities/{id}/logo?v=…, same origin; null: none (draw a crest)" }
+        sat:
+          description: "Its SAT figures for first-year international applicants, as collected; null when not collected yet"
+          oneOf:
+            - type: "null"
+            - { $ref: "#/components/schemas/UniversitySAT" }
+        has_details: { type: boolean, description: "Whether its whole record has been collected (the card's details)" }
+
+    UniversitySAT:
+      type: object
+      required: [policy]
+      properties:
+        policy: { type: string, enum: [required, optional, not_considered, accepted, unknown] }
+        total: { oneOf: [{ type: "null" }, { $ref: "#/components/schemas/ScoreRange" }], description: "Admitted students' 25th–75th percentiles, 400–1600" }
+        math: { oneOf: [{ type: "null" }, { $ref: "#/components/schemas/ScoreRange" }] }
+        rw: { oneOf: [{ type: "null" }, { $ref: "#/components/schemas/ScoreRange" }] }
+        minimum:
+          description: A published minimum, where the university gives one instead of percentiles
+          oneOf:
+            - type: "null"
+            - type: object
+              properties:
+                total: { type: [integer, "null"] }
+                math: { type: [integer, "null"] }
+                rw: { type: [integer, "null"] }
+        year: { type: [string, "null"] }
+
+    ScoreRange:
+      type: object
+      properties:
+        p25: { type: [integer, "null"] }
+        p75: { type: [integer, "null"] }
+
+    UniversityList:
+      type: object
+      required: [version, universities]
+      properties:
+        version: { type: string, description: "Changes whenever any university does (the ETag)" }
+        universities:
+          type: array
+          items: { $ref: "#/components/schemas/UniversitySummary" }
+
+    UniversityDetail:
+      allOf:
+        - { $ref: "#/components/schemas/UniversitySummary" }
+        - type: object
+          required: [details, country_details]
+          properties:
+            details:
+              type: [object, "null"]
+              additionalProperties: true
+              description: "The whole record (spec 24.1: tuition, aid, admissions, sources…), null while only listed"
+            country_details:
+              type: [object, "null"]
+              additionalProperties: true
+              description: "The country's record (spec 24.1: currency, study visa, work rights, minimum wage…), or null"
+
     Goals:
       type: object
       required: [target_math, target_rw, target_total, exam_date, updated_at]
@@ -3672,6 +3834,12 @@ components:
         target_rw: { type: [integer, "null"], description: "Reading and Writing target, 200–800" }
         target_total: { type: [integer, "null"], description: "The two targets' sum, when both are set" }
         exam_date: { type: [string, "null"], format: date }
+        university_id: { type: [string, "null"], description: "The dream university (spec 24.3)" }
+        university:
+          description: The dream university, described; null when there is none
+          oneOf:
+            - type: "null"
+            - { $ref: "#/components/schemas/UniversitySummary" }
         updated_at: { type: [string, "null"], format: date-time, description: Null when never set }
 
     OnboardingScores:
@@ -3716,6 +3884,9 @@ components:
               description: Kept in week order
               items: { type: string, enum: [mon, tue, wed, thu, fri, sat, sun] }
             minutes: { type: integer, enum: [15, 30, 45, 60] }
+        university_id:
+          type: [string, "null"]
+          description: "The dream university (spec 24.3): a listed university's id; left out or null keeps the one already chosen"
 
     Onboarding:
       allOf:

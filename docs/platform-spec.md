@@ -67,6 +67,7 @@ enrol).
 | D37 | **Assignments** (section 23): teachers give their groups **homework, level checks and exams with deadlines**. Every student of the group gets the **same questions**; work after the deadline is taken and **marked late**; an exam is a mock test whose **first finished attempt** counts (retakes allowed); an assigned curriculum level check or homework **counts for the roadmap**. **Every current teacher of a group** may assign to it; content creation stays with the editors (9.4). | 2026-11-08, the product owner. |
 | D38 | A group whose discipline names the subject but **no level** takes the level from **HolliHop's group level**; without a subject, no roadmap. | 2026-11-08. |
 | D39 | **In-app notifications** (a table, the web's drawer): a new assignment notifies the group's students. Nothing outside the app yet; Telegram later. | 2026-11-08. |
+| D40 | **A dream university is the main goal** (section 24): about 1500 universities (QS's top 1500, every university in Uzbekistan, the roadmaps' 48), collected in the private `makonbook-universities` repository and imported; QS's rank is shown as QS gives it (the owner's decision, knowing QS's terms); the logos are kept in MakonBook's R2 bucket. | 2026-11-09. |
 
 ## 3. System overview
 
@@ -977,7 +978,8 @@ university stop), each unit a few **lessons**. A lesson has notes, examples and 
 ### 22.3 Onboarding (registered students)
 - `POST /v1/me/onboarding {graduation ("2027" … "2034" | "graduated"), sat_dates: [dates] (empty: not
   decided), current: null | {total: 400–1600} | {math, rw: 200–800}, target: {total, math, rw}, focus: math |
-  english | both, schedule: {days: [mon … sun] (≥ 1), minutes: 15 | 30 | 45 | 60}}`. Scores are multiples of
+  english | both, schedule: {days: [mon … sun] (≥ 1), minutes: 15 | 30 | 45 | 60}, university_id (optional: the
+  dream university, section 24.3)}`. Scores are multiples of
   10 and `target.total = target.math + target.rw`; anything else is `422 invalid_onboarding` with a message.
   Anyone else gets `409 not_needed`.
 - It stores the answers (`onboarding`), sets the goals (9.6: the two targets, and `exam_date` = the first SAT
@@ -1169,4 +1171,50 @@ roadmap_assessments  + assignment_id → assignments (null for the roadmap's own
                       set and assignment
 notifications        (id bigserial, person_kind, person_id, kind, title, body, link,
                       assignment_id → assignments (deleted with it), created_at, read_at)
+```
+
+## 24. Universities and the dream university (built, for the web; D40)
+
+Onboarding's main goal is a **dream university**, chosen on a globe; the SAT targets follow from it. The
+universities also feed a university section later (its cards are already served).
+
+### 24.1 The data
+- Collected in the **private** repository `nazacd/makonbook-universities` (its README is the collectors'
+  brief): `data/list.jsonl` (every university: id, name, country, city, location, QS place, logo),
+  `data/universities.jsonl` (the whole record, collected batch by batch: tuition, living cost, aid,
+  admissions with the SAT policy and percentiles, English tests, interview, deadlines, Uzbek students,
+  sources), `data/countries.jsonl` (currency, study visa, refusal rate for Uzbek nationals, work rights,
+  minimum wage, post-study work) and `logos/` (square, padded for a circle; SVG or PNG). Never copied here.
+- An id is the **slug** of the English name, as `roadmap.Slug` makes it, so the roadmaps' universities match.
+
+### 24.2 The import (`makonbook universities import <checkout>`)
+- Checks everything first (ids, ISO country codes, list reasons, locations, QS ranks, logos: an SVG with an
+  `<svg>` root or a square PNG, at most 1 MB) and stores nothing unless all of it passes, listing every
+  problem. A whole record's fields win over the list's.
+- Logos go to the **uploads bucket** at `universities/logos/<sha256>.<ext>`, only when changed (needs
+  `R2_UPLOADS_*`); then the rows in one transaction. A university gone from the data stays, **unlisted**, for
+  the students who chose it. `updated_at` moves only when something changed, so the list's version does too.
+
+### 24.3 The API
+- `GET /v1/universities` (signed in): every listed university in the data's order: id, name, short name,
+  country, city, location, QS (`rank`, the lower end of a band, and `display` as QS shows it), `logo_url`,
+  `sat` (the record's admissions.sat: policy, 25th–75th percentiles, a published minimum) and `has_details`.
+  `ETag` is the list's version (304 when unchanged); the apps load it once.
+- `GET /v1/universities/{id}` (signed in): the summary, `details` (the whole record without the collectors'
+  `doubts`, or null) and `country_details`. `404 not_found`.
+- `GET /v1/universities/{id}/logo` (no sign-in, for `<img>`): from the bucket; `logo_url` carries `?v=` (the
+  content's hash), and such a URL is cached for good; the SVG headers as 22.7's.
+- The **dream university** is in the goals (9.6): `GET /v1/me/goals` gives `university_id` and `university`
+  (its summary); `PUT` takes `university_id`: **left out, the stored one stays** (the phone doesn't send
+  it), null clears it, an id must be listed (`422 invalid_goals`). Onboarding (22.3) takes `university_id`
+  the same way (`422 invalid_onboarding` for an unknown one).
+- The web suggests the target from the university's SAT percentiles (US universities have them) and ends
+  the student's journey at it; the API stores only the choice.
+
+### 24.4 Tables
+```
+universities          (id slug PK, name, short_name, country, city, lat, lng, qs_rank, qs_display, list_reason,
+                       sat jsonb, details jsonb, logo_key, logo_type, logo_sha256, listed, position, updated_at)
+university_countries  (code PK, details jsonb, updated_at)
+student_goals         + university_id → universities (set null if deleted)
 ```

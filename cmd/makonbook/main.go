@@ -9,6 +9,7 @@
 //	makonbook practice import|add|list|publish|picture   practice tests (see practiceUsage)
 //	makonbook vocab import <path>        the word lists (see vocabUsage)
 //	makonbook curriculum import|coverage the roadmaps' curriculum (see curriculumUsage)
+//	makonbook universities import <dir>  the universities (see universitiesUsage)
 //	makonbook review-bot                 the teachers' Telegram group review
 //	makonbook demo [remove]              the store reviewers' demo account (see demoUsage)
 package main
@@ -66,7 +67,7 @@ commands:
   reset-password student|teacher <id>
                             back to the default password (last 4 digits of the phone),
                             unlock the account and log out everywhere
-` + adminUsage + practiceUsage + vocabUsage + curriculumUsage + demoUsage
+` + adminUsage + practiceUsage + vocabUsage + curriculumUsage + universitiesUsage + demoUsage
 
 var errUsage = errors.New("invalid usage")
 
@@ -123,6 +124,8 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 		return runAdmin(ctx, cfg, args, stdout)
 	case "vocab":
 		return runVocab(ctx, cfg, args, stdout)
+	case "universities":
+		return runUniversities(ctx, cfg, args, stdout)
 	case "curriculum":
 		return runCurriculum(ctx, cfg, args, stdout)
 	case "demo":
@@ -156,6 +159,8 @@ func validArgs(args []string) bool {
 		return validPracticeArgs(args)
 	case len(args) >= 2 && args[0] == "vocab":
 		return validVocabArgs(args)
+	case len(args) == 3 && args[0] == "universities":
+		return args[1] == "import"
 	case len(args) >= 2 && args[0] == "curriculum":
 		return validCurriculumArgs(args)
 	case len(args) >= 1 && args[0] == "demo":

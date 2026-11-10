@@ -114,3 +114,11 @@ sql:
         package: assignmentsdb
         out: internal/assignments/assignmentsdb
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/universities/queries.sql
+    gen:
+      go:
+        package: universitiesdb
+        out: internal/universities/universitiesdb
+        sql_package: pgx/v5

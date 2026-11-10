@@ -1,11 +1,14 @@
 package practice
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/nazacd/makonbook-api/internal/platform/testdb"
+	"github.com/nazacd/makonbook-api/internal/universities"
 )
 
 func TestGoals(t *testing.T) {
@@ -59,5 +62,47 @@ func TestGoals(t *testing.T) {
 	}
 	if _, err := svc.SetGoals(ctx, 11, GoalsInput{ExamDate: date("2026-11-05")}, later); !errors.As(err, &bad) {
 		t.Errorf("another past date: %v", err)
+	}
+}
+
+func TestGoalsUniversity(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := t.Context()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO students (client_id, hh_student_id, first_name, last_name, phone_raw, office_ids)
+		VALUES (11, 1, 'Ali', 'Valiyev', '', '{}');
+		INSERT INTO universities (id, name, country, list_reason) VALUES
+			('northbridge-university', 'Northbridge University', 'GB', 'qs');
+		INSERT INTO universities (id, name, country, list_reason, listed) VALUES
+			('gone-university', 'Gone University', 'GB', 'qs', false)`); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(pool, nil).WithUniversities(func(_ context.Context, id string) (universities.Summary, error) {
+		return universities.Summary{ID: id, Name: "Northbridge University"}, nil
+	})
+	today := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+	n := func(v int) *int { return &v }
+	id := func(s string) Optional { return Optional{Set: true, Value: &s} }
+
+	g, err := svc.SetGoals(ctx, 11, GoalsInput{TargetMath: n(700), UniversityID: id("northbridge-university")}, today)
+	if err != nil || *g.UniversityID != "northbridge-university" || g.University == nil || g.University.Name != "Northbridge University" {
+		t.Fatalf("set: %+v %v", g, err)
+	}
+	// Left out (as the phone sends goals), it stays; null clears it.
+	if g, err := svc.SetGoals(ctx, 11, GoalsInput{TargetMath: n(750)}, today); err != nil || g.UniversityID == nil || *g.TargetMath != 750 {
+		t.Errorf("left out: %+v %v", g, err)
+	}
+	var in GoalsInput
+	if err := json.Unmarshal([]byte(`{"target_math":750,"university_id":null}`), &in); err != nil || !in.UniversityID.Set {
+		t.Fatalf("null decoded: %+v %v", in, err)
+	}
+	if g, err := svc.SetGoals(ctx, 11, in, today); err != nil || g.UniversityID != nil || g.University != nil {
+		t.Errorf("null: %+v %v", g, err)
+	}
+	var bad *GoalsError
+	for _, u := range []string{"nowhere", "gone-university"} {
+		if _, err := svc.SetGoals(ctx, 11, GoalsInput{UniversityID: id(u)}, today); !errors.As(err, &bad) {
+			t.Errorf("%s: %v", u, err)
+		}
 	}
 }

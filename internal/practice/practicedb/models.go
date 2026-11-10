@@ -580,6 +580,7 @@ type StudentGoal struct {
 	TargetRw        pgtype.Int2
 	ExamDate        pgtype.Date
 	UpdatedAt       pgtype.Timestamptz
+	UniversityID    pgtype.Text
 }
 
 type SyncCursor struct {
@@ -633,6 +634,33 @@ type TelegramPhoneCheck struct {
 	ExpiresAt       pgtype.Timestamptz
 	VerifiedAt      pgtype.Timestamptz
 	UsedAt          pgtype.Timestamptz
+}
+
+type University struct {
+	ID         string
+	Name       string
+	ShortName  pgtype.Text
+	Country    string
+	City       pgtype.Text
+	Lat        pgtype.Float8
+	Lng        pgtype.Float8
+	QsRank     pgtype.Int4
+	QsDisplay  pgtype.Text
+	ListReason string
+	Sat        []byte
+	Details    []byte
+	LogoKey    pgtype.Text
+	LogoType   pgtype.Text
+	LogoSha256 pgtype.Text
+	Listed     bool
+	Position   int32
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type UniversityCountry struct {
+	Code      string
+	Details   []byte
+	UpdatedAt pgtype.Timestamptz
 }
 
 type UniversityLogo struct {

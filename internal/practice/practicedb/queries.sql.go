@@ -732,7 +732,7 @@ func (q *Queries) GetTestByCode(ctx context.Context, code string) (PracticeTest,
 
 const goals = `-- name: Goals :one
 
-SELECT student_client_id, target_math, target_rw, exam_date, updated_at FROM student_goals WHERE student_client_id = $1
+SELECT student_client_id, target_math, target_rw, exam_date, updated_at, university_id FROM student_goals WHERE student_client_id = $1
 `
 
 // Goals (spec 9.6) -------------------------------------------------------------
@@ -745,6 +745,7 @@ func (q *Queries) Goals(ctx context.Context, studentClientID int32) (StudentGoal
 		&i.TargetRw,
 		&i.ExamDate,
 		&i.UpdatedAt,
+		&i.UniversityID,
 	)
 	return i, err
 }
@@ -1224,6 +1225,17 @@ func (q *Queries) ListQuestions(ctx context.Context, arg ListQuestionsParams) ([
 	return items, nil
 }
 
+const listedUniversity = `-- name: ListedUniversity :one
+SELECT EXISTS (SELECT 1 FROM universities WHERE id = $1 AND listed)
+`
+
+func (q *Queries) ListedUniversity(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, listedUniversity, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const lockQuestion = `-- name: LockQuestion :one
 SELECT id, subject, type, content_hash, passage, stem, choices, figures, correct, accepted, explanation, domain, skill, difficulty, status, ai_risk, version, created_at, updated_at, approved_at, auto_approved, approved_by FROM questions WHERE id = $1 FOR UPDATE
 `
@@ -1642,12 +1654,14 @@ func (q *Queries) ReportOwner(ctx context.Context, id pgtype.UUID) (int32, error
 }
 
 const setGoals = `-- name: SetGoals :one
-INSERT INTO student_goals (student_client_id, target_math, target_rw, exam_date)
-VALUES ($1, $2, $3, $4)
+INSERT INTO student_goals (student_client_id, target_math, target_rw, exam_date, university_id)
+VALUES ($1, $2, $3, $4,
+        $5)
 ON CONFLICT (student_client_id) DO UPDATE
 SET target_math = EXCLUDED.target_math, target_rw = EXCLUDED.target_rw, exam_date = EXCLUDED.exam_date,
+    university_id = CASE WHEN $6::boolean THEN student_goals.university_id ELSE EXCLUDED.university_id END,
     updated_at = now()
-RETURNING student_client_id, target_math, target_rw, exam_date, updated_at
+RETURNING student_client_id, target_math, target_rw, exam_date, updated_at, university_id
 `
 
 type SetGoalsParams struct {
@@ -1655,14 +1669,20 @@ type SetGoalsParams struct {
 	TargetMath      pgtype.Int2
 	TargetRw        pgtype.Int2
 	ExamDate        pgtype.Date
+	UniversityID    pgtype.Text
+	KeepUniversity  bool
 }
 
+// keep_university keeps the stored dream university (a request that doesn't
+// mention it, like the phone's).
 func (q *Queries) SetGoals(ctx context.Context, arg SetGoalsParams) (StudentGoal, error) {
 	row := q.db.QueryRow(ctx, setGoals,
 		arg.StudentClientID,
 		arg.TargetMath,
 		arg.TargetRw,
 		arg.ExamDate,
+		arg.UniversityID,
+		arg.KeepUniversity,
 	)
 	var i StudentGoal
 	err := row.Scan(
@@ -1671,6 +1691,7 @@ func (q *Queries) SetGoals(ctx context.Context, arg SetGoalsParams) (StudentGoal
 		&i.TargetRw,
 		&i.ExamDate,
 		&i.UpdatedAt,
+		&i.UniversityID,
 	)
 	return i, err
 }

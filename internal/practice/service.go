@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nazacd/makonbook-api/internal/practice/practicedb"
+	"github.com/nazacd/makonbook-api/internal/universities"
 )
 
 var (
@@ -40,6 +41,14 @@ type Service struct {
 	pictures Pictures // nil: question pictures not configured
 	page     string   // the question picture page (web/admin's CardPage)
 	stats    statsCache
+	// universities describes a goal's dream university; nil: only its id.
+	universities func(ctx context.Context, id string) (universities.Summary, error)
+}
+
+// WithUniversities lets the goals describe the dream university.
+func (s *Service) WithUniversities(summary func(ctx context.Context, id string) (universities.Summary, error)) *Service {
+	s.universities = summary
+	return s
 }
 
 // NewService: uploads is MakonBook's image bucket, or nil.

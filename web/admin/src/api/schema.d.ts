@@ -919,7 +919,10 @@ export interface paths {
          * @description Replaces all three: each may be null (a missing field counts as
          *     null). Targets are 200–800 in steps of 10. The exam date can't be
          *     before today (Tashkent), except the date already stored, so a
-         *     student whose exam has passed can still change a target.
+         *     student whose exam has passed can still change a target. The dream
+         *     university (`university_id`) is different: left out, the stored
+         *     one stays (the phone app doesn't send it); null clears it; an id
+         *     must be a listed university (`GET /v1/universities`).
          */
         put: operations["setGoals"];
         post?: never;
@@ -1274,6 +1277,81 @@ export interface paths {
          *     The percent is rounded down; a level check passes at 70 %.
          */
         post: operations["submitAssessment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/universities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every listed university (spec 24.3)
+         * @description For the dream-university globe and its search: every university of
+         *     the data, in its order (QS's ranking first), with where it is, its QS
+         *     place, its logo and its SAT figures. About 1500, so the apps load it
+         *     once: `ETag` is the list's version (If-None-Match → 304), which
+         *     changes only when an import changes something.
+         */
+        get: operations["listUniversities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/universities/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A university's card (spec 24.3)
+         * @description Its summary, the whole record collected for it (`details`, spec
+         *     24.1; null while it is only listed) and its country's record
+         *     (`country_details`, or null). The collectors' `doubts` are left out.
+         *     A university no longer listed still answers (students may have
+         *     chosen it).
+         */
+        get: operations["getUniversity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/universities/{id}/logo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A university's logo
+         * @description No sign-in (for `<img>`). Square, padded for a circle: SVG or PNG,
+         *     from MakonBook's bucket. Link it with the `logo_url` a summary gives
+         *     (`?v=` is the content's hash: such a URL is
+         *     `Cache-Control: public, max-age=31536000, immutable`). `ETag` is
+         *     the sha-256 (If-None-Match → 304). Every answer carries
+         *     `X-Content-Type-Options: nosniff` and `Content-Security-Policy:
+         *     default-src 'none'; style-src 'unsafe-inline'; img-src data:;
+         *     sandbox`.
+         */
+        get: operations["getUniversityLogo"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2683,6 +2761,77 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        UniversitySummary: {
+            /**
+             * @description The slug of its English name
+             * @example imperial-college-london
+             */
+            id: string;
+            name: string;
+            /** @example Imperial */
+            short_name: string | null;
+            /**
+             * @description ISO 3166-1 alpha-2
+             * @example GB
+             */
+            country: string;
+            city: string | null;
+            /** @description The main campus; null when not known yet */
+            location: null | {
+                lat: number;
+                lng: number;
+            };
+            /** @description Its place in the QS World University Rankings; null when it isn't ranked there */
+            qs: null | {
+                /** @description The lower end of a band (601-610 is 601) */
+                rank: number;
+                /**
+                 * @description As QS shows it
+                 * @example =45
+                 */
+                display: string;
+            };
+            /** @description /v1/universities/{id}/logo?v=…, same origin; null: none (draw a crest) */
+            logo_url: string | null;
+            /** @description Its SAT figures for first-year international applicants, as collected; null when not collected yet */
+            sat: null | components["schemas"]["UniversitySAT"];
+            /** @description Whether its whole record has been collected (the card's details) */
+            has_details: boolean;
+        };
+        UniversitySAT: {
+            /** @enum {string} */
+            policy: "required" | "optional" | "not_considered" | "accepted" | "unknown";
+            /** @description Admitted students' 25th–75th percentiles, 400–1600 */
+            total?: null | components["schemas"]["ScoreRange"];
+            math?: null | components["schemas"]["ScoreRange"];
+            rw?: null | components["schemas"]["ScoreRange"];
+            /** @description A published minimum, where the university gives one instead of percentiles */
+            minimum?: null | {
+                total?: number | null;
+                math?: number | null;
+                rw?: number | null;
+            };
+            year?: string | null;
+        };
+        ScoreRange: {
+            p25?: number | null;
+            p75?: number | null;
+        };
+        UniversityList: {
+            /** @description Changes whenever any university does (the ETag) */
+            version: string;
+            universities: components["schemas"]["UniversitySummary"][];
+        };
+        UniversityDetail: components["schemas"]["UniversitySummary"] & {
+            /** @description The whole record (spec 24.1: tuition, aid, admissions, sources…), null while only listed */
+            details: {
+                [key: string]: unknown;
+            } | null;
+            /** @description The country's record (spec 24.1: currency, study visa, work rights, minimum wage…), or null */
+            country_details: {
+                [key: string]: unknown;
+            } | null;
+        };
         Goals: {
             /** @description Math target, 200–800 */
             target_math: number | null;
@@ -2692,6 +2841,10 @@ export interface components {
             target_total: number | null;
             /** Format: date */
             exam_date: string | null;
+            /** @description The dream university (spec 24.3) */
+            university_id?: string | null;
+            /** @description The dream university, described; null when there is none */
+            university?: null | components["schemas"]["UniversitySummary"];
             /**
              * Format: date-time
              * @description Null when never set
@@ -2725,6 +2878,8 @@ export interface components {
                 /** @enum {integer} */
                 minutes: 15 | 30 | 45 | 60;
             };
+            /** @description The dream university (spec 24.3): a listed university's id; left out or null keeps the one already chosen */
+            university_id?: string | null;
         };
         Onboarding: components["schemas"]["OnboardingInput"] & {
             /** Format: date-time */
@@ -5698,6 +5853,8 @@ export interface operations {
                     target_rw?: number | null;
                     /** Format: date */
                     exam_date?: string | null;
+                    /** @description Left out: kept; null: cleared */
+                    university_id?: string | null;
                 };
             };
         };
@@ -6464,6 +6621,124 @@ export interface operations {
             };
             /** @description `invalid_answers` */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listUniversities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The universities */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UniversityList"];
+                };
+            };
+            /** @description Unchanged (If-None-Match) */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getUniversity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The card */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UniversityDetail"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found`: no such university */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getUniversityLogo: {
+        parameters: {
+            query?: {
+                /** @description The content's hash, as logo_url gives it */
+                v?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The logo */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/svg+xml": string;
+                    "image/png": string;
+                };
+            };
+            /** @description Unchanged (If-None-Match) */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such university, or no logo for it */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

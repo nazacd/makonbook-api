@@ -35,6 +35,9 @@ type Onboarding struct {
 	Target     Scores   `json:"target"`
 	Focus      string   `json:"focus"` // "math", "english" or "both"
 	Schedule   Schedule `json:"schedule"`
+	// UniversityID is the dream university (spec 24.3); left out or null
+	// keeps the one already chosen.
+	UniversityID *string `json:"university_id,omitempty"`
 	// UpdatedAt is when they were last sent (only in answers read back).
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
@@ -204,7 +207,12 @@ func (s *Service) SaveOnboarding(ctx context.Context, who Who, o Onboarding, tod
 	}
 	_, err := s.bank.SetGoals(ctx, who.ID, practice.GoalsInput{
 		TargetMath: o.Target.Math, TargetRW: o.Target.RW, ExamDate: o.examDate(today),
+		UniversityID: practice.Optional{Set: o.UniversityID != nil, Value: o.UniversityID},
 	}, today)
+	var bad *practice.GoalsError
+	if errors.As(err, &bad) {
+		return &OnboardingError{Reason: bad.Reason}
+	}
 	if err != nil {
 		return fmt.Errorf("goals: %w", err)
 	}
