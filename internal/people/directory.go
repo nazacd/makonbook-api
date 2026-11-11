@@ -122,8 +122,9 @@ func SetSelfPhone(ctx context.Context, db peopledb.DBTX, id int32, phone string)
 
 // MergeSelfStudent folds a registered student into another person (spec
 // 21.4), inside the caller's transaction: their attempts, reviews, parked
-// questions, reports, roadmap assessments and choices, notifications, and (if
-// the other has none) goals and onboarding move to toStudent; when the other
+// questions, reports, roadmap assessments and choices, notifications, their
+// place in the library's books, and (if the other has none) goals and
+// onboarding move to toStudent; when the other
 // is a teacher (toStudent 0) those that can't move are deleted.
 // Then the registered student is removed (the rest cascades).
 func MergeSelfStudent(ctx context.Context, db peopledb.DBTX, from, toStudent int32) error {
@@ -160,6 +161,9 @@ func MergeSelfStudent(ctx context.Context, db peopledb.DBTX, from, toStudent int
 			func(ctx context.Context) error {
 				return q.MoveStudentOnboarding(ctx, peopledb.MoveStudentOnboardingParams{ToID: toStudent, FromID: from})
 			},
+			func(ctx context.Context) error {
+				return q.CopyStudentLibrary(ctx, peopledb.CopyStudentLibraryParams{ToID: toStudent, FromID: from})
+			},
 		} {
 			if err := move(ctx); err != nil {
 				return fmt.Errorf("merge %d into %d: %w", from, toStudent, err)
@@ -175,6 +179,11 @@ func MergeSelfStudent(ctx context.Context, db peopledb.DBTX, from, toStudent int
 		if err := q.DeleteStudentNotifications(ctx, from); err != nil {
 			return fmt.Errorf("merge %d: %w", from, err)
 		}
+	}
+	// Their library rows (copied above when the other is a student) go: no
+	// foreign key removes them with the student.
+	if err := q.DeleteStudentLibrary(ctx, from); err != nil {
+		return fmt.Errorf("merge %d: %w", from, err)
 	}
 	n, err := q.DeleteSelfStudent(ctx, from)
 	if err != nil {

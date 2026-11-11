@@ -67,6 +67,7 @@ enrol).
 | D37 | **Assignments** (section 23): teachers give their groups **homework, level checks and exams with deadlines**. Every student of the group gets the **same questions**; work after the deadline is taken and **marked late**; an exam is a mock test whose **first finished attempt** counts (retakes allowed); an assigned curriculum level check or homework **counts for the roadmap**. **Every current teacher of a group** may assign to it; content creation stays with the editors (9.4). | 2026-11-08, the product owner. |
 | D38 | A group whose discipline names the subject but **no level** takes the level from **HolliHop's group level**; without a subject, no roadmap. | 2026-11-08. |
 | D39 | **In-app notifications** (a table, the web's drawer): a new assignment notifies the group's students. Nothing outside the app yet; Telegram later. | 2026-11-08. |
+| D41 | **The Library** (section 25): SAT MAKON's own books (PDFs), kept in the private `makonbook-library` repository and imported; **everyone signed in reads and downloads** every book; each reader's page is remembered, and a book shows how many people opened it. No uploads by students. | 2026-11-11. |
 | D40 | **A dream university is the main goal** (section 24): about 1500 universities (QS's top 1500, every university in Uzbekistan, the roadmaps' 48), collected in the private `makonbook-universities` repository and imported; QS's rank is shown as QS gives it (the owner's decision, knowing QS's terms); the logos are kept in MakonBook's R2 bucket. | 2026-11-09. |
 
 ## 3. System overview
@@ -1217,4 +1218,45 @@ universities          (id slug PK, name, short_name, country, city, lat, lng, qs
                        sat jsonb, details jsonb, logo_key, logo_type, logo_sha256, listed, position, updated_at)
 university_countries  (code PK, details jsonb, updated_at)
 student_goals         + university_id → universities (set null if deleted)
+```
+
+
+## 25. The Library (built, for the web; D41)
+
+SAT MAKON's own books, read in the app: a shelf of covers and a reader.
+
+### 25.1 The data
+- In the **private** repository `nazacd/makonbook-library` (its README says how to add a book), never copied
+  here. A book is three files with one name: `books/<name>.json` (`title`, `author`, `subject`: `math` or
+  `english`, `description`, `pages`), `books/<name>.pdf` and `covers/<name>.png` (or `.jpg`, `.webp`; optional).
+  The name without a leading `NN-`, which only orders the shelf, is the book's **id**.
+
+### 25.2 The import (`makonbook library import <checkout>`)
+- Checks everything first (names, the JSON's fields, a whole PDF of at most 40 MB, a cover that decodes, at
+  most 2 MB) and stores nothing unless all of it passes, listing every problem.
+- New or changed files go to the **uploads bucket** by content hash (`library/books/<sha256>.pdf`,
+  `library/covers/<sha256>.<ext>`; needs `R2_UPLOADS_*`), then the rows in one transaction. A book gone from
+  the folder leaves the shelf (**unlisted**; its readers' places are kept, and come back with it).
+
+### 25.3 The API
+- Behind `auth.RequireContent` (a registered student without a phone gets `403 phone_required`); students,
+  registered or enrolled, and teachers alike.
+- `GET /v1/library`: the listed books in order: id, title, author, subject, description, pages, `bytes`,
+  `cover_url`, `views` and `progress` (`{page, updated_at}`, or null).
+- `GET /v1/library/{id}/file`: the PDF from the bucket, inline, or an attachment named after the book with
+  `?download=1`; ranges and `ETag` work. The API reads the file into memory (hence the 40 MB bound).
+- `PUT /v1/library/{id}/progress {page}`: 1 to the book's pages, else `422 invalid_page`. It remembers the
+  reader's page; the first time, it also makes them one of the book's **views** (a view is a person, not an
+  opening).
+- `GET /v1/library/{id}/cover` (no sign-in, for `<img>`): `cover_url` carries `?v=` (the content's hash), and
+  such a URL is cached for good.
+- A merge (21.4) moves a registered student's places to the other student (the further page where both read
+  a book) and deletes them when merged into a teacher.
+
+### 25.4 Tables
+```
+library_books     (id slug PK, title, author, subject, description, pages, pdf_key, pdf_sha256, pdf_bytes,
+                   cover_key, cover_type, cover_sha256, listed, position, created_at, updated_at)
+library_progress  (person_kind, person_id, book_id → library_books, page, opened_at, updated_at;
+                   PK (person_kind, person_id, book_id); no foreign key to people)
 ```

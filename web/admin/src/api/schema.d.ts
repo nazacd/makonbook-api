@@ -1358,6 +1358,97 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/library": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The Library's books (spec 25)
+         * @description SAT MAKON's own books, in the shelf's order: everyone signed in
+         *     reads and downloads every one. Each has how many people have opened
+         *     it (`views`) and where this reader stopped (`progress`, null if they
+         *     never opened it). A registered student without a phone gets `403
+         *     phone_required`, as from the rest of the content.
+         */
+        get: operations["listLibrary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/library/{id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A book's PDF
+         * @description The whole file, for the app's reader (`Content-Disposition: inline`)
+         *     or, with `?download=1`, as a download named after the book. `Range`
+         *     requests work; `ETag` is the file's sha-256 (If-None-Match → 304);
+         *     `Cache-Control: private, max-age=3600`.
+         */
+        get: operations["getLibraryFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/library/{id}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Remember the reader's page
+         * @description Stores the page the reader is on (1 to the book's `pages`). The
+         *     first time, it also counts them among the book's `views`: the apps
+         *     send it when a book is opened and as its pages are turned.
+         */
+        put: operations["setLibraryProgress"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/library/{id}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A book's cover
+         * @description No sign-in (for `<img>`). PNG, JPEG or WebP. Link it with the
+         *     `cover_url` the list gives (`?v=` is the content's hash: such a URL
+         *     is `Cache-Control: public, max-age=31536000, immutable`).
+         */
+        get: operations["getLibraryCover"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/logos/{slug}": {
         parameters: {
             query?: never;
@@ -2761,6 +2852,29 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        LibraryProgress: {
+            page: number;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        LibraryBook: {
+            /** @example algebra-for-the-sat */
+            id: string;
+            title: string;
+            author: string;
+            /** @enum {string} */
+            subject: "math" | "english";
+            description: string;
+            pages: number;
+            /** @description The PDF's size */
+            bytes: number;
+            /** @description /v1/library/{id}/cover?v=…, same origin; null: no cover */
+            cover_url: string | null;
+            /** @description How many people have opened the book */
+            views: number;
+            /** @description Where this reader stopped; null if they never opened it */
+            progress: null | components["schemas"]["LibraryProgress"];
+        };
         UniversitySummary: {
             /**
              * @description The slug of its English name
@@ -3954,7 +4068,7 @@ export interface components {
                  * @description Stable machine-readable code.
                  * @enum {string}
                  */
-                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "invalid_email" | "email_taken" | "email_unavailable" | "telegram_unavailable" | "telegram_no_phone" | "phone_already_set" | "phone_required" | "photo_too_large" | "invalid_photo" | "google_unavailable" | "enrolled_only" | "invalid_onboarding" | "not_needed" | "lesson_locked" | "no_questions" | "finished" | "invalid_answers" | "invalid_assessment" | "invalid_assignment" | "assignment_closed" | "not_open" | "not_an_assessment" | "has_work";
+                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "invalid_email" | "email_taken" | "email_unavailable" | "telegram_unavailable" | "telegram_no_phone" | "phone_already_set" | "phone_required" | "photo_too_large" | "invalid_photo" | "google_unavailable" | "enrolled_only" | "invalid_onboarding" | "not_needed" | "lesson_locked" | "no_questions" | "finished" | "invalid_answers" | "invalid_assessment" | "invalid_assignment" | "assignment_closed" | "not_open" | "not_an_assessment" | "has_work" | "invalid_page";
                 /** @description Human-readable explanation; may change. */
                 message: string;
                 /** @description For a rejected form (`invalid_question`): what is wrong, per field (e.g. `stem`, `choices.B`). */
@@ -6738,6 +6852,218 @@ export interface operations {
                 content?: never;
             };
             /** @description No such university, or no logo for it */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listLibrary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The books */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        books: components["schemas"]["LibraryBook"][];
+                    };
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `phone_required` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getLibraryFile: {
+        parameters: {
+            query?: {
+                /** @description Any value: answer as an attachment */
+                download?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The PDF */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                };
+            };
+            /** @description The part asked for (Range) */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unchanged (If-None-Match) */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `phone_required` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found`: no such book */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    setLibraryProgress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    page: number;
+                };
+            };
+        };
+        responses: {
+            /** @description The stored place */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryProgress"];
+                };
+            };
+            /** @description Not signed in */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `phone_required` */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `not_found`: no such book */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_page`: the book has no such page */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getLibraryCover: {
+        parameters: {
+            query?: {
+                v?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The cover */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
+                    "image/jpeg": string;
+                    "image/webp": string;
+                };
+            };
+            /** @description Unchanged (If-None-Match) */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No such book, or no cover for it */
             404: {
                 headers: {
                     [name: string]: unknown;

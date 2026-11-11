@@ -53,6 +53,30 @@ func (q *Queries) ClearTeacherLoginPhones(ctx context.Context, arg ClearTeacherL
 	return err
 }
 
+const copyStudentLibrary = `-- name: CopyStudentLibrary :exec
+INSERT INTO library_progress AS t (person_kind, person_id, book_id, page, opened_at, updated_at)
+SELECT 'student', $1::int, f.book_id, f.page, f.opened_at, f.updated_at
+FROM library_progress f
+WHERE f.person_kind = 'student' AND f.person_id = $2::int
+ON CONFLICT (person_kind, person_id, book_id) DO UPDATE
+SET page = greatest(t.page, EXCLUDED.page),
+    opened_at = least(t.opened_at, EXCLUDED.opened_at),
+    updated_at = greatest(t.updated_at, EXCLUDED.updated_at)
+`
+
+type CopyStudentLibraryParams struct {
+	ToID   int32
+	FromID int32
+}
+
+// The registered student's place in the library's books goes with them
+// (CopyStudentLibrary, then DeleteStudentLibrary): where both have opened a
+// book, the further page stays.
+func (q *Queries) CopyStudentLibrary(ctx context.Context, arg CopyStudentLibraryParams) error {
+	_, err := q.db.Exec(ctx, copyStudentLibrary, arg.ToID, arg.FromID)
+	return err
+}
+
 const countActiveStudents = `-- name: CountActiveStudents :one
 SELECT count(*) FROM students WHERE deactivated_at IS NULL AND source = 'hollihop'
 `
@@ -200,6 +224,15 @@ DELETE FROM practice_attempts WHERE student_client_id = $1
 // Rows a teacher can't take: removed with the student.
 func (q *Queries) DeleteStudentAttempts(ctx context.Context, clientID int32) error {
 	_, err := q.db.Exec(ctx, deleteStudentAttempts, clientID)
+	return err
+}
+
+const deleteStudentLibrary = `-- name: DeleteStudentLibrary :exec
+DELETE FROM library_progress WHERE person_kind = 'student' AND person_id = $1
+`
+
+func (q *Queries) DeleteStudentLibrary(ctx context.Context, fromID int32) error {
+	_, err := q.db.Exec(ctx, deleteStudentLibrary, fromID)
 	return err
 }
 

@@ -356,6 +356,22 @@ UPDATE notifications SET person_id = @to_id WHERE person_kind = 'student' AND pe
 -- name: DeleteStudentNotifications :exec
 DELETE FROM notifications WHERE person_kind = 'student' AND person_id = @from_id;
 
+-- The registered student's place in the library's books goes with them
+-- (CopyStudentLibrary, then DeleteStudentLibrary): where both have opened a
+-- book, the further page stays.
+-- name: CopyStudentLibrary :exec
+INSERT INTO library_progress AS t (person_kind, person_id, book_id, page, opened_at, updated_at)
+SELECT 'student', @to_id::int, f.book_id, f.page, f.opened_at, f.updated_at
+FROM library_progress f
+WHERE f.person_kind = 'student' AND f.person_id = @from_id::int
+ON CONFLICT (person_kind, person_id, book_id) DO UPDATE
+SET page = greatest(t.page, EXCLUDED.page),
+    opened_at = least(t.opened_at, EXCLUDED.opened_at),
+    updated_at = greatest(t.updated_at, EXCLUDED.updated_at);
+
+-- name: DeleteStudentLibrary :exec
+DELETE FROM library_progress WHERE person_kind = 'student' AND person_id = @from_id;
+
 -- name: MoveStudentChoices :exec
 UPDATE roadmap_choices AS c SET student_client_id = @to_id::int
 WHERE c.student_client_id = @from_id::int

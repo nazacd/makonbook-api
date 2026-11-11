@@ -122,3 +122,11 @@ sql:
         package: universitiesdb
         out: internal/universities/universitiesdb
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/library/queries.sql
+    gen:
+      go:
+        package: librarydb
+        out: internal/library/librarydb
+        sql_package: pgx/v5

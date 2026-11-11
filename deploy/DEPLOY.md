@@ -444,6 +444,39 @@ record, … with a logo`. A university gone from the data stays, unlisted, for
 the students who chose it. Students see changes at once (the list's ETag
 moves only when something changed).
 
+## The Library's books
+
+SAT MAKON's books (spec 25) live in the private repository
+`nazacd/makonbook-library`: `books/` (a `.json` and a `.pdf` per book) and
+`covers/`. The server reads a read-only checkout. Once, a deploy key of its
+own:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/library -N "" -C "makonbook server"
+cat ~/.ssh/library.pub
+```
+
+On GitHub: **makonbook-library → Settings → Deploy keys → Add deploy key**,
+paste it, "Allow write access" **off**. Then:
+
+```bash
+GIT_SSH_COMMAND="ssh -i ~/.ssh/library" \
+  git clone git@github.com:nazacd/makonbook-library.git /opt/makonbook-library
+```
+
+After `migrate up` has applied 00041, and each time a book is added or changed:
+
+```bash
+GIT_SSH_COMMAND="ssh -i ~/.ssh/library" git -C /opt/makonbook-library pull
+docker compose run --rm -v /opt/makonbook-library:/library:ro api library import /library
+```
+
+The import checks everything first and stores nothing unless all of it
+passes. It uploads new or changed PDFs and covers to MakonBook's bucket
+(`R2_UPLOADS_*`) and prints `9 books on the shelf (… new, … changed, … taken
+off); … files uploaded`. A book removed from the repository leaves the shelf;
+its readers' places are kept in case it returns.
+
 ## Question pictures (renderer)
 
 Question pictures (the editors' **Export image**, and later the teachers'

@@ -280,6 +280,34 @@ type LessonDay struct {
 	ScheduleItemIds []int32
 }
 
+type LibraryBook struct {
+	ID          string
+	Title       string
+	Author      string
+	Subject     string
+	Description string
+	Pages       int32
+	PdfKey      string
+	PdfSha256   string
+	PdfBytes    int32
+	CoverKey    pgtype.Text
+	CoverType   pgtype.Text
+	CoverSha256 pgtype.Text
+	Listed      bool
+	Position    int32
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type LibraryProgress struct {
+	PersonKind string
+	PersonID   int32
+	BookID     string
+	Page       int32
+	OpenedAt   pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type Notification struct {
 	ID           int64
 	PersonKind   string

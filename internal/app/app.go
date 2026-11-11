@@ -15,6 +15,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/attendance"
 	"github.com/nazacd/makonbook-api/internal/auth"
 	"github.com/nazacd/makonbook-api/internal/lessons"
+	"github.com/nazacd/makonbook-api/internal/library"
 	"github.com/nazacd/makonbook-api/internal/parents"
 	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/alert"
@@ -116,6 +117,11 @@ func Handler(d Deps) http.Handler {
 	if d.Uploads != nil {
 		logos = d.Uploads
 	}
+	var books library.Store // the uploads bucket, where the import put the books
+	if d.Uploads != nil {
+		books = d.Uploads
+	}
+	library.NewHandler(library.NewService(d.Pool, books), authHandler.RequireContent).Register(mux)
 	universitiesSvc := universities.NewService(d.Pool, logos)
 	universities.NewHandler(universitiesSvc, authHandler.Require).Register(mux)
 	practiceSvc := practiceService(d).WithUniversities(universitiesSvc.SummaryOf)
