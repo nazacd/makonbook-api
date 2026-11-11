@@ -4148,14 +4148,14 @@ components:
           description: Empty in the community list
           items:
             type: object
-            required: [id, word, part_of_speech, definition, example, image]
+            required: [id, word, part_of_speech, definition, example]
             properties:
               id: { type: string, format: uuid }
               word: { type: string }
               part_of_speech: { type: [string, "null"] }
               definition: { type: string }
               example: { type: string, description: May be empty }
-              image: { type: "null" }
+              image: { type: "null", description: Always null (decks have no pictures) }
 
     PracticeCatalogTest:
       type: object
