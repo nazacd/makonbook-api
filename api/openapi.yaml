@@ -2017,6 +2017,129 @@ paths:
           description: No such university, or no logo for it
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/library:
+    get:
+      summary: The Library's books (spec 25)
+      description: |
+        SAT MAKON's own books, in the shelf's order: everyone signed in
+        reads and downloads every one. Each has how many people have opened
+        it (`views`) and where this reader stopped (`progress`, null if they
+        never opened it). A registered student without a phone gets `403
+        phone_required`, as from the rest of the content.
+      operationId: listLibrary
+      tags: [library]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The books
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [books]
+                properties:
+                  books:
+                    type: array
+                    items: { $ref: "#/components/schemas/LibraryBook" }
+        "401":
+          description: Not signed in
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "403":
+          description: "`phone_required`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/library/{id}/file:
+    get:
+      summary: A book's PDF
+      description: |
+        The whole file, for the app's reader (`Content-Disposition: inline`)
+        or, with `?download=1`, as a download named after the book. `Range`
+        requests work; `ETag` is the file's sha-256 (If-None-Match → 304);
+        `Cache-Control: private, max-age=3600`.
+      operationId: getLibraryFile
+      tags: [library]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, example: algebra-for-the-sat } }
+        - { name: download, in: query, required: false, schema: { type: string }, description: "Any value: answer as an attachment" }
+      responses:
+        "200":
+          description: The PDF
+          content: { application/pdf: { schema: { type: string, format: binary } } }
+        "206": { description: The part asked for (Range) }
+        "304": { description: Unchanged (If-None-Match) }
+        "401":
+          description: Not signed in
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "403":
+          description: "`phone_required`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "404":
+          description: "`not_found`: no such book"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/library/{id}/progress:
+    put:
+      summary: Remember the reader's page
+      description: |
+        Stores the page the reader is on (1 to the book's `pages`). The
+        first time, it also counts them among the book's `views`: the apps
+        send it when a book is opened and as its pages are turned.
+      operationId: setLibraryProgress
+      tags: [library]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [page]
+              properties:
+                page: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: The stored place
+          content: { application/json: { schema: { $ref: "#/components/schemas/LibraryProgress" } } }
+        "401":
+          description: Not signed in
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "403":
+          description: "`phone_required`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "404":
+          description: "`not_found`: no such book"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_page`: the book has no such page"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/library/{id}/cover:
+    get:
+      summary: A book's cover
+      description: |
+        No sign-in (for `<img>`). PNG, JPEG or WebP. Link it with the
+        `cover_url` the list gives (`?v=` is the content's hash: such a URL
+        is `Cache-Control: public, max-age=31536000, immutable`).
+      operationId: getLibraryCover
+      tags: [library]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: v, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: The cover
+          content:
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        "304": { description: Unchanged (If-None-Match) }
+        "404":
+          description: No such book, or no cover for it
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /v1/logos/{slug}:
     get:
       summary: A roadmap stop's university logo
@@ -3742,6 +3865,32 @@ components:
             created_at: { type: string, format: date-time }
             updated_at: { type: string, format: date-time }
 
+    LibraryProgress:
+      type: object
+      required: [page, updated_at]
+      properties:
+        page: { type: integer, minimum: 1 }
+        updated_at: { type: string, format: date-time }
+
+    LibraryBook:
+      type: object
+      required: [id, title, author, subject, description, pages, bytes, cover_url, views, progress]
+      properties:
+        id: { type: string, example: algebra-for-the-sat }
+        title: { type: string }
+        author: { type: string }
+        subject: { type: string, enum: [math, english] }
+        description: { type: string }
+        pages: { type: integer }
+        bytes: { type: integer, description: "The PDF's size" }
+        cover_url: { type: [string, "null"], description: "/v1/library/{id}/cover?v=…, same origin; null: no cover" }
+        views: { type: integer, description: How many people have opened the book }
+        progress:
+          description: Where this reader stopped; null if they never opened it
+          oneOf:
+            - type: "null"
+            - { $ref: "#/components/schemas/LibraryProgress" }
+
     UniversitySummary:
       type: object
       required: [id, name, short_name, country, city, location, qs, logo_url, sat, has_details]
@@ -5090,6 +5239,7 @@ components:
                 - not_open
                 - not_an_assessment
                 - has_work
+                - invalid_page
             message:
               type: string
               description: Human-readable explanation; may change.

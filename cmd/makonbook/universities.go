@@ -26,10 +26,13 @@ func runUniversities(ctx context.Context, cfg config.Config, args []string, stdo
 		return err
 	}
 	defer pool.Close()
-	im := universities.Importer{Pool: pool}
+	im := universities.Importer{Pool: pool, Progress: func(done, total int) {
+		fmt.Fprintf(stdout, "logos uploaded: %d of %d\n", done, total)
+	}}
 	if c := uploadsClient(cfg); c != nil {
 		im.Store = c
 	}
+	fmt.Fprintln(stdout, "Checking the data; new or changed logos then go to the bucket (the first time takes a few minutes)…")
 	s, err := im.Import(ctx, args[2])
 	if err != nil {
 		return err

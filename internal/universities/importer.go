@@ -18,10 +18,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/nazacd/makonbook-api/internal/universities/universitiesdb"
 )
@@ -43,7 +45,13 @@ const maxRank = 100000
 type Importer struct {
 	Pool  *pgxpool.Pool
 	Store Store
+	// Progress, when set, hears how the logo uploads go (done of total),
+	// every few uploads and at the end; the first upload takes minutes.
+	Progress func(done, total int)
 }
+
+// uploaders is how many logos go up at once.
+const uploaders = 8
 
 // ImportSummary says what an import did.
 type ImportSummary struct {
@@ -223,20 +231,22 @@ func (im Importer) Import(ctx context.Context, dir string) (ImportSummary, error
 	for _, s := range stored {
 		have[s.ID] = s.LogoSha256.String
 	}
-	uploaded := map[string]bool{}
+	var todo []*logoFile
+	queued := map[string]bool{}
 	for _, r := range rows {
-		if r.logo == nil || have[r.p.ID] == r.logo.sha || uploaded[r.logo.key] {
+		if r.logo == nil || have[r.p.ID] == r.logo.sha || queued[r.logo.key] {
 			continue
 		}
-		if im.Store == nil {
-			return sum, errors.New("there are logos to upload: set the R2_UPLOADS_* settings")
-		}
-		if err := im.Store.Put(ctx, r.logo.key, r.logo.body, r.logo.contentType); err != nil {
-			return sum, fmt.Errorf("upload %s's logo: %w", r.p.ID, err)
-		}
-		uploaded[r.logo.key] = true
-		sum.LogosUploaded++
+		queued[r.logo.key] = true
+		todo = append(todo, r.logo)
 	}
+	if len(todo) > 0 && im.Store == nil {
+		return sum, errors.New("there are logos to upload: set the R2_UPLOADS_* settings")
+	}
+	if err := im.upload(ctx, todo); err != nil {
+		return sum, err
+	}
+	sum.LogosUploaded = len(todo)
 	err = pgx.BeginFunc(ctx, im.Pool, func(tx pgx.Tx) error {
 		q := universitiesdb.New(tx)
 		var now pgtype.Timestamptz // the transaction's now(): a changed row's updated_at
@@ -277,6 +287,33 @@ func (im Importer) Import(ctx context.Context, dir string) (ImportSummary, error
 		return nil
 	})
 	return sum, err
+}
+
+// upload puts the logos in the bucket, a few at a time, telling Progress.
+func (im Importer) upload(ctx context.Context, todo []*logoFile) error {
+	if len(todo) == 0 {
+		return nil
+	}
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(uploaders)
+	var mu sync.Mutex
+	done := 0
+	for _, l := range todo {
+		g.Go(func() error {
+			if err := im.Store.Put(ctx, l.key, l.body, l.contentType); err != nil {
+				return fmt.Errorf("upload logo %s: %w", l.key, err)
+			}
+			mu.Lock()
+			done++
+			n := done
+			mu.Unlock()
+			if im.Progress != nil && (n%50 == 0 || n == len(todo)) {
+				im.Progress(n, len(todo))
+			}
+			return nil
+		})
+	}
+	return g.Wait()
 }
 
 func optText(s *string) pgtype.Text {
