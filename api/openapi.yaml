@@ -2375,6 +2375,55 @@ paths:
           description: "`not_found`: no such university"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/me/universities:
+    get:
+      summary: The universities the student saved (students)
+      operationId: mySavedUniversities
+      tags: [universities]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: Newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [saved]
+                properties:
+                  saved:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, saved_at]
+                      properties:
+                        id: { type: string }
+                        saved_at: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/me/universities/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    put:
+      summary: Save a university to the student's list
+      operationId: saveUniversity
+      tags: [universities]
+      security: [{ bearer: [] }]
+      responses:
+        "204": { description: Saved (or already) }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: Take a university off the student's list
+      operationId: unsaveUniversity
+      tags: [universities]
+      security: [{ bearer: [] }]
+      responses:
+        "204": { description: Done }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
   /v1/universities/{id}/logo:
     get:
       summary: A university's logo
@@ -4391,6 +4440,38 @@ components:
             - type: "null"
             - { $ref: "#/components/schemas/UniversitySAT" }
         has_details: { type: boolean, description: "Whether its whole record has been collected (the card's details)" }
+        facts:
+          description: "In the list only: the record's facts for browsing (spec 24.5); absent while only listed"
+          $ref: "#/components/schemas/UniversityFacts"
+
+    UniversityFacts:
+      type: object
+      required: [type, website, tuition, living, acceptance_rate, english_bachelors, aid, deadlines, region, full]
+      properties:
+        type: { type: [string, "null"], enum: [public, private, null] }
+        website: { type: [string, "null"] }
+        tuition: { oneOf: [{ type: "null" }, { $ref: "#/components/schemas/USDRange" }], description: International undergraduate tuition a year }
+        living: { oneOf: [{ type: "null" }, { $ref: "#/components/schemas/USDRange" }], description: "The university's own living-cost estimate a year" }
+        acceptance_rate: { type: [number, "null"], description: 0–1 }
+        english_bachelors: { type: [string, "null"], enum: [all, some, none, null] }
+        aid:
+          type: object
+          required: [need_based, full_need, merit, scholarships]
+          properties:
+            need_based: { type: [boolean, "null"] }
+            full_need: { type: [boolean, "null"], description: Claims to meet full need for internationals }
+            merit: { type: [boolean, "null"] }
+            scholarships: { type: integer, description: Notable scholarships open to internationals }
+        deadlines: { type: array, items: { type: string, format: date }, description: "The next intake's, soonest first" }
+        region: { type: [string, "null"], description: "Where the country alone would mislead: \"Northern Cyprus\"" }
+        full: { type: boolean, description: "Researched in full (admissions page and costs), not only listed" }
+
+    USDRange:
+      type: object
+      required: [min, max]
+      properties:
+        min: { type: integer, description: Whole US dollars }
+        max: { type: integer }
 
     UniversitySAT:
       type: object

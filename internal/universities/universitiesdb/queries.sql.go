@@ -69,7 +69,7 @@ func (q *Queries) ListVersion(ctx context.Context) (ListVersionRow, error) {
 }
 
 const listedUniversities = `-- name: ListedUniversities :many
-SELECT id, name, short_name, country, city, lat, lng, qs_rank, qs_display, sat, logo_sha256, (details IS NOT NULL)::boolean AS has_details
+SELECT id, name, short_name, country, city, lat, lng, qs_rank, qs_display, sat, logo_sha256, details
 FROM universities WHERE listed ORDER BY position, id
 `
 
@@ -85,7 +85,7 @@ type ListedUniversitiesRow struct {
 	QsDisplay  pgtype.Text
 	Sat        []byte
 	LogoSha256 pgtype.Text
-	HasDetails bool
+	Details    []byte
 }
 
 func (q *Queries) ListedUniversities(ctx context.Context) ([]ListedUniversitiesRow, error) {
@@ -109,8 +109,58 @@ func (q *Queries) ListedUniversities(ctx context.Context) ([]ListedUniversitiesR
 			&i.QsDisplay,
 			&i.Sat,
 			&i.LogoSha256,
-			&i.HasDetails,
+			&i.Details,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const saveUniversity = `-- name: SaveUniversity :execrows
+INSERT INTO student_saved_universities (student_client_id, university_id)
+SELECT $1, id FROM universities WHERE id = $2
+ON CONFLICT DO NOTHING
+`
+
+type SaveUniversityParams struct {
+	StudentClientID int32
+	UniversityID    string
+}
+
+func (q *Queries) SaveUniversity(ctx context.Context, arg SaveUniversityParams) (int64, error) {
+	result, err := q.db.Exec(ctx, saveUniversity, arg.StudentClientID, arg.UniversityID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const savedUniversities = `-- name: SavedUniversities :many
+SELECT university_id, saved_at FROM student_saved_universities
+WHERE student_client_id = $1 ORDER BY saved_at DESC
+`
+
+type SavedUniversitiesRow struct {
+	UniversityID string
+	SavedAt      pgtype.Timestamptz
+}
+
+// A student's saved universities (spec 24.4), newest first.
+func (q *Queries) SavedUniversities(ctx context.Context, studentClientID int32) ([]SavedUniversitiesRow, error) {
+	rows, err := q.db.Query(ctx, savedUniversities, studentClientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SavedUniversitiesRow
+	for rows.Next() {
+		var i SavedUniversitiesRow
+		if err := rows.Scan(&i.UniversityID, &i.SavedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -150,6 +200,17 @@ func (q *Queries) StoredLogos(ctx context.Context) ([]StoredLogosRow, error) {
 	return items, nil
 }
 
+const universityExists = `-- name: UniversityExists :one
+SELECT EXISTS (SELECT 1 FROM universities WHERE id = $1)
+`
+
+func (q *Queries) UniversityExists(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, universityExists, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const universityLogo = `-- name: UniversityLogo :one
 SELECT logo_key, logo_type, logo_sha256 FROM universities WHERE id = $1 AND logo_key IS NOT NULL
 `
@@ -182,6 +243,20 @@ func (q *Queries) UnlistOthers(ctx context.Context, ids []string) (int32, error)
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const unsaveUniversity = `-- name: UnsaveUniversity :exec
+DELETE FROM student_saved_universities WHERE student_client_id = $1 AND university_id = $2
+`
+
+type UnsaveUniversityParams struct {
+	StudentClientID int32
+	UniversityID    string
+}
+
+func (q *Queries) UnsaveUniversity(ctx context.Context, arg UnsaveUniversityParams) error {
+	_, err := q.db.Exec(ctx, unsaveUniversity, arg.StudentClientID, arg.UniversityID)
+	return err
 }
 
 const upsertCountry = `-- name: UpsertCountry :exec

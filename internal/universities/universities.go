@@ -10,6 +10,9 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
+	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -60,6 +63,116 @@ type Summary struct {
 	// HasDetails says whether the university's whole record has been
 	// collected (GET /v1/universities/{id} gives it).
 	HasDetails bool `json:"has_details"`
+	// Facts are the record's few facts the university section filters and
+	// sorts by (in the list only; null while only listed).
+	Facts *Facts `json:"facts,omitempty"`
+}
+
+// Facts are a university's facts for browsing (spec 24.4), read from its
+// record: money in US dollars a year, null where the data has none.
+type Facts struct {
+	Type             *string   `json:"type"`
+	Website          *string   `json:"website"`
+	Tuition          *USDRange `json:"tuition"`
+	Living           *USDRange `json:"living"`
+	AcceptanceRate   *float64  `json:"acceptance_rate"`
+	EnglishBachelors *string   `json:"english_bachelors"`
+	Aid              AidFacts  `json:"aid"`
+	Deadlines        []string  `json:"deadlines"` // the next intake's dates, YYYY-MM-DD, soonest first
+	Region           *string   `json:"region"`
+	// Full: researched in full (admissions page, costs, aid), not only listed.
+	Full bool `json:"full"`
+}
+
+// USDRange is an amount a year in whole US dollars (min = max for one amount).
+type USDRange struct {
+	Min int `json:"min"`
+	Max int `json:"max"`
+}
+
+// AidFacts is what the record says about aid for international undergraduates.
+type AidFacts struct {
+	NeedBased    *bool `json:"need_based"`
+	FullNeed     *bool `json:"full_need"`
+	Merit        *bool `json:"merit"`
+	Scholarships int   `json:"scholarships"`
+}
+
+// record is the part of a university's record Facts are read from.
+type record struct {
+	Type             *string `json:"type"`
+	Website          *string `json:"website"`
+	AdmissionsURL    *string `json:"admissions_url"`
+	EnglishBachelors *string `json:"english_bachelors"`
+	Tuition          *money  `json:"tuition"`
+	LivingCost       *money  `json:"living_cost"`
+	Region           *struct {
+		Name string `json:"name"`
+	} `json:"region"`
+	Aid *struct {
+		NeedBased    *bool             `json:"need_based_international"`
+		FullNeed     *bool             `json:"meets_full_need_international"`
+		Merit        *bool             `json:"merit_scholarships_international"`
+		Scholarships []json.RawMessage `json:"scholarships"`
+	} `json:"aid"`
+	Admissions *struct {
+		AcceptanceRate *struct {
+			Value *float64 `json:"value"`
+		} `json:"acceptance_rate"`
+		Deadlines []struct {
+			Date string `json:"date"`
+		} `json:"deadlines"`
+	} `json:"admissions"`
+}
+
+// money is the data's money object (README 4.2), in its dollar figures.
+type money struct {
+	USD    *float64 `json:"usd"`
+	USDMin *float64 `json:"usd_min"`
+	USDMax *float64 `json:"usd_max"`
+}
+
+func (m *money) usd() *USDRange {
+	switch {
+	case m == nil:
+		return nil
+	case m.USD != nil:
+		return &USDRange{int(*m.USD), int(*m.USD)}
+	case m.USDMin != nil && m.USDMax != nil:
+		return &USDRange{int(*m.USDMin), int(*m.USDMax)}
+	}
+	return nil
+}
+
+// factsOf reads a record's Facts (nil for no record or one that can't be read).
+func factsOf(details []byte) *Facts {
+	if details == nil {
+		return nil
+	}
+	var r record
+	if json.Unmarshal(details, &r) != nil {
+		return nil
+	}
+	f := &Facts{Type: r.Type, Website: r.Website, Tuition: r.Tuition.usd(), Living: r.LivingCost.usd(), EnglishBachelors: r.EnglishBachelors, Deadlines: []string{}}
+	f.Full = r.AdmissionsURL != nil && f.Tuition != nil
+	if r.Region != nil && r.Region.Name != "" {
+		f.Region = &r.Region.Name
+	}
+	if r.Aid != nil {
+		f.Aid = AidFacts{NeedBased: r.Aid.NeedBased, FullNeed: r.Aid.FullNeed, Merit: r.Aid.Merit, Scholarships: len(r.Aid.Scholarships)}
+	}
+	if a := r.Admissions; a != nil {
+		if a.AcceptanceRate != nil {
+			f.AcceptanceRate = a.AcceptanceRate.Value
+		}
+		for _, d := range a.Deadlines {
+			if len(d.Date) == len("2006-01-02") {
+				f.Deadlines = append(f.Deadlines, d.Date)
+			}
+		}
+		sort.Strings(f.Deadlines)
+	}
+	return f
 }
 
 // Detail is a university's card: its summary, the whole record and its
@@ -88,6 +201,9 @@ type Logo struct {
 type Service struct {
 	pool  *pgxpool.Pool
 	store Store
+
+	mu     sync.Mutex
+	cached List // the last list worked out, by version
 }
 
 // NewService: store may be nil (no logos served).
@@ -133,25 +249,36 @@ func raw(b []byte) json.RawMessage {
 	return b
 }
 
-// List gives every listed university.
+// List gives every listed university. It is worked out again only when
+// the data's version changes.
 func (s *Service) List(ctx context.Context) (List, error) {
 	q := universitiesdb.New(s.pool)
 	v, err := q.ListVersion(ctx)
 	if err != nil {
 		return List{}, err
 	}
+	version := fmt.Sprintf("%d-%d", v.N, v.Latest.Time.UnixMilli())
+	s.mu.Lock()
+	cached := s.cached
+	s.mu.Unlock()
+	if cached.Version == version {
+		return cached, nil
+	}
 	rows, err := q.ListedUniversities(ctx)
 	if err != nil {
 		return List{}, err
 	}
-	out := List{Version: fmt.Sprintf("%d-%d", v.N, v.Latest.Time.UnixMilli()), Universities: make([]Summary, 0, len(rows))}
+	out := List{Version: version, Universities: make([]Summary, 0, len(rows))}
 	for _, r := range rows {
 		out.Universities = append(out.Universities, Summary{
 			ID: r.ID, Name: r.Name, ShortName: text(r.ShortName), Country: r.Country, City: text(r.City),
 			Location: location(r.Lat, r.Lng), QS: qs(r.QsRank, r.QsDisplay), LogoURL: LogoURL(r.ID, r.LogoSha256),
-			SAT: raw(r.Sat), HasDetails: r.HasDetails,
+			SAT: raw(r.Sat), HasDetails: r.Details != nil, Facts: factsOf(r.Details),
 		})
 	}
+	s.mu.Lock()
+	s.cached = out
+	s.mu.Unlock()
 	return out, nil
 }
 
@@ -228,4 +355,44 @@ func (s *Service) Logo(ctx context.Context, id string) (Logo, error) {
 		return Logo{}, err
 	}
 	return Logo{Body: obj.Body, ContentType: r.LogoType.String, SHA256: r.LogoSha256.String}, nil
+}
+
+// Saved is a university a student saved to their list.
+type Saved struct {
+	ID      string    `json:"id"`
+	SavedAt time.Time `json:"saved_at"`
+}
+
+// SavedOf is a student's list, newest first.
+func (s *Service) SavedOf(ctx context.Context, student int32) ([]Saved, error) {
+	rows, err := universitiesdb.New(s.pool).SavedUniversities(ctx, student)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Saved, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Saved{ID: r.UniversityID, SavedAt: r.SavedAt.Time.UTC()})
+	}
+	return out, nil
+}
+
+// Save puts a university on a student's list (or takes it off). ErrNotFound
+// for an unknown university.
+func (s *Service) Save(ctx context.Context, student int32, id string, on bool) error {
+	q := universitiesdb.New(s.pool)
+	if !on {
+		return q.UnsaveUniversity(ctx, universitiesdb.UnsaveUniversityParams{StudentClientID: student, UniversityID: id})
+	}
+	if !IDPattern.MatchString(id) {
+		return ErrNotFound
+	}
+	ok, err := q.UniversityExists(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	_, err = q.SaveUniversity(ctx, universitiesdb.SaveUniversityParams{StudentClientID: student, UniversityID: id})
+	return err
 }

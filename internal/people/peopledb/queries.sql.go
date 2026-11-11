@@ -788,6 +788,22 @@ func (q *Queries) MoveStudentReviews(ctx context.Context, arg MoveStudentReviews
 	return err
 }
 
+const moveStudentSavedUniversities = `-- name: MoveStudentSavedUniversities :exec
+INSERT INTO student_saved_universities (student_client_id, university_id, saved_at)
+SELECT $1::int, university_id, saved_at FROM student_saved_universities WHERE student_client_id = $2::int
+ON CONFLICT DO NOTHING
+`
+
+type MoveStudentSavedUniversitiesParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentSavedUniversities(ctx context.Context, arg MoveStudentSavedUniversitiesParams) error {
+	_, err := q.db.Exec(ctx, moveStudentSavedUniversities, arg.ToID, arg.FromID)
+	return err
+}
+
 const openIssues = `-- name: OpenIssues :many
 SELECT i.id, i.person_kind, i.person_id, i.kind, i.detail, i.first_seen_at,
        coalesce(st.first_name, t.first_name, '')::text AS first_name,

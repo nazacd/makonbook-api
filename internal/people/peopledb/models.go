@@ -611,6 +611,12 @@ type StudentGoal struct {
 	UniversityID    pgtype.Text
 }
 
+type StudentSavedUniversity struct {
+	StudentClientID int32
+	UniversityID    string
+	SavedAt         pgtype.Timestamptz
+}
+
 type SyncCursor struct {
 	Name      string
 	Value     string
