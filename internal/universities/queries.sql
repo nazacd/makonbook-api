@@ -42,7 +42,7 @@ ON CONFLICT (code) DO UPDATE SET details = EXCLUDED.details,
                       ELSE university_countries.updated_at END;
 
 -- name: ListedUniversities :many
-SELECT id, name, short_name, country, city, lat, lng, qs_rank, qs_display, sat, logo_sha256, (details IS NOT NULL)::boolean AS has_details
+SELECT id, name, short_name, country, city, lat, lng, qs_rank, qs_display, sat, logo_sha256, details
 FROM universities WHERE listed ORDER BY position, id;
 
 -- name: ListVersion :one
@@ -56,3 +56,19 @@ SELECT details FROM university_countries WHERE code = @code;
 
 -- name: UniversityLogo :one
 SELECT logo_key, logo_type, logo_sha256 FROM universities WHERE id = @id AND logo_key IS NOT NULL;
+
+-- A student's saved universities (spec 24.4), newest first.
+-- name: SavedUniversities :many
+SELECT university_id, saved_at FROM student_saved_universities
+WHERE student_client_id = @student_client_id ORDER BY saved_at DESC;
+
+-- name: SaveUniversity :execrows
+INSERT INTO student_saved_universities (student_client_id, university_id)
+SELECT @student_client_id, id FROM universities WHERE id = @university_id
+ON CONFLICT DO NOTHING;
+
+-- name: UniversityExists :one
+SELECT EXISTS (SELECT 1 FROM universities WHERE id = @id);
+
+-- name: UnsaveUniversity :exec
+DELETE FROM student_saved_universities WHERE student_client_id = @student_client_id AND university_id = @university_id;

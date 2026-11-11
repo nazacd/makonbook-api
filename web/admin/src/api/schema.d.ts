@@ -1577,6 +1577,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/universities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The universities the student saved (students) */
+        get: operations["mySavedUniversities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/universities/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Save a university to the student's list */
+        put: operations["saveUniversity"];
+        post?: never;
+        /** Take a university off the student's list */
+        delete: operations["unsaveUniversity"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/universities/{id}/logo": {
         parameters: {
             query?: never;
@@ -3239,6 +3276,40 @@ export interface components {
             sat: null | components["schemas"]["UniversitySAT"];
             /** @description Whether its whole record has been collected (the card's details) */
             has_details: boolean;
+            /** @description In the list only: the record's facts for browsing (spec 24.5); absent while only listed */
+            facts?: components["schemas"]["UniversityFacts"];
+        };
+        UniversityFacts: {
+            /** @enum {string|null} */
+            type: "public" | "private" | null;
+            website: string | null;
+            /** @description International undergraduate tuition a year */
+            tuition: null | components["schemas"]["USDRange"];
+            /** @description The university's own living-cost estimate a year */
+            living: null | components["schemas"]["USDRange"];
+            /** @description 0–1 */
+            acceptance_rate: number | null;
+            /** @enum {string|null} */
+            english_bachelors: "all" | "some" | "none" | null;
+            aid: {
+                need_based: boolean | null;
+                /** @description Claims to meet full need for internationals */
+                full_need: boolean | null;
+                merit: boolean | null;
+                /** @description Notable scholarships open to internationals */
+                scholarships: number;
+            };
+            /** @description The next intake's, soonest first */
+            deadlines: string[];
+            /** @description Where the country alone would mislead: "Northern Cyprus" */
+            region: string | null;
+            /** @description Researched in full (admissions page and costs), not only listed */
+            full: boolean;
+        };
+        USDRange: {
+            /** @description Whole US dollars */
+            min: number;
+            max: number;
         };
         UniversitySAT: {
             /** @enum {string} */
@@ -7717,6 +7788,79 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    mySavedUniversities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        saved: {
+                            id: string;
+                            /** Format: date-time */
+                            saved_at: string;
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    saveUniversity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved (or already) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    unsaveUniversity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
         };
     };
     getUniversityLogo: {

@@ -1235,6 +1235,7 @@ universities also feed a university section later (its cards are already served)
   `ETag` is the list's version (304 when unchanged); the apps load it once.
 - `GET /v1/universities/{id}` (signed in): the summary, `details` (the whole record without the collectors'
   `doubts`, or null) and `country_details`. `404 not_found`.
+- `GET /v1/universities` also gives each university's `facts` for browsing (24.5).
 - `GET /v1/universities/{id}/logo` (no sign-in, for `<img>`): from the bucket; `logo_url` carries `?v=` (the
   content's hash), and such a URL is cached for good; the SVG headers as 22.7's.
 - The **dream university** is in the goals (9.6): `GET /v1/me/goals` gives `university_id` and `university`
@@ -1250,7 +1251,21 @@ universities          (id slug PK, name, short_name, country, city, lat, lng, qs
                        sat jsonb, details jsonb, logo_key, logo_type, logo_sha256, listed, position, updated_at)
 university_countries  (code PK, details jsonb, updated_at)
 student_goals         + university_id → universities (set null if deleted)
+student_saved_universities (student_client_id, university_id, saved_at)
 ```
+
+### 24.5 The university section (web, built)
+Every listed university, to browse: search, filters (country and continent, cost a year, aid, acceptance
+rate, SAT policy, English bachelor's, public or private, the student's list) and sorts (QS rank, cost,
+acceptance rate, deadline, name). The list carries, per university, `facts` read from its record (type,
+website, tuition and living cost in dollars a year, acceptance rate, English bachelor's, aid, the next
+intake's deadlines, region, whether it was researched in full), worked out again only when the data
+changes. A university's page shows its whole record: admissions (SAT policy and the admitted middle 50 %
+against the student's own score, English tests, interview, how and when to apply), costs, aid and
+scholarships, and its country's student visa, work rights and post-study work, each fact with its source.
+Fields not collected yet say so; nothing is guessed. Students **save universities to a list**
+(`GET /v1/me/universities`, `PUT`/`DELETE /v1/me/universities/{id}`) and set one as their dream university.
+The visa difficulty level the collectors suggest is not shown until SATMAKON reviews it; the facts behind it are.
 
 
 ## 25. The Library (built, for the web; D41)

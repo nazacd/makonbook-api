@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/nazacd/makonbook-api/internal/auth"
+	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/httpx"
 )
 
@@ -24,6 +26,40 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/universities", h.require(h.list))
 	mux.HandleFunc("GET /v1/universities/{id}", h.require(h.get))
 	mux.HandleFunc("GET /v1/universities/{id}/logo", h.logo)
+	mux.HandleFunc("GET /v1/me/universities", h.require(h.student(h.saved)))
+	mux.HandleFunc("PUT /v1/me/universities/{id}", h.require(h.student(h.save(true))))
+	mux.HandleFunc("DELETE /v1/me/universities/{id}", h.require(h.student(h.save(false))))
+}
+
+func (h *Handler) saved(w http.ResponseWriter, r *http.Request, student int32) {
+	list, err := h.svc.SavedOf(r.Context(), student)
+	if err != nil {
+		h.fail(w, r, "saved", err)
+		return
+	}
+	httpx.WriteJSON(w, r, http.StatusOK, map[string]any{"saved": list})
+}
+
+func (h *Handler) save(on bool) func(http.ResponseWriter, *http.Request, int32) {
+	return func(w http.ResponseWriter, r *http.Request, student int32) {
+		if err := h.svc.Save(r.Context(), student, r.PathValue("id"), on); err != nil {
+			h.fail(w, r, "save", err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// student lets only students through.
+func (h *Handler) student(next func(http.ResponseWriter, *http.Request, int32)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p, _ := auth.PrincipalFrom(r.Context())
+		if p.Kind != people.KindStudent {
+			httpx.WriteError(w, r, http.StatusForbidden, httpx.CodeForbidden, "only students keep a list of universities")
+			return
+		}
+		next(w, r, p.ID)
+	}
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
