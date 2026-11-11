@@ -11,6 +11,172 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const addDeck = `-- name: AddDeck :exec
+INSERT INTO vocab_deck_adds (student_client_id, deck_id) VALUES ($1, $2) ON CONFLICT DO NOTHING
+`
+
+type AddDeckParams struct {
+	StudentClientID int32
+	DeckID          pgtype.UUID
+}
+
+func (q *Queries) AddDeck(ctx context.Context, arg AddDeckParams) error {
+	_, err := q.db.Exec(ctx, addDeck, arg.StudentClientID, arg.DeckID)
+	return err
+}
+
+const allDeckWords = `-- name: AllDeckWords :many
+SELECT id, lower(word)::text AS key FROM vocab_user_words WHERE deck_id = $1 AND removed_at IS NULL
+`
+
+type AllDeckWordsRow struct {
+	ID  pgtype.UUID
+	Key string
+}
+
+func (q *Queries) AllDeckWords(ctx context.Context, deckID pgtype.UUID) ([]AllDeckWordsRow, error) {
+	rows, err := q.db.Query(ctx, allDeckWords, deckID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AllDeckWordsRow
+	for rows.Next() {
+		var i AllDeckWordsRow
+		if err := rows.Scan(&i.ID, &i.Key); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const classmates = `-- name: Classmates :many
+SELECT DISTINCT e2.student_client_id
+FROM enrollments e1 JOIN enrollments e2 ON e2.group_id = e1.group_id
+JOIN groups g ON g.id = e1.group_id AND g.removed_at IS NULL
+WHERE e1.student_client_id = $1
+  AND (e1.begin_date IS NULL OR e1.begin_date <= $2::date) AND (e1.end_date IS NULL OR e1.end_date >= $2::date)
+  AND (e2.begin_date IS NULL OR e2.begin_date <= $2::date) AND (e2.end_date IS NULL OR e2.end_date >= $2::date)
+`
+
+type ClassmatesParams struct {
+	StudentClientID int32
+	Today           pgtype.Date
+}
+
+// The students who share a group with this one now (this one included).
+func (q *Queries) Classmates(ctx context.Context, arg ClassmatesParams) ([]int32, error) {
+	rows, err := q.db.Query(ctx, classmates, arg.StudentClientID, arg.Today)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int32
+	for rows.Next() {
+		var student_client_id int32
+		if err := rows.Scan(&student_client_id); err != nil {
+			return nil, err
+		}
+		items = append(items, student_client_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const communityDecks = `-- name: CommunityDecks :many
+SELECT d.id, d.owner_client_id, d.title, d.description, d.published_at, d.hidden_at, d.hidden_reason,
+       st.first_name AS owner_first, st.last_name AS owner_last,
+       (SELECT count(*) FROM vocab_deck_adds a WHERE a.deck_id = d.id)::int AS adds,
+       (SELECT count(*) FROM vocab_user_words w WHERE w.deck_id = d.id AND w.removed_at IS NULL)::int AS words,
+       (SELECT count(*) FROM vocab_deck_reports p WHERE p.deck_id = d.id AND p.resolved_at IS NULL)::int AS reports,
+       EXISTS (SELECT 1 FROM vocab_deck_adds a WHERE a.deck_id = d.id AND a.student_client_id = $1::int) AS added
+FROM vocab_user_decks d JOIN students st ON st.client_id = d.owner_client_id
+WHERE d.deleted_at IS NULL AND d.published_at IS NOT NULL
+  AND (d.hidden_at IS NULL OR $2::bool)
+  AND (NOT $2::bool OR d.hidden_at IS NOT NULL
+       OR EXISTS (SELECT 1 FROM vocab_deck_reports p WHERE p.deck_id = d.id AND p.resolved_at IS NULL))
+  AND ($3::text = '' OR d.title ILIKE '%' || $3::text || '%' OR d.description ILIKE '%' || $3::text || '%')
+ORDER BY adds DESC, d.published_at DESC
+LIMIT 200
+`
+
+type CommunityDecksParams struct {
+	Student    int32
+	Moderation bool
+	Q          string
+}
+
+type CommunityDecksRow struct {
+	ID            pgtype.UUID
+	OwnerClientID int32
+	Title         string
+	Description   string
+	PublishedAt   pgtype.Timestamptz
+	HiddenAt      pgtype.Timestamptz
+	HiddenReason  pgtype.Text
+	OwnerFirst    string
+	OwnerLast     string
+	Adds          int32
+	Words         int32
+	Reports       int32
+	Added         bool
+}
+
+// The community: published decks nobody hid (teachers, with reported ones:
+// hidden ones too, and those with open reports first).
+func (q *Queries) CommunityDecks(ctx context.Context, arg CommunityDecksParams) ([]CommunityDecksRow, error) {
+	rows, err := q.db.Query(ctx, communityDecks, arg.Student, arg.Moderation, arg.Q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CommunityDecksRow
+	for rows.Next() {
+		var i CommunityDecksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerClientID,
+			&i.Title,
+			&i.Description,
+			&i.PublishedAt,
+			&i.HiddenAt,
+			&i.HiddenReason,
+			&i.OwnerFirst,
+			&i.OwnerLast,
+			&i.Adds,
+			&i.Words,
+			&i.Reports,
+			&i.Added,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const countOwnDecks = `-- name: CountOwnDecks :one
+
+SELECT count(*)::int FROM vocab_user_decks WHERE owner_client_id = $1 AND deleted_at IS NULL
+`
+
+// Decks ----------------------------------------------------------------------
+func (q *Queries) CountOwnDecks(ctx context.Context, owner int32) (int32, error) {
+	row := q.db.QueryRow(ctx, countOwnDecks, owner)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countWords = `-- name: CountWords :one
 SELECT count(*)::int FROM vocab_words w JOIN vocab_lists l ON l.id = w.list_id
 WHERE w.removed_at IS NULL AND l.removed_at IS NULL
@@ -93,6 +259,217 @@ func (q *Queries) DeckWords(ctx context.Context) ([]DeckWordsRow, error) {
 	return items, nil
 }
 
+const deckWordsOf = `-- name: DeckWordsOf :many
+SELECT deck_id, id, word, part_of_speech, definition, example
+FROM vocab_user_words WHERE deck_id = ANY ($1::uuid[]) AND removed_at IS NULL
+ORDER BY deck_id, position
+`
+
+type DeckWordsOfRow struct {
+	DeckID       pgtype.UUID
+	ID           pgtype.UUID
+	Word         string
+	PartOfSpeech pgtype.Text
+	Definition   string
+	Example      string
+}
+
+func (q *Queries) DeckWordsOf(ctx context.Context, decks []pgtype.UUID) ([]DeckWordsOfRow, error) {
+	rows, err := q.db.Query(ctx, deckWordsOf, decks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DeckWordsOfRow
+	for rows.Next() {
+		var i DeckWordsOfRow
+		if err := rows.Scan(
+			&i.DeckID,
+			&i.ID,
+			&i.Word,
+			&i.PartOfSpeech,
+			&i.Definition,
+			&i.Example,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const deleteDeck = `-- name: DeleteDeck :exec
+UPDATE vocab_user_decks SET deleted_at = now(), updated_at = now() WHERE id = $1
+`
+
+func (q *Queries) DeleteDeck(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteDeck, id)
+	return err
+}
+
+const gameBests = `-- name: GameBests :many
+SELECT game, count(*)::int AS plays,
+       coalesce(min(duration_ms + mistakes * 5000) FILTER (WHERE game = 'pairs'), 0)::int AS best_ms,
+       max(score)::int AS best_score,
+       max(total)::int AS best_total,
+       coalesce(sum(points), 0)::int AS points
+FROM vocab_game_results WHERE student_client_id = $1
+GROUP BY game
+`
+
+type GameBestsRow struct {
+	Game      string
+	Plays     int32
+	BestMs    int32
+	BestScore int32
+	BestTotal int32
+	Points    int32
+}
+
+// A student's games: plays and the best of each (Pairs: the quickest clean
+// round; the others: the highest score).
+func (q *Queries) GameBests(ctx context.Context, studentClientID int32) ([]GameBestsRow, error) {
+	rows, err := q.db.Query(ctx, gameBests, studentClientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GameBestsRow
+	for rows.Next() {
+		var i GameBestsRow
+		if err := rows.Scan(
+			&i.Game,
+			&i.Plays,
+			&i.BestMs,
+			&i.BestScore,
+			&i.BestTotal,
+			&i.Points,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const gamePointsBetween = `-- name: GamePointsBetween :one
+
+SELECT coalesce(sum(points), 0)::int FROM vocab_game_results
+WHERE student_client_id = $1 AND played_at >= $2 AND played_at < $3
+`
+
+type GamePointsBetweenParams struct {
+	StudentClientID int32
+	Since           pgtype.Timestamptz
+	Until           pgtype.Timestamptz
+}
+
+// Games ----------------------------------------------------------------------
+// Game points a student already has on a day (school time).
+func (q *Queries) GamePointsBetween(ctx context.Context, arg GamePointsBetweenParams) (int32, error) {
+	row := q.db.QueryRow(ctx, gamePointsBetween, arg.StudentClientID, arg.Since, arg.Until)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const getDeck = `-- name: GetDeck :one
+SELECT d.id, d.owner_client_id, d.title, d.description, d.published_at, d.hidden_at, d.hidden_by, d.hidden_reason, d.deleted_at, d.created_at, d.updated_at, st.first_name AS owner_first, st.last_name AS owner_last,
+       (SELECT count(*) FROM vocab_deck_adds a WHERE a.deck_id = d.id)::int AS adds,
+       (SELECT count(*) FROM vocab_deck_reports p WHERE p.deck_id = d.id AND p.resolved_at IS NULL)::int AS reports
+FROM vocab_user_decks d JOIN students st ON st.client_id = d.owner_client_id
+WHERE d.id = $1 AND d.deleted_at IS NULL
+`
+
+type GetDeckRow struct {
+	ID            pgtype.UUID
+	OwnerClientID int32
+	Title         string
+	Description   string
+	PublishedAt   pgtype.Timestamptz
+	HiddenAt      pgtype.Timestamptz
+	HiddenBy      pgtype.Int4
+	HiddenReason  pgtype.Text
+	DeletedAt     pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	OwnerFirst    string
+	OwnerLast     string
+	Adds          int32
+	Reports       int32
+}
+
+func (q *Queries) GetDeck(ctx context.Context, id pgtype.UUID) (GetDeckRow, error) {
+	row := q.db.QueryRow(ctx, getDeck, id)
+	var i GetDeckRow
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerClientID,
+		&i.Title,
+		&i.Description,
+		&i.PublishedAt,
+		&i.HiddenAt,
+		&i.HiddenBy,
+		&i.HiddenReason,
+		&i.DeletedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerFirst,
+		&i.OwnerLast,
+		&i.Adds,
+		&i.Reports,
+	)
+	return i, err
+}
+
+const groupGames = `-- name: GroupGames :many
+SELECT student_client_id,
+       count(*) FILTER (WHERE played_at >= $1)::int AS games_week,
+       coalesce(sum(points) FILTER (WHERE played_at >= $2), 0)::int AS game_points_month
+FROM vocab_game_results
+WHERE student_client_id = ANY ($3::int[]) AND played_at >= least($1, $2)
+GROUP BY student_client_id
+`
+
+type GroupGamesParams struct {
+	WeekFrom  pgtype.Timestamptz
+	MonthFrom pgtype.Timestamptz
+	Students  []int32
+}
+
+type GroupGamesRow struct {
+	StudentClientID int32
+	GamesWeek       int32
+	GamePointsMonth int32
+}
+
+// Each student's games this week and points this month (GroupProgress's students).
+func (q *Queries) GroupGames(ctx context.Context, arg GroupGamesParams) ([]GroupGamesRow, error) {
+	rows, err := q.db.Query(ctx, groupGames, arg.WeekFrom, arg.MonthFrom, arg.Students)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GroupGamesRow
+	for rows.Next() {
+		var i GroupGamesRow
+		if err := rows.Scan(&i.StudentClientID, &i.GamesWeek, &i.GamePointsMonth); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const groupProgress = `-- name: GroupProgress :many
 WITH students_now AS (
     SELECT DISTINCT st.client_id, st.first_name, st.last_name
@@ -161,6 +538,67 @@ func (q *Queries) GroupProgress(ctx context.Context, arg GroupProgressParams) ([
 	return items, nil
 }
 
+const groupRecentGames = `-- name: GroupRecentGames :many
+SELECT g.id, g.student_client_id, st.first_name, st.last_name, g.game, g.score, g.total, g.mistakes,
+       g.duration_ms, g.missed, g.played_at
+FROM vocab_game_results g JOIN students st ON st.client_id = g.student_client_id
+WHERE g.student_client_id = ANY ($1::int[])
+ORDER BY g.played_at DESC
+LIMIT $2
+`
+
+type GroupRecentGamesParams struct {
+	Students []int32
+	Lim      int32
+}
+
+type GroupRecentGamesRow struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	FirstName       string
+	LastName        string
+	Game            string
+	Score           int32
+	Total           int32
+	Mistakes        int32
+	DurationMs      int32
+	Missed          []pgtype.UUID
+	PlayedAt        pgtype.Timestamptz
+}
+
+// The latest games of a group's students now, for its teacher.
+func (q *Queries) GroupRecentGames(ctx context.Context, arg GroupRecentGamesParams) ([]GroupRecentGamesRow, error) {
+	rows, err := q.db.Query(ctx, groupRecentGames, arg.Students, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GroupRecentGamesRow
+	for rows.Next() {
+		var i GroupRecentGamesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.StudentClientID,
+			&i.FirstName,
+			&i.LastName,
+			&i.Game,
+			&i.Score,
+			&i.Total,
+			&i.Mistakes,
+			&i.DurationMs,
+			&i.Missed,
+			&i.PlayedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const haveImages = `-- name: HaveImages :many
 SELECT file FROM vocab_images WHERE file = ANY ($1::text[])
 `
@@ -183,6 +621,107 @@ func (q *Queries) HaveImages(ctx context.Context, files []string) ([]string, err
 		return nil, err
 	}
 	return items, nil
+}
+
+const hideDeck = `-- name: HideDeck :exec
+UPDATE vocab_user_decks SET hidden_at = now(), hidden_by = $1, hidden_reason = $2, updated_at = now()
+WHERE id = $3
+`
+
+type HideDeckParams struct {
+	Teacher pgtype.Int4
+	Reason  pgtype.Text
+	ID      pgtype.UUID
+}
+
+func (q *Queries) HideDeck(ctx context.Context, arg HideDeckParams) error {
+	_, err := q.db.Exec(ctx, hideDeck, arg.Teacher, arg.Reason, arg.ID)
+	return err
+}
+
+const insertDeck = `-- name: InsertDeck :one
+INSERT INTO vocab_user_decks (owner_client_id, title, description) VALUES ($1, $2, $3)
+RETURNING id
+`
+
+type InsertDeckParams struct {
+	Owner       int32
+	Title       string
+	Description string
+}
+
+func (q *Queries) InsertDeck(ctx context.Context, arg InsertDeckParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, insertDeck, arg.Owner, arg.Title, arg.Description)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const insertDeckWord = `-- name: InsertDeckWord :one
+INSERT INTO vocab_user_words (deck_id, position, word, part_of_speech, definition, example)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id
+`
+
+type InsertDeckWordParams struct {
+	DeckID       pgtype.UUID
+	Position     int32
+	Word         string
+	PartOfSpeech pgtype.Text
+	Definition   string
+	Example      string
+}
+
+func (q *Queries) InsertDeckWord(ctx context.Context, arg InsertDeckWordParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, insertDeckWord,
+		arg.DeckID,
+		arg.Position,
+		arg.Word,
+		arg.PartOfSpeech,
+		arg.Definition,
+		arg.Example,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const insertGameResult = `-- name: InsertGameResult :execrows
+INSERT INTO vocab_game_results (id, student_client_id, game, score, total, mistakes, duration_ms, missed, played_at, points)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+ON CONFLICT (id) DO NOTHING
+`
+
+type InsertGameResultParams struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Game            string
+	Score           int32
+	Total           int32
+	Mistakes        int32
+	DurationMs      int32
+	Missed          []pgtype.UUID
+	PlayedAt        pgtype.Timestamptz
+	Points          int32
+}
+
+func (q *Queries) InsertGameResult(ctx context.Context, arg InsertGameResultParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertGameResult,
+		arg.ID,
+		arg.StudentClientID,
+		arg.Game,
+		arg.Score,
+		arg.Total,
+		arg.Mistakes,
+		arg.DurationMs,
+		arg.Missed,
+		arg.PlayedAt,
+		arg.Points,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertImage = `-- name: InsertImage :exec
@@ -255,11 +794,24 @@ func (q *Queries) InsertReview(ctx context.Context, arg InsertReviewParams) (int
 const knownWords = `-- name: KnownWords :many
 
 SELECT id FROM vocab_words WHERE id = ANY ($1::uuid[])
+UNION
+SELECT w.id FROM vocab_user_words w JOIN vocab_user_decks d ON d.id = w.deck_id
+WHERE w.id = ANY ($1::uuid[])
+  AND (d.owner_client_id = $2::int
+       OR EXISTS (SELECT 1 FROM vocab_deck_adds a WHERE a.deck_id = d.id AND a.student_client_id = $2::int))
 `
 
+type KnownWordsParams struct {
+	Ids     []pgtype.UUID
+	Student int32
+}
+
 // Reviews ---------------------------------------------------------------------
-func (q *Queries) KnownWords(ctx context.Context, ids []pgtype.UUID) ([]pgtype.UUID, error) {
-	rows, err := q.db.Query(ctx, knownWords, ids)
+// The words among ids a student may review: SAT MAKON's, and those of
+// decks the student owns or added (removed ones too: a late upload of a
+// review made before the word was taken out still counts).
+func (q *Queries) KnownWords(ctx context.Context, arg KnownWordsParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, knownWords, arg.Ids, arg.Student)
 	if err != nil {
 		return nil, err
 	}
@@ -304,6 +856,168 @@ func (q *Queries) ListImages(ctx context.Context, slug string) ([]string, error)
 	return items, nil
 }
 
+const myDecks = `-- name: MyDecks :many
+SELECT d.id, d.owner_client_id, d.title, d.description, d.published_at, d.hidden_at, d.hidden_reason, d.updated_at,
+       st.first_name AS owner_first, st.last_name AS owner_last,
+       (SELECT count(*) FROM vocab_deck_adds a WHERE a.deck_id = d.id)::int AS adds
+FROM vocab_user_decks d JOIN students st ON st.client_id = d.owner_client_id
+WHERE d.deleted_at IS NULL
+  AND (d.owner_client_id = $1::int
+       OR (d.hidden_at IS NULL AND d.published_at IS NOT NULL
+           AND EXISTS (SELECT 1 FROM vocab_deck_adds a WHERE a.deck_id = d.id AND a.student_client_id = $1::int)))
+ORDER BY (d.owner_client_id = $1::int) DESC, d.created_at DESC
+`
+
+type MyDecksRow struct {
+	ID            pgtype.UUID
+	OwnerClientID int32
+	Title         string
+	Description   string
+	PublishedAt   pgtype.Timestamptz
+	HiddenAt      pgtype.Timestamptz
+	HiddenReason  pgtype.Text
+	UpdatedAt     pgtype.Timestamptz
+	OwnerFirst    string
+	OwnerLast     string
+	Adds          int32
+}
+
+// A student's own decks and those they added, newest first.
+func (q *Queries) MyDecks(ctx context.Context, student int32) ([]MyDecksRow, error) {
+	rows, err := q.db.Query(ctx, myDecks, student)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MyDecksRow
+	for rows.Next() {
+		var i MyDecksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerClientID,
+			&i.Title,
+			&i.Description,
+			&i.PublishedAt,
+			&i.HiddenAt,
+			&i.HiddenReason,
+			&i.UpdatedAt,
+			&i.OwnerFirst,
+			&i.OwnerLast,
+			&i.Adds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const openReports = `-- name: OpenReports :one
+SELECT count(*)::int FROM vocab_deck_reports WHERE deck_id = $1 AND resolved_at IS NULL
+`
+
+func (q *Queries) OpenReports(ctx context.Context, deckID pgtype.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, openReports, deckID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const points = `-- name: Points :many
+
+WITH r AS (
+    SELECT student_client_id AS s, count(DISTINCT (word_id, (reviewed_at AT TIME ZONE $1::text)::date))::int AS p
+    FROM vocab_reviews WHERE reviewed_at >= $2 AND reviewed_at < $3
+    GROUP BY 1
+), g AS (
+    SELECT student_client_id AS s, sum(points)::int AS p
+    FROM vocab_game_results WHERE played_at >= $2 AND played_at < $3
+    GROUP BY 1
+), t AS (
+    SELECT s, sum(p)::int AS points FROM (SELECT s, p FROM r UNION ALL SELECT s, p FROM g) x GROUP BY s
+)
+SELECT st.client_id, st.first_name, st.last_name, t.points, c.photo_id
+FROM t JOIN students st ON st.client_id = t.s
+LEFT JOIN credentials c ON c.person_kind = 'student' AND c.person_id = st.client_id
+WHERE st.deactivated_at IS NULL AND t.points > 0
+ORDER BY t.points DESC, st.client_id
+`
+
+type PointsParams struct {
+	Tz    string
+	Since pgtype.Timestamptz
+	Until pgtype.Timestamptz
+}
+
+type PointsRow struct {
+	ClientID  int32
+	FirstName string
+	LastName  string
+	Points    int32
+	PhotoID   pgtype.Text
+}
+
+// Leaderboard ----------------------------------------------------------------
+// Everyone's points in a period: a point for each word reviewed on a day
+// (however often), and the games' points. Students still with us only.
+func (q *Queries) Points(ctx context.Context, arg PointsParams) ([]PointsRow, error) {
+	rows, err := q.db.Query(ctx, points, arg.Tz, arg.Since, arg.Until)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []PointsRow
+	for rows.Next() {
+		var i PointsRow
+		if err := rows.Scan(
+			&i.ClientID,
+			&i.FirstName,
+			&i.LastName,
+			&i.Points,
+			&i.PhotoID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const removeDeckAdd = `-- name: RemoveDeckAdd :exec
+DELETE FROM vocab_deck_adds WHERE student_client_id = $1 AND deck_id = $2
+`
+
+type RemoveDeckAddParams struct {
+	StudentClientID int32
+	DeckID          pgtype.UUID
+}
+
+func (q *Queries) RemoveDeckAdd(ctx context.Context, arg RemoveDeckAddParams) error {
+	_, err := q.db.Exec(ctx, removeDeckAdd, arg.StudentClientID, arg.DeckID)
+	return err
+}
+
+const removeDeckWords = `-- name: RemoveDeckWords :exec
+UPDATE vocab_user_words SET removed_at = now(), updated_at = now()
+WHERE deck_id = $1 AND removed_at IS NULL AND NOT (id = ANY ($2::uuid[]))
+`
+
+type RemoveDeckWordsParams struct {
+	DeckID pgtype.UUID
+	Keep   []pgtype.UUID
+}
+
+func (q *Queries) RemoveDeckWords(ctx context.Context, arg RemoveDeckWordsParams) error {
+	_, err := q.db.Exec(ctx, removeDeckWords, arg.DeckID, arg.Keep)
+	return err
+}
+
 const removeListsExcept = `-- name: RemoveListsExcept :execrows
 UPDATE vocab_lists SET removed_at = now(), updated_at = now()
 WHERE removed_at IS NULL AND NOT (slug = ANY ($1::text[]))
@@ -336,6 +1050,55 @@ func (q *Queries) RemoveWordsExcept(ctx context.Context, arg RemoveWordsExceptPa
 	return result.RowsAffected(), nil
 }
 
+const reportDeck = `-- name: ReportDeck :exec
+INSERT INTO vocab_deck_reports (deck_id, student_client_id, reason) VALUES ($1, $2, $3)
+ON CONFLICT (deck_id, student_client_id) DO UPDATE SET reason = EXCLUDED.reason, created_at = now(), resolved_at = NULL
+`
+
+type ReportDeckParams struct {
+	DeckID          pgtype.UUID
+	StudentClientID int32
+	Reason          string
+}
+
+func (q *Queries) ReportDeck(ctx context.Context, arg ReportDeckParams) error {
+	_, err := q.db.Exec(ctx, reportDeck, arg.DeckID, arg.StudentClientID, arg.Reason)
+	return err
+}
+
+const reportReasons = `-- name: ReportReasons :many
+SELECT reason FROM vocab_deck_reports WHERE deck_id = $1 AND resolved_at IS NULL ORDER BY created_at
+`
+
+func (q *Queries) ReportReasons(ctx context.Context, deckID pgtype.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, reportReasons, deckID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var reason string
+		if err := rows.Scan(&reason); err != nil {
+			return nil, err
+		}
+		items = append(items, reason)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const resolveReports = `-- name: ResolveReports :exec
+UPDATE vocab_deck_reports SET resolved_at = now() WHERE deck_id = $1 AND resolved_at IS NULL
+`
+
+func (q *Queries) ResolveReports(ctx context.Context, deckID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, resolveReports, deckID)
+	return err
+}
+
 const setDeckVersion = `-- name: SetDeckVersion :exec
 INSERT INTO vocab_deck (version) VALUES ($1)
 ON CONFLICT (singleton) DO UPDATE SET version = EXCLUDED.version, built_at = now()
@@ -343,6 +1106,21 @@ ON CONFLICT (singleton) DO UPDATE SET version = EXCLUDED.version, built_at = now
 
 func (q *Queries) SetDeckVersion(ctx context.Context, version string) error {
 	_, err := q.db.Exec(ctx, setDeckVersion, version)
+	return err
+}
+
+const setPublished = `-- name: SetPublished :exec
+UPDATE vocab_user_decks SET published_at = CASE WHEN $1::bool THEN coalesce(published_at, now()) END, updated_at = now()
+WHERE id = $2
+`
+
+type SetPublishedParams struct {
+	Publish bool
+	ID      pgtype.UUID
+}
+
+func (q *Queries) SetPublished(ctx context.Context, arg SetPublishedParams) error {
+	_, err := q.db.Exec(ctx, setPublished, arg.Publish, arg.ID)
 	return err
 }
 
@@ -430,6 +1208,62 @@ func (q *Queries) TeachesGroup(ctx context.Context, arg TeachesGroupParams) (boo
 	return exists, err
 }
 
+const unhideDeck = `-- name: UnhideDeck :exec
+UPDATE vocab_user_decks SET hidden_at = NULL, hidden_by = NULL, hidden_reason = NULL, updated_at = now() WHERE id = $1
+`
+
+func (q *Queries) UnhideDeck(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, unhideDeck, id)
+	return err
+}
+
+const updateDeck = `-- name: UpdateDeck :exec
+UPDATE vocab_user_decks SET title = $1, description = $2, updated_at = now() WHERE id = $3
+`
+
+type UpdateDeckParams struct {
+	Title       string
+	Description string
+	ID          pgtype.UUID
+}
+
+func (q *Queries) UpdateDeck(ctx context.Context, arg UpdateDeckParams) error {
+	_, err := q.db.Exec(ctx, updateDeck, arg.Title, arg.Description, arg.ID)
+	return err
+}
+
+const updateDeckWord = `-- name: UpdateDeckWord :execrows
+UPDATE vocab_user_words SET position = $1, word = $2, part_of_speech = $3,
+    definition = $4, example = $5, updated_at = now()
+WHERE id = $6 AND deck_id = $7 AND removed_at IS NULL
+`
+
+type UpdateDeckWordParams struct {
+	Position     int32
+	Word         string
+	PartOfSpeech pgtype.Text
+	Definition   string
+	Example      string
+	ID           pgtype.UUID
+	DeckID       pgtype.UUID
+}
+
+func (q *Queries) UpdateDeckWord(ctx context.Context, arg UpdateDeckWordParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateDeckWord,
+		arg.Position,
+		arg.Word,
+		arg.PartOfSpeech,
+		arg.Definition,
+		arg.Example,
+		arg.ID,
+		arg.DeckID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const upsertList = `-- name: UpsertList :one
 
 INSERT INTO vocab_lists (slug, title, position)
@@ -483,4 +1317,37 @@ func (q *Queries) UpsertWord(ctx context.Context, arg UpsertWordParams) error {
 		arg.Image,
 	)
 	return err
+}
+
+const wordsByID = `-- name: WordsByID :many
+SELECT id, word, definition FROM vocab_words WHERE id = ANY ($1::uuid[])
+UNION ALL
+SELECT id, word, definition FROM vocab_user_words WHERE id = ANY ($1::uuid[])
+`
+
+type WordsByIDRow struct {
+	ID         pgtype.UUID
+	Word       string
+	Definition string
+}
+
+// Words by id, wherever they come from (for showing missed words).
+func (q *Queries) WordsByID(ctx context.Context, ids []pgtype.UUID) ([]WordsByIDRow, error) {
+	rows, err := q.db.Query(ctx, wordsByID, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WordsByIDRow
+	for rows.Next() {
+		var i WordsByIDRow
+		if err := rows.Scan(&i.ID, &i.Word, &i.Definition); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

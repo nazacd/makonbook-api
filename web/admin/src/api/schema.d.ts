@@ -1099,6 +1099,252 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/vocab/games": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload finished word games (students)
+         * @description Spec 11.4. A round of Pairs, Unscramble or Fill the gap, sent when it
+         *     ends (at most 50 at a time; a result already stored, same id, is
+         *     skipped). Each right answer is worth 2 leaderboard points, a day's
+         *     games (school time) at most 100. Games never change the review log.
+         */
+        post: operations["saveVocabGames"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/vocab/games": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The student's results at each word game */
+        get: operations["myVocabGames"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/vocab/leaderboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * This month's vocabulary leaderboard
+         * @description Spec 11.5. Points: one for each word reviewed on a day (however often),
+         *     and the word games' points. `scope=all` is everyone, with names
+         *     shortened ("Madina K."); `scope=groups` is the students sharing a
+         *     group with the viewer now, with full names (enrolled students only:
+         *     free accounts get 403 `enrolled_only`). The first 50, and the viewer's
+         *     own place in `me` (null when they have no points yet, and for teachers).
+         */
+        get: operations["vocabLeaderboard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/teacher/groups/{id}/vocab/games": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The latest word games the group's students played (its teachers) */
+        get: operations["groupVocabGames"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/vocab/decks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The student's own decks and the community decks they added, with their words
+         * @description Spec 11.6. Study them like SAT MAKON's lists: their words' ids go in
+         *     the review log. A deck a teacher hid stays here for its owner only
+         *     (with `hidden_reason`).
+         */
+        get: operations["myVocabDecks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/vocab/decks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The community's decks (students and teachers)
+         * @description Shared decks nobody hid, most added first (`words` empty: open one for
+         *     them). `q` searches titles and descriptions. Teachers with
+         *     `moderation=1` get the decks to look at instead: hidden ones and those
+         *     with open reports, with `reports`.
+         */
+        get: operations["communityVocabDecks"];
+        put?: never;
+        /**
+         * Make a deck (students)
+         * @description Private until shared. At most 30 decks each, 200 words a deck.
+         */
+        post: operations["createVocabDeck"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/vocab/decks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * A deck with its words
+         * @description Its owner's, a shared one, or (teachers) any shared one, hidden or not, with the open reports' reasons.
+         */
+        get: operations["vocabDeckDetail"];
+        /**
+         * Save a deck (its owner)
+         * @description The whole deck each time. A word keeps its id (and its reviews) when
+         *     sent with it or with the same spelling; words left out are removed. A
+         *     shared deck under 5 words stops being shared.
+         */
+        put: operations["updateVocabDeck"];
+        post?: never;
+        /** Delete a deck (its owner) */
+        delete: operations["deleteVocabDeck"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/vocab/decks/{id}/published": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Share a deck with everyone (its owner) */
+        put: operations["publishVocabDeck"];
+        post?: never;
+        /** Stop sharing a deck (its owner) */
+        delete: operations["unpublishVocabDeck"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/vocab/decks/{id}/added": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Add a community deck to the student's decks */
+        put: operations["addVocabDeck"];
+        post?: never;
+        /** Take an added deck out of the student's decks */
+        delete: operations["removeVocabDeck"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/vocab/decks/{id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report a community deck (students)
+         * @description Three students' open reports hide it until a teacher looks.
+         */
+        post: operations["reportVocabDeck"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/vocab/decks/{id}/hidden": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Hide a community deck (teachers)
+         * @description Out of the community and of everyone's decks but its owner's, who sees the reason. Closes its reports.
+         */
+        put: operations["hideVocabDeck"];
+        post?: never;
+        /**
+         * Keep a deck up, or put a hidden one back (teachers)
+         * @description Closes its open reports.
+         */
+        delete: operations["unhideVocabDeck"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/onboarding": {
         parameters: {
             query?: never;
@@ -2679,6 +2925,87 @@ export interface components {
             stability: number;
             difficulty: number;
             scheduled_days: number;
+        };
+        VocabGameResult: {
+            /**
+             * Format: uuid
+             * @description The app's
+             */
+            id: string;
+            /** @enum {string} */
+            game: "pairs" | "unscramble" | "gap";
+            /** @description Right answers: pairs joined first time, words built without a hint, gaps filled right */
+            score: number;
+            /** @description The round's size: at most 10 (pairs, gap) or 8 (unscramble) */
+            total: number;
+            /** @default 0 */
+            mistakes: number;
+            duration_ms: number;
+            /** @description Words to look at again */
+            missed?: string[];
+            /**
+             * Format: date-time
+             * @description Within the last 30 days
+             */
+            played_at: string;
+        };
+        VocabGameStat: {
+            plays: number;
+            best: number | null;
+        };
+        VocabBoardEntry: {
+            /** @description Equal points share a rank */
+            rank: number;
+            name: string;
+            /** @description A path on the API */
+            photo_url: string | null;
+            points: number;
+            me: boolean;
+        };
+        VocabDeckInput: {
+            title: string;
+            description?: string;
+            words: {
+                /** @description From an earlier answer: keeps the word's reviews */
+                id?: string;
+                word: string;
+                part_of_speech?: string | null;
+                definition: string;
+                example?: string;
+            }[];
+        };
+        VocabUserDeck: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+            description: string;
+            /** @description Its maker, "Madina K." */
+            owner: string;
+            mine: boolean;
+            /** @description The viewer added it to their decks */
+            added: boolean;
+            published: boolean;
+            /** Format: date-time */
+            published_at: string | null;
+            hidden: boolean;
+            /** @description For its owner and teachers */
+            hidden_reason: string | null;
+            /** @description Students who added it */
+            adds: number;
+            word_count: number;
+            /** @description Open reports (teachers only) */
+            reports: number | null;
+            /** @description Empty in the community list */
+            words: {
+                /** Format: uuid */
+                id: string;
+                word: string;
+                part_of_speech: string | null;
+                definition: string;
+                /** @description May be empty */
+                example: string;
+                image: null;
+            }[];
         };
         PracticeCatalogTest: {
             /** @example DAY12 */
@@ -6331,6 +6658,10 @@ export interface operations {
                             reviews_week: number;
                             /** Format: date-time */
                             last_review: string | null;
+                            /** @description Word games played in the last 7 days */
+                            games_week?: number;
+                            /** @description This month's leaderboard points (spec 11.5) */
+                            points_month?: number;
                         }[];
                     };
                 };
@@ -6345,6 +6676,573 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    saveVocabGames: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    results: components["schemas"]["VocabGameResult"][];
+                };
+            };
+        };
+        responses: {
+            /** @description Stored */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        received: number;
+                        added: number;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            /** @description `invalid_games`: a result isn't valid (nothing of the batch is stored) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    myVocabGames: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per game: rounds played and the best (pairs: the quickest time in ms, 5 s added for each wrong pair; the others: the highest score); best is null before the first round */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        games: {
+                            pairs: components["schemas"]["VocabGameStat"];
+                            unscramble: components["schemas"]["VocabGameStat"];
+                            gap: components["schemas"]["VocabGameStat"];
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    vocabLeaderboard: {
+        parameters: {
+            query?: {
+                scope?: "all" | "groups";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The board */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        scope: "all" | "groups";
+                        /** @example 2026-11 */
+                        month: string;
+                        entries: components["schemas"]["VocabBoardEntry"][];
+                        me: components["schemas"]["VocabBoardEntry"] | null;
+                        /** @description Everyone with points this month on this board */
+                        learners: number;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description `enrolled_only`: the groups board, for a free account; `forbidden`: the groups board, for a teacher */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    groupVocabGames: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The last 100, newest first, each with the words missed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        games: {
+                            /** Format: uuid */
+                            id: string;
+                            client_id: number;
+                            first_name: string;
+                            last_name: string;
+                            /** @enum {string} */
+                            game: "pairs" | "unscramble" | "gap";
+                            score: number;
+                            total: number;
+                            mistakes: number;
+                            duration_ms: number;
+                            /** Format: date-time */
+                            played_at: string;
+                            missed: {
+                                /** Format: uuid */
+                                id: string;
+                                word: string;
+                                definition: string;
+                            }[];
+                        }[];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `forbidden`: not a teacher, or not this group's */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    myVocabDecks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Own decks first, then added ones */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        decks: components["schemas"]["VocabUserDeck"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    communityVocabDecks: {
+        parameters: {
+            query?: {
+                q?: string;
+                moderation?: "1";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Up to 200 decks */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        decks: components["schemas"]["VocabUserDeck"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    createVocabDeck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VocabDeckInput"];
+            };
+        };
+        responses: {
+            /** @description Made */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        id: string;
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            /** @description `too_many_decks` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_deck`: the message says what */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    vocabDeckDetail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The deck */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        deck: components["schemas"]["VocabUserDeck"];
+                        /** @description Teachers only */
+                        report_reasons?: string[];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    updateVocabDeck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VocabDeckInput"];
+            };
+        };
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `invalid_deck` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    deleteVocabDeck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    publishVocabDeck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `deck_too_small`: fewer than 5 words */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    unpublishVocabDeck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    addVocabDeck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `own_deck` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    removeVocabDeck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    reportVocabDeck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    reason: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `own_deck` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_deck`: no reason */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    hideVocabDeck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    reason: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `invalid_deck`: no reason */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    unhideVocabDeck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
     myOnboarding: {

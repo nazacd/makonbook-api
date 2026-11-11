@@ -201,7 +201,7 @@ func (s *Service) SaveReviews(ctx context.Context, student int32, reviews []Revi
 		rows = append(rows, row{id, word, r})
 	}
 	q := vocabdb.New(s.pool)
-	known, err := q.KnownWords(ctx, ids)
+	known, err := q.KnownWords(ctx, vocabdb.KnownWordsParams{Ids: ids, Student: student})
 	if err != nil {
 		return 0, err
 	}
@@ -262,6 +262,45 @@ type StudentProgress struct {
 	Learned     int32      `json:"learned"`
 	ReviewsWeek int32      `json:"reviews_week"`
 	LastReview  *time.Time `json:"last_review"`
+	// GamesWeek: word games played in the last 7 days. PointsMonth: the
+	// month's leaderboard points (spec 11.5).
+	GamesWeek   int32 `json:"games_week"`
+	PointsMonth int32 `json:"points_month"`
+}
+
+// AddGameStats fills in the students' games this week and points this month.
+func (s *Service) AddGameStats(ctx context.Context, students []StudentProgress, now time.Time, loc *time.Location) error {
+	if len(students) == 0 {
+		return nil
+	}
+	q := vocabdb.New(s.pool)
+	local := now.In(loc)
+	month := time.Date(local.Year(), local.Month(), 1, 0, 0, 0, 0, loc)
+	ids := make([]int32, 0, len(students))
+	for _, st := range students {
+		ids = append(ids, st.ClientID)
+	}
+	games, err := q.GroupGames(ctx, vocabdb.GroupGamesParams{WeekFrom: ts(now.AddDate(0, 0, -7)), MonthFrom: ts(month), Students: ids})
+	if err != nil {
+		return err
+	}
+	week := map[int32]int32{}
+	for _, g := range games {
+		week[g.StudentClientID] = g.GamesWeek
+	}
+	points, err := q.Points(ctx, vocabdb.PointsParams{Tz: loc.String(), Since: ts(month), Until: ts(month.AddDate(0, 1, 0))})
+	if err != nil {
+		return err
+	}
+	pts := map[int32]int32{}
+	for _, p := range points {
+		pts[p.ClientID] = p.Points
+	}
+	for i := range students {
+		students[i].GamesWeek = week[students[i].ClientID]
+		students[i].PointsMonth = pts[students[i].ClientID]
+	}
+	return nil
 }
 
 // GroupProgress is the vocabulary of a group's students, for one of its

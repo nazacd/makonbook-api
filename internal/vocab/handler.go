@@ -33,6 +33,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/vocab/reviews", h.require(h.student(h.saveReviews)))
 	mux.HandleFunc("GET /v1/me/vocab/reviews", h.require(h.student(h.myReviews)))
 	mux.HandleFunc("GET /v1/teacher/groups/{id}/vocab", h.require(h.groupProgress))
+	h.registerSocial(mux)
 }
 
 func (h *Handler) deck(w http.ResponseWriter, r *http.Request) {
@@ -116,6 +117,9 @@ func (h *Handler) groupProgress(w http.ResponseWriter, r *http.Request) {
 	}
 	y, m, d := time.Now().In(h.location).Date()
 	students, total, err := h.svc.GroupProgress(r.Context(), p.ID, int32(group), time.Date(y, m, d, 0, 0, 0, 0, time.UTC))
+	if err == nil {
+		err = h.svc.AddGameStats(r.Context(), students, time.Now(), h.location)
+	}
 	switch {
 	case errors.Is(err, ErrNotTeacher):
 		httpx.WriteError(w, r, http.StatusForbidden, httpx.CodeForbidden, err.Error())
