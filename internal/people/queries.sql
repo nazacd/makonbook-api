@@ -246,6 +246,17 @@ UPDATE practice_attempts SET student_client_id = @to_id WHERE student_client_id 
 -- name: MoveStudentReviews :exec
 UPDATE vocab_reviews SET student_client_id = @to_id WHERE student_client_id = @from_id;
 
+-- name: MoveStudentGames :exec
+UPDATE vocab_game_results SET student_client_id = @to_id WHERE student_client_id = @from_id;
+
+-- name: MoveStudentDecks :exec
+UPDATE vocab_user_decks SET owner_client_id = @to_id WHERE owner_client_id = @from_id;
+
+-- name: MoveStudentDeckAdds :exec
+INSERT INTO vocab_deck_adds (student_client_id, deck_id, added_at)
+SELECT @to_id::int, deck_id, added_at FROM vocab_deck_adds WHERE student_client_id = @from_id::int
+ON CONFLICT DO NOTHING;
+
 -- name: MoveStudentParked :exec
 UPDATE parked_questions SET student_client_id = @to_id WHERE student_client_id = @from_id;
 

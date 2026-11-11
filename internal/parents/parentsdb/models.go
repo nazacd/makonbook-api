@@ -705,6 +705,34 @@ type VocabDeck struct {
 	BuiltAt   pgtype.Timestamptz
 }
 
+type VocabDeckAdd struct {
+	StudentClientID int32
+	DeckID          pgtype.UUID
+	AddedAt         pgtype.Timestamptz
+}
+
+type VocabDeckReport struct {
+	DeckID          pgtype.UUID
+	StudentClientID int32
+	Reason          string
+	CreatedAt       pgtype.Timestamptz
+	ResolvedAt      pgtype.Timestamptz
+}
+
+type VocabGameResult struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	Game            string
+	Score           int32
+	Total           int32
+	Mistakes        int32
+	DurationMs      int32
+	Missed          []pgtype.UUID
+	PlayedAt        pgtype.Timestamptz
+	Points          int32
+	ReceivedAt      pgtype.Timestamptz
+}
+
 type VocabImage struct {
 	File        string
 	ContentType string
@@ -738,6 +766,33 @@ type VocabReview struct {
 	Difficulty      float32
 	ScheduledDays   int32
 	ReceivedAt      pgtype.Timestamptz
+}
+
+type VocabUserDeck struct {
+	ID            pgtype.UUID
+	OwnerClientID int32
+	Title         string
+	Description   string
+	PublishedAt   pgtype.Timestamptz
+	HiddenAt      pgtype.Timestamptz
+	HiddenBy      pgtype.Int4
+	HiddenReason  pgtype.Text
+	DeletedAt     pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type VocabUserWord struct {
+	ID           pgtype.UUID
+	DeckID       pgtype.UUID
+	Position     int32
+	Word         string
+	PartOfSpeech pgtype.Text
+	Definition   string
+	Example      string
+	RemovedAt    pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type VocabWord struct {

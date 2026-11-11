@@ -654,6 +654,50 @@ func (q *Queries) MoveStudentChoices(ctx context.Context, arg MoveStudentChoices
 	return err
 }
 
+const moveStudentDeckAdds = `-- name: MoveStudentDeckAdds :exec
+INSERT INTO vocab_deck_adds (student_client_id, deck_id, added_at)
+SELECT $1::int, deck_id, added_at FROM vocab_deck_adds WHERE student_client_id = $2::int
+ON CONFLICT DO NOTHING
+`
+
+type MoveStudentDeckAddsParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentDeckAdds(ctx context.Context, arg MoveStudentDeckAddsParams) error {
+	_, err := q.db.Exec(ctx, moveStudentDeckAdds, arg.ToID, arg.FromID)
+	return err
+}
+
+const moveStudentDecks = `-- name: MoveStudentDecks :exec
+UPDATE vocab_user_decks SET owner_client_id = $1 WHERE owner_client_id = $2
+`
+
+type MoveStudentDecksParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentDecks(ctx context.Context, arg MoveStudentDecksParams) error {
+	_, err := q.db.Exec(ctx, moveStudentDecks, arg.ToID, arg.FromID)
+	return err
+}
+
+const moveStudentGames = `-- name: MoveStudentGames :exec
+UPDATE vocab_game_results SET student_client_id = $1 WHERE student_client_id = $2
+`
+
+type MoveStudentGamesParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentGames(ctx context.Context, arg MoveStudentGamesParams) error {
+	_, err := q.db.Exec(ctx, moveStudentGames, arg.ToID, arg.FromID)
+	return err
+}
+
 const moveStudentGoals = `-- name: MoveStudentGoals :exec
 UPDATE student_goals AS s SET student_client_id = $1::int
 WHERE s.student_client_id = $2::int

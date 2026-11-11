@@ -1689,10 +1689,396 @@ paths:
                         learned: { type: integer, description: "Words whose next review is 21 days or more away (Anki's \"mature\")" }
                         reviews_week: { type: integer, description: Reviews in the last 7 days }
                         last_review: { type: [string, "null"], format: date-time }
+                        games_week: { type: integer, description: Word games played in the last 7 days }
+                        points_month: { type: integer, description: "This month's leaderboard points (spec 11.5)" }
         "401": { $ref: "#/components/responses/Error" }
         "403":
           description: "`forbidden`: not a teacher, or not this group's"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/vocab/games:
+    post:
+      summary: Upload finished word games (students)
+      description: |
+        Spec 11.4. A round of Pairs, Unscramble or Fill the gap, sent when it
+        ends (at most 50 at a time; a result already stored, same id, is
+        skipped). Each right answer is worth 2 leaderboard points, a day's
+        games (school time) at most 100. Games never change the review log.
+      operationId: saveVocabGames
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [results]
+              properties:
+                results: { type: array, maxItems: 50, items: { $ref: "#/components/schemas/VocabGameResult" } }
+      responses:
+        "200":
+          description: Stored
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [received, added]
+                properties:
+                  received: { type: integer }
+                  added: { type: integer }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`invalid_games`: a result isn't valid (nothing of the batch is stored)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/me/vocab/games:
+    get:
+      summary: The student's results at each word game
+      operationId: myVocabGames
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: "Per game: rounds played and the best (pairs: the quickest time in ms, 5 s added for each wrong pair; the others: the highest score); best is null before the first round"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [games]
+                properties:
+                  games:
+                    type: object
+                    required: [pairs, unscramble, gap]
+                    properties:
+                      pairs: { $ref: "#/components/schemas/VocabGameStat" }
+                      unscramble: { $ref: "#/components/schemas/VocabGameStat" }
+                      gap: { $ref: "#/components/schemas/VocabGameStat" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/vocab/leaderboard:
+    get:
+      summary: This month's vocabulary leaderboard
+      description: |
+        Spec 11.5. Points: one for each word reviewed on a day (however often),
+        and the word games' points. `scope=all` is everyone, with names
+        shortened ("Madina K."); `scope=groups` is the students sharing a
+        group with the viewer now, with full names (enrolled students only:
+        free accounts get 403 `enrolled_only`). The first 50, and the viewer's
+        own place in `me` (null when they have no points yet, and for teachers).
+      operationId: vocabLeaderboard
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: scope, in: query, schema: { type: string, enum: [all, groups], default: all } }
+      responses:
+        "200":
+          description: The board
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [scope, month, entries, me, learners]
+                properties:
+                  scope: { type: string, enum: [all, groups] }
+                  month: { type: string, example: 2026-11 }
+                  entries: { type: array, items: { $ref: "#/components/schemas/VocabBoardEntry" } }
+                  me: { oneOf: [{ $ref: "#/components/schemas/VocabBoardEntry" }, { type: "null" }] }
+                  learners: { type: integer, description: Everyone with points this month on this board }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`enrolled_only`: the groups board, for a free account; `forbidden`: the groups board, for a teacher"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/teacher/groups/{id}/vocab/games:
+    get:
+      summary: The latest word games the group's students played (its teachers)
+      operationId: groupVocabGames
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: The last 100, newest first, each with the words missed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [games]
+                properties:
+                  games:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, client_id, first_name, last_name, game, score, total, mistakes, duration_ms, played_at, missed]
+                      properties:
+                        id: { type: string, format: uuid }
+                        client_id: { type: integer }
+                        first_name: { type: string }
+                        last_name: { type: string }
+                        game: { type: string, enum: [pairs, unscramble, gap] }
+                        score: { type: integer }
+                        total: { type: integer }
+                        mistakes: { type: integer }
+                        duration_ms: { type: integer }
+                        played_at: { type: string, format: date-time }
+                        missed:
+                          type: array
+                          items:
+                            type: object
+                            required: [id, word, definition]
+                            properties:
+                              id: { type: string, format: uuid }
+                              word: { type: string }
+                              definition: { type: string }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`forbidden`: not a teacher, or not this group's"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/me/vocab/decks:
+    get:
+      summary: The student's own decks and the community decks they added, with their words
+      description: |
+        Spec 11.6. Study them like SAT MAKON's lists: their words' ids go in
+        the review log. A deck a teacher hid stays here for its owner only
+        (with `hidden_reason`).
+      operationId: myVocabDecks
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: Own decks first, then added ones
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [decks]
+                properties:
+                  decks: { type: array, items: { $ref: "#/components/schemas/VocabUserDeck" } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/vocab/decks:
+    get:
+      summary: The community's decks (students and teachers)
+      description: |
+        Shared decks nobody hid, most added first (`words` empty: open one for
+        them). `q` searches titles and descriptions. Teachers with
+        `moderation=1` get the decks to look at instead: hidden ones and those
+        with open reports, with `reports`.
+      operationId: communityVocabDecks
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: moderation, in: query, schema: { type: string, enum: ["1"] } }
+      responses:
+        "200":
+          description: Up to 200 decks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [decks]
+                properties:
+                  decks: { type: array, items: { $ref: "#/components/schemas/VocabUserDeck" } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      summary: Make a deck (students)
+      description: Private until shared. At most 30 decks each, 200 words a deck.
+      operationId: createVocabDeck
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/VocabDeckInput" } } }
+      responses:
+        "201":
+          description: Made
+          content:
+            application/json:
+              schema: { type: object, required: [id], properties: { id: { type: string, format: uuid } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`too_many_decks`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_deck`: the message says what"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/vocab/decks/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: A deck with its words
+      description: Its owner's, a shared one, or (teachers) any shared one, hidden or not, with the open reports' reasons.
+      operationId: vocabDeckDetail
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The deck
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deck]
+                properties:
+                  deck: { $ref: "#/components/schemas/VocabUserDeck" }
+                  report_reasons: { type: array, items: { type: string }, description: Teachers only }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Save a deck (its owner)
+      description: |
+        The whole deck each time. A word keeps its id (and its reviews) when
+        sent with it or with the same spelling; words left out are removed. A
+        shared deck under 5 words stops being shared.
+      operationId: updateVocabDeck
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/VocabDeckInput" } } }
+      responses:
+        "204": { description: Done }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`invalid_deck`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    delete:
+      summary: Delete a deck (its owner)
+      operationId: deleteVocabDeck
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      responses:
+        "204": { description: Done }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /v1/vocab/decks/{id}/published:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      summary: Share a deck with everyone (its owner)
+      operationId: publishVocabDeck
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      responses:
+        "204": { description: Done }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`deck_too_small`: fewer than 5 words"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    delete:
+      summary: Stop sharing a deck (its owner)
+      operationId: unpublishVocabDeck
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      responses:
+        "204": { description: Done }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /v1/vocab/decks/{id}/added:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      summary: Add a community deck to the student's decks
+      operationId: addVocabDeck
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      responses:
+        "204": { description: Done }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`own_deck`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    delete:
+      summary: Take an added deck out of the student's decks
+      operationId: removeVocabDeck
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      responses:
+        "204": { description: Done }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/vocab/decks/{id}/report:
+    post:
+      summary: Report a community deck (students)
+      description: Three students' open reports hide it until a teacher looks.
+      operationId: reportVocabDeck
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [reason], properties: { reason: { type: string, maxLength: 300 } } }
+      responses:
+        "204": { description: Done }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`own_deck`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_deck`: no reason"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/vocab/decks/{id}/hidden:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      summary: Hide a community deck (teachers)
+      description: Out of the community and of everyone's decks but its owner's, who sees the reason. Closes its reports.
+      operationId: hideVocabDeck
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [reason], properties: { reason: { type: string, maxLength: 300 } } }
+      responses:
+        "204": { description: Done }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`invalid_deck`: no reason"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    delete:
+      summary: Keep a deck up, or put a hidden one back (teachers)
+      description: Closes its open reports.
+      operationId: unhideVocabDeck
+      tags: [vocab]
+      security: [{ bearer: [] }]
+      responses:
+        "204": { description: Done }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
 
   /v1/me/onboarding:
     get:
@@ -3690,6 +4076,86 @@ components:
         stability: { type: number }
         difficulty: { type: number }
         scheduled_days: { type: integer, minimum: 0 }
+
+    VocabGameResult:
+      type: object
+      required: [id, game, score, total, duration_ms, played_at]
+      properties:
+        id: { type: string, format: uuid, description: The app's }
+        game: { type: string, enum: [pairs, unscramble, gap] }
+        score: { type: integer, minimum: 0, description: "Right answers: pairs joined first time, words built without a hint, gaps filled right" }
+        total: { type: integer, minimum: 1, description: "The round's size: at most 10 (pairs, gap) or 8 (unscramble)" }
+        mistakes: { type: integer, minimum: 0, default: 0 }
+        duration_ms: { type: integer, minimum: 0 }
+        missed: { type: array, items: { type: string, format: uuid }, description: Words to look at again }
+        played_at: { type: string, format: date-time, description: Within the last 30 days }
+
+    VocabGameStat:
+      type: object
+      required: [plays, best]
+      properties:
+        plays: { type: integer }
+        best: { type: [integer, "null"] }
+
+    VocabBoardEntry:
+      type: object
+      required: [rank, name, photo_url, points, me]
+      properties:
+        rank: { type: integer, description: Equal points share a rank }
+        name: { type: string }
+        photo_url: { type: [string, "null"], description: A path on the API }
+        points: { type: integer }
+        me: { type: boolean }
+
+    VocabDeckInput:
+      type: object
+      required: [title, words]
+      properties:
+        title: { type: string, maxLength: 80 }
+        description: { type: string, maxLength: 300 }
+        words:
+          type: array
+          maxItems: 200
+          items:
+            type: object
+            required: [word, definition]
+            properties:
+              id: { type: string, description: "From an earlier answer: keeps the word's reviews" }
+              word: { type: string, maxLength: 100 }
+              part_of_speech: { type: [string, "null"], maxLength: 30 }
+              definition: { type: string, maxLength: 1000 }
+              example: { type: string, maxLength: 1000 }
+
+    VocabUserDeck:
+      type: object
+      required: [id, title, description, owner, mine, added, published, published_at, hidden, hidden_reason, adds, word_count, reports, words]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string }
+        owner: { type: string, description: "Its maker, \"Madina K.\"" }
+        mine: { type: boolean }
+        added: { type: boolean, description: The viewer added it to their decks }
+        published: { type: boolean }
+        published_at: { type: [string, "null"], format: date-time }
+        hidden: { type: boolean }
+        hidden_reason: { type: [string, "null"], description: For its owner and teachers }
+        adds: { type: integer, description: Students who added it }
+        word_count: { type: integer }
+        reports: { type: [integer, "null"], description: "Open reports (teachers only)" }
+        words:
+          type: array
+          description: Empty in the community list
+          items:
+            type: object
+            required: [id, word, part_of_speech, definition, example, image]
+            properties:
+              id: { type: string, format: uuid }
+              word: { type: string }
+              part_of_speech: { type: [string, "null"] }
+              definition: { type: string }
+              example: { type: string, description: May be empty }
+              image: { type: "null" }
 
     PracticeCatalogTest:
       type: object

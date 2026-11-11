@@ -67,6 +67,7 @@ enrol).
 | D37 | **Assignments** (section 23): teachers give their groups **homework, level checks and exams with deadlines**. Every student of the group gets the **same questions**; work after the deadline is taken and **marked late**; an exam is a mock test whose **first finished attempt** counts (retakes allowed); an assigned curriculum level check or homework **counts for the roadmap**. **Every current teacher of a group** may assign to it; content creation stays with the editors (9.4). | 2026-11-08, the product owner. |
 | D38 | A group whose discipline names the subject but **no level** takes the level from **HolliHop's group level**; without a subject, no roadmap. | 2026-11-08. |
 | D39 | **In-app notifications** (a table, the web's drawer): a new assignment notifies the group's students. Nothing outside the app yet; Telegram later. | 2026-11-08. |
+| D42 | **Vocabulary, social** (section 11.4–11.6): word games (Pairs, Unscramble, Fill the gap) whose results are kept on the server and shown to teachers; a monthly **leaderboard** of everyone (names shortened) for all students, and of their own groups for enrolled students only; **students make decks**, private or shared with everyone, moderated by teachers and by students' reports. | 2026-11-11. |
 | D41 | **The Library** (section 25): SAT MAKON's own books (PDFs), kept in the private `makonbook-library` repository and imported; **everyone signed in reads and downloads** every book; each reader's page is remembered, and a book shows how many people opened it. No uploads by students. | 2026-11-11. |
 | D40 | **A dream university is the main goal** (section 24): about 1500 universities (QS's top 1500, every university in Uzbekistan, the roadmaps' 48), collected in the private `makonbook-universities` repository and imported; QS's rank is shown as QS gives it (the owner's decision, knowing QS's terms); the logos are kept in MakonBook's R2 bucket. | 2026-11-09. |
 
@@ -449,6 +450,37 @@ any line is wrong; the command lists the problems. Images are copied to MakonBoo
   never changed them (a new phone) counts the lists they already studied as on, so progress carries on.
 - **Teachers** (`GET /v1/teacher/groups/{id}/vocab`): per student, words started, words learned (next review 21
   days or more away, Anki's "mature"), reviews in the last 7 days, last review.
+
+### 11.4 Word games (web, built)
+Practice on top of the flashcards, in the web app: **Pairs** (join five words to their meanings, two boards
+against the clock, 5 s added for each wrong pair), **Unscramble** (the meaning shown, the word built from its
+mixed letters, three hints a round), **Fill the gap** (the example sentence without the word, four choices).
+They draw from the lists turned on, the shakiest words first, and **never write to the review log**: only the
+flashcards schedule a word. Each finished round is sent (`POST /v1/vocab/games`, idempotent by id;
+`vocab_game_results`) with its score, mistakes, time and the words missed; the student's bests come back from
+`GET /v1/me/vocab/games` on every device. Teachers see each student's games this week and points this month in
+the group's vocabulary, and the latest rounds with the words missed (`GET /v1/teacher/groups/{id}/vocab/games`).
+
+### 11.5 Leaderboard (built)
+A month's board (school time), worked out when asked: **a point for each word reviewed on a day** (however
+often: rating a word Again ten times is still one point) and **2 points for each right answer in a game**, a
+day's games adding at most 100. `GET /v1/vocab/leaderboard?scope=all` is everyone with points, names shortened
+("Madina K.") with their photo; `scope=groups` is the students sharing a group with the viewer now, with full
+names, for **enrolled students only** (free accounts have no group: 403 `enrolled_only`). The first 50 and the
+viewer's own place.
+
+### 11.6 Students' decks (built)
+A student makes decks of their own words (`vocab_user_decks`, `vocab_user_words`; at most 30 decks, 200 words
+each; word and meaning required, part of speech and example optional). A deck is **private until shared**; a
+shared one (5 words or more) is in the **community** for anyone signed in to look inside and **add** to their own
+decks (`vocab_deck_adds`: the owner's later edits reach them). Their words are studied like SAT MAKON's: their
+ids go in the review log (`vocab_reviews.word_id` no longer has to be one of `vocab_words`; the server takes
+reviews only of words the student may study). A word keeps its id when edited (matched by id or spelling), so
+its reviews follow it; a word taken out is marked removed. **Moderation:** any student can report a community
+deck with a reason; **three open reports hide it** until a teacher looks. Teachers see the hidden and reported
+decks (`GET /v1/vocab/decks?moderation=1`, with the reasons), and **keep** one (closing its reports) or
+**hide** one with a reason its owner sees. A hidden deck leaves the community and everyone's decks but its
+owner's. The phone app shows neither games nor decks yet; reviews of deck words that reach it are ignored.
 
 ### 11.3 Pictures for words (proposal, not built)
 A picture of the example sentence helps a word stick, but it has to be made outside MakonBook, beside the
