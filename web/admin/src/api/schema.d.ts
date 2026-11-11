@@ -3004,7 +3004,8 @@ export interface components {
                 definition: string;
                 /** @description May be empty */
                 example: string;
-                image: null;
+                /** @description Always null (decks have no pictures) */
+                image?: null;
             }[];
         };
         PracticeCatalogTest: {
