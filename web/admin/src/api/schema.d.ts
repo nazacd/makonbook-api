@@ -1469,6 +1469,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/practice/topics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The question bank's domains and skills, with their approved questions (students)
+         * @description The same answer as /v1/teacher/taxonomy, for building a practice set (spec 22.8).
+         */
+        get: operations["practiceTopics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/practice/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Approved questions to browse (students)
+         * @description The teachers' question search; `done` lists the questions on this page the student has submitted in any assessment.
+         */
+        get: operations["practiceQuestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/practice/sets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The student's practice sets, newest first (the last 50) */
+        get: operations["practiceSets"];
+        put?: never;
+        /**
+         * Build a practice set (students)
+         * @description Spec 22.8. Questions drawn from `skills` (none: every skill of the
+         *     subject) at `difficulty` (mixed: about a third easy, a third hard,
+         *     the rest medium), preferring ones the student hasn't had; or
+         *     `question_ids` as they are (a question from the bank). The answer is
+         *     an assessment (kind practice): answer and submit it like any other
+         *     (`/v1/me/assessments/{id}`…). One unfinished set at a time. Free
+         *     accounts get 40 questions a school day.
+         */
+        post: operations["startPractice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/practice/sets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Discard an unfinished practice set */
+        delete: operations["discardPractice"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/assessments/{id}": {
         parameters: {
             query?: never;
@@ -3556,7 +3640,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** @enum {string} */
-            kind: "level_check" | "homework";
+            kind: "level_check" | "homework" | "practice";
             /** @description The course; null for a custom homework assignment */
             roadmap_id: string | null;
             /** @description null for a custom homework assignment */
@@ -3638,6 +3722,8 @@ export interface components {
                     explanation: string;
                 }[];
             };
+            /** @description A practice set (kind practice): what it was built from; null otherwise */
+            practice?: null | components["schemas"]["PracticeInfo"];
         };
         /** @enum {string} */
         AssignmentKind: "homework" | "level_check" | "exam";
@@ -3990,6 +4076,30 @@ export interface components {
                     }[];
                 }[];
             }[];
+        };
+        PracticeInfo: {
+            title: string;
+            /** @enum {string} */
+            subject: "math" | "english";
+            /** @description Empty for every skill of the subject */
+            skills: string[];
+            /** @enum {string} */
+            difficulty: "easy" | "medium" | "hard" | "mixed";
+            /** @description 0: untimed */
+            seconds_per_question: number;
+        };
+        PracticeSet: {
+            /** Format: uuid */
+            id: string;
+            practice: components["schemas"]["PracticeInfo"];
+            questions: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            finished_at: string | null;
+            correct: number | null;
+            total: number | null;
+            percent: number | null;
         };
         TeacherTaxonomy: {
             /** @description math and english: the domains, each with its skills and approved counts */
@@ -4467,7 +4577,7 @@ export interface components {
                  * @description Stable machine-readable code.
                  * @enum {string}
                  */
-                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "invalid_email" | "email_taken" | "email_unavailable" | "telegram_unavailable" | "telegram_no_phone" | "phone_already_set" | "phone_required" | "photo_too_large" | "invalid_photo" | "google_unavailable" | "enrolled_only" | "invalid_onboarding" | "not_needed" | "lesson_locked" | "no_questions" | "finished" | "invalid_answers" | "invalid_assessment" | "invalid_assignment" | "assignment_closed" | "not_open" | "not_an_assessment" | "has_work" | "invalid_page";
+                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "invalid_email" | "email_taken" | "email_unavailable" | "telegram_unavailable" | "telegram_no_phone" | "phone_already_set" | "phone_required" | "photo_too_large" | "invalid_photo" | "google_unavailable" | "enrolled_only" | "invalid_onboarding" | "not_needed" | "lesson_locked" | "no_questions" | "finished" | "invalid_answers" | "invalid_assessment" | "invalid_assignment" | "assignment_closed" | "not_open" | "not_an_assessment" | "has_work" | "invalid_page" | "invalid_games" | "invalid_deck" | "too_many_decks" | "deck_too_small" | "own_deck" | "invalid_practice" | "practice_open" | "practice_limit";
                 /** @description Human-readable explanation; may change. */
                 message: string;
                 /** @description For a rejected form (`invalid_question`): what is wrong, per field (e.g. `stem`, `choices.B`). */
@@ -7569,6 +7679,177 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    practiceTopics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per subject, the domains and their skills */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherTaxonomy"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    practiceQuestions: {
+        parameters: {
+            query: {
+                subject: "math" | "english";
+                skill?: string;
+                difficulty?: "easy" | "medium" | "hard";
+                q?: string;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Previews */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        questions: components["schemas"]["QuestionPreview"][];
+                        total: number;
+                        done: string[];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    practiceSets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The sets, and a free account's daily allowance (null when unlimited) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        sets: components["schemas"]["PracticeSet"][];
+                        free_questions_a_day: number | null;
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    startPractice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    subject: "math" | "english";
+                    skills?: string[];
+                    /**
+                     * @default mixed
+                     * @enum {string}
+                     */
+                    difficulty?: "easy" | "medium" | "hard" | "mixed";
+                    /** @description Without question_ids */
+                    count?: number;
+                    /** @description 0 (untimed) or 15–600 */
+                    seconds_per_question?: number;
+                    question_ids?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description The set */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Assessment"];
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description `practice_limit`: a free account used today's questions; `forbidden`: not a student */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `practice_open`: an unfinished set, given as `open`, to continue or discard; `no_questions` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"] & {
+                        open?: components["schemas"]["Assessment"];
+                    };
+                };
+            };
+            /** @description `invalid_practice` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    discardPractice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discarded */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
     myAssessment: {

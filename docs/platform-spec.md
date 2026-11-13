@@ -1082,6 +1082,18 @@ university_logos    (slug PK, content_type, body bytea, sha256, updated_at)     
 - `stop.logo_url` on each unit of `GET /v1/me/roadmaps/{id}`, and `current.logo_url` in the summaries:
   `/v1/logos/{slug}?v=<first 8 of the sha>` (relative, the API's origin; a new logo is a new URL), or null.
 
+### 22.8 Practice sets and the question bank (built, for the web)
+Students practise outside their roadmap. The **question bank** (`GET /v1/me/practice/topics`, the domains and
+skills with their approved questions; `GET /v1/me/practice/questions`, the teachers' search, each question
+marked `done` once submitted) is browsed by topic and difficulty. A **practice set** (`POST /v1/me/practice/sets`)
+is built from chosen skills (none: the whole subject), a difficulty (easy, medium, hard or mixed), a number of
+questions (1–50) and an optional time a question (15 s–10 min), or from questions picked in the bank. It is an
+assessment of kind `practice` (`roadmap_assessments.practice` holds what was asked for), answered and submitted
+like a level check, graded on submit, with explanations; the web runs the clock and submits when it ends. Drawing
+prefers questions the student hasn't had. One unfinished set at a time (`409 practice_open` gives it back, to
+continue or discard). Free accounts get 40 questions a school day (`403 practice_limit`); enrolled students have
+no limit. Practice sets touch no roadmap progress or assignment.
+
 ## 23. Assignments and notifications (built, for the web)
 
 Teachers give their groups work with deadlines (D37): the reference's Homework, Level Checks and Exams tabs,

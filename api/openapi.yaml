@@ -2251,6 +2251,131 @@ paths:
           description: "`invalid_assessment`: kind isn't level_check or homework, or homework without an index"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
 
+  /v1/me/practice/topics:
+    get:
+      summary: The question bank's domains and skills, with their approved questions (students)
+      description: The same answer as /v1/teacher/taxonomy, for building a practice set (spec 22.8).
+      operationId: practiceTopics
+      tags: [roadmaps]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: Per subject, the domains and their skills
+          content: { application/json: { schema: { $ref: "#/components/schemas/TeacherTaxonomy" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/me/practice/questions:
+    get:
+      summary: Approved questions to browse (students)
+      description: The teachers' question search; `done` lists the questions on this page the student has submitted in any assessment.
+      operationId: practiceQuestions
+      tags: [roadmaps]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: subject, in: query, required: true, schema: { type: string, enum: [math, english] } }
+        - { name: skill, in: query, schema: { type: string } }
+        - { name: difficulty, in: query, schema: { type: string, enum: [easy, medium, hard] } }
+        - { name: q, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 30 } }
+        - { name: offset, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200":
+          description: Previews
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [questions, total, done]
+                properties:
+                  questions: { type: array, items: { $ref: "#/components/schemas/QuestionPreview" } }
+                  total: { type: integer }
+                  done: { type: array, items: { type: string, format: uuid } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/me/practice/sets:
+    get:
+      summary: The student's practice sets, newest first (the last 50)
+      operationId: practiceSets
+      tags: [roadmaps]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The sets, and a free account's daily allowance (null when unlimited)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sets, free_questions_a_day]
+                properties:
+                  sets: { type: array, items: { $ref: "#/components/schemas/PracticeSet" } }
+                  free_questions_a_day: { type: [integer, "null"] }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      summary: Build a practice set (students)
+      description: |
+        Spec 22.8. Questions drawn from `skills` (none: every skill of the
+        subject) at `difficulty` (mixed: about a third easy, a third hard,
+        the rest medium), preferring ones the student hasn't had; or
+        `question_ids` as they are (a question from the bank). The answer is
+        an assessment (kind practice): answer and submit it like any other
+        (`/v1/me/assessments/{id}`…). One unfinished set at a time. Free
+        accounts get 40 questions a school day.
+      operationId: startPractice
+      tags: [roadmaps]
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject]
+              properties:
+                subject: { type: string, enum: [math, english] }
+                skills: { type: array, items: { type: string }, maxItems: 30 }
+                difficulty: { type: string, enum: [easy, medium, hard, mixed], default: mixed }
+                count: { type: integer, minimum: 1, maximum: 50, description: Without question_ids }
+                seconds_per_question: { type: integer, description: "0 (untimed) or 15–600" }
+                question_ids: { type: array, items: { type: string, format: uuid }, maxItems: 50 }
+      responses:
+        "201":
+          description: The set
+          content: { application/json: { schema: { $ref: "#/components/schemas/Assessment" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403":
+          description: "`practice_limit`: a free account used today's questions; `forbidden`: not a student"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "409":
+          description: "`practice_open`: an unfinished set, given as `open`, to continue or discard; `no_questions`"
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Error" }
+                  - type: object
+                    properties:
+                      open: { $ref: "#/components/schemas/Assessment" }
+        "422":
+          description: "`invalid_practice`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/me/practice/sets/{id}:
+    delete:
+      summary: Discard an unfinished practice set
+      operationId: discardPractice
+      tags: [roadmaps]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Discarded }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
   /v1/me/assessments/{id}:
     get:
       summary: One of the student's assessments
@@ -4780,7 +4905,7 @@ components:
       required: [id, kind, roadmap_id, lesson_id, homework_index, assignment, title, subject, created_at, finished_at, questions, images, answers, times, result]
       properties:
         id: { type: string, format: uuid }
-        kind: { type: string, enum: [level_check, homework] }
+        kind: { type: string, enum: [level_check, homework, practice] }
         roadmap_id: { type: [string, "null"], description: "The course; null for a custom homework assignment" }
         lesson_id: { type: [string, "null"], description: "null for a custom homework assignment" }
         homework_index: { type: [integer, "null"] }
@@ -4860,6 +4985,11 @@ components:
                       correct_answer: { type: string, description: The letter, or the first accepted form }
                       explanation: { type: string }
 
+        practice:
+          description: "A practice set (kind practice): what it was built from; null otherwise"
+          oneOf:
+            - type: "null"
+            - { $ref: "#/components/schemas/PracticeInfo" }
     AssignmentKind:
       type: string
       enum: [homework, level_check, exam]
@@ -5229,6 +5359,29 @@ components:
                                 difficulty: { type: string, enum: [easy, medium, hard] }
                                 questions: { type: integer }
                                 skills: { type: array, items: { type: string } }
+
+    PracticeInfo:
+      type: object
+      required: [title, subject, skills, difficulty, seconds_per_question]
+      properties:
+        title: { type: string }
+        subject: { type: string, enum: [math, english] }
+        skills: { type: array, items: { type: string }, description: Empty for every skill of the subject }
+        difficulty: { type: string, enum: [easy, medium, hard, mixed] }
+        seconds_per_question: { type: integer, description: "0: untimed" }
+
+    PracticeSet:
+      type: object
+      required: [id, practice, questions, created_at, finished_at, correct, total, percent]
+      properties:
+        id: { type: string, format: uuid }
+        practice: { $ref: "#/components/schemas/PracticeInfo" }
+        questions: { type: integer }
+        created_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        correct: { type: [integer, "null"] }
+        total: { type: [integer, "null"] }
+        percent: { type: [integer, "null"] }
 
     TeacherTaxonomy:
       type: object
@@ -5787,6 +5940,14 @@ components:
                 - not_an_assessment
                 - has_work
                 - invalid_page
+                - invalid_games
+                - invalid_deck
+                - too_many_decks
+                - deck_too_small
+                - own_deck
+                - invalid_practice
+                - practice_open
+                - practice_limit
             message:
               type: string
               description: Human-readable explanation; may change.

@@ -57,6 +57,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/teacher/taxonomy", h.require(h.teacher(h.taxonomy)))
 	mux.HandleFunc("GET /v1/teacher/curriculum", h.require(h.teacher(h.curriculum)))
 	mux.HandleFunc("GET /v1/teacher/groups/{id}/roadmap", h.require(h.teacher(h.groupRoadmap)))
+	h.registerPractice(mux)
 }
 
 // today is the school's date, as midnight UTC.

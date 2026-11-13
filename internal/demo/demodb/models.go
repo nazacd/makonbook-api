@@ -564,6 +564,7 @@ type RoadmapAssessment struct {
 	Percent         pgtype.Int2
 	AssignmentID    pgtype.UUID
 	Times           []byte
+	Practice        []byte
 }
 
 type RoadmapChoice struct {

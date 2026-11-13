@@ -116,3 +116,35 @@ SELECT content_type, body, sha256 FROM university_logos WHERE slug = @slug;
 INSERT INTO university_logos (slug, content_type, body, sha256) VALUES (@slug, @content_type, @body, @sha256)
 ON CONFLICT (slug) DO UPDATE SET content_type = excluded.content_type, body = excluded.body,
     sha256 = excluded.sha256, updated_at = now();
+
+-- Practice sets (spec 22.8) ----------------------------------------------------
+
+-- name: InsertPractice :one
+INSERT INTO roadmap_assessments (student_client_id, kind, question_ids, practice)
+VALUES (@student, 'practice', @question_ids::uuid[], @practice)
+ON CONFLICT (student_client_id, coalesce(lesson_id, ''), kind, coalesce(homework_index, -1),
+             coalesce(assignment_id, '00000000-0000-0000-0000-000000000000'::uuid)) WHERE finished_at IS NULL DO NOTHING
+RETURNING *;
+
+-- name: OpenPractice :one
+SELECT * FROM roadmap_assessments WHERE student_client_id = @student AND kind = 'practice' AND finished_at IS NULL;
+
+-- name: DiscardPractice :execrows
+DELETE FROM roadmap_assessments WHERE id = @id AND student_client_id = @student AND kind = 'practice' AND finished_at IS NULL;
+
+-- A student's practice sets, newest first.
+-- name: PracticeSets :many
+SELECT id, practice, cardinality(question_ids)::int AS questions, created_at, finished_at, correct, total, percent
+FROM roadmap_assessments WHERE student_client_id = @student AND kind = 'practice'
+ORDER BY created_at DESC LIMIT @lim;
+
+-- Questions in the practice sets a student started since a moment (a free account's day).
+-- name: PracticeQuestionsSince :one
+SELECT coalesce(sum(cardinality(question_ids)), 0)::int FROM roadmap_assessments
+WHERE student_client_id = @student AND kind = 'practice' AND created_at >= @since;
+
+-- Questions the student finished in any assessment, and whether they got
+-- each right the last time is worked out by the caller.
+-- name: FinishedQuestions :many
+SELECT DISTINCT unnest(question_ids)::uuid AS id FROM roadmap_assessments
+WHERE student_client_id = @student AND finished_at IS NOT NULL;

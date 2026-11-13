@@ -21,6 +21,7 @@ import (
 const (
 	kindLevelCheck = "level_check"
 	kindHomework   = "homework"
+	kindPractice   = "practice"
 )
 
 // maxAnswer bounds one answer's length (a letter or a grid-in entry).
@@ -59,6 +60,8 @@ type Assessment struct {
 	// Times is question id → seconds spent, as the client sent them.
 	Times  map[string]int `json:"times"`
 	Result *Result        `json:"result"`
+	// Practice is what a practice set (kind practice) was built from; null otherwise.
+	Practice *PracticeInfo `json:"practice"`
 }
 
 // AssignmentBrief is the assignment an assessment comes from.
@@ -560,6 +563,13 @@ func (s *Service) view(ctx context.Context, row roadmapdb.RoadmapAssessment, c *
 	}
 	if brief != nil {
 		out.Title = brief.Title
+	}
+	if row.Kind == kindPractice && row.Practice != nil {
+		var info PracticeInfo
+		if err := json.Unmarshal(row.Practice, &info); err != nil {
+			return Assessment{}, fmt.Errorf("stored practice: %w", err)
+		}
+		out.Practice, out.Title, out.Subject = &info, info.Title, info.Subject
 	}
 	var keys []string
 	var result *Result
