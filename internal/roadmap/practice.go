@@ -202,7 +202,11 @@ func (s *Service) StartPractice(ctx context.Context, student int32, r PracticeRe
 				skills = append(skills, names...)
 			}
 		}
-		if ids, err = s.drawLeavingOut(ctx, r.Subject, skills, want, seen, leaveOut); err != nil {
+		only := ""
+		if r.Difficulty != "mixed" {
+			only = r.Difficulty // a chosen difficulty is kept to, never padded with others
+		}
+		if ids, err = s.drawLeavingOut(ctx, r.Subject, skills, want, seen, leaveOut, only); err != nil {
 			return Assessment{}, err
 		}
 		if r.Shuffle {
@@ -233,21 +237,20 @@ func (s *Service) StartPractice(ctx context.Context, student int32, r PracticeRe
 	return s.viewRow(ctx, row, p)
 }
 
-// drawLeavingOut is Draw without the questions in leaveOut (nil: none).
-func (s *Service) drawLeavingOut(ctx context.Context, subject string, skills []string, want map[string]int, seen, leaveOut map[string]bool) ([]string, error) {
+// drawLeavingOut is Draw without the questions in leaveOut (nil: none) and,
+// when only is set, with that difficulty alone.
+func (s *Service) drawLeavingOut(ctx context.Context, subject string, skills []string, want map[string]int, seen, leaveOut map[string]bool, only string) ([]string, error) {
 	cands, err := s.bank.Candidates(ctx, subject, resolveSkills(subject, skills))
 	if err != nil {
 		return nil, err
 	}
-	if leaveOut != nil {
-		kept := cands[:0]
-		for _, c := range cands {
-			if !leaveOut[c.ID] {
-				kept = append(kept, c)
-			}
+	kept := cands[:0]
+	for _, c := range cands {
+		if !leaveOut[c.ID] && (only == "" || c.Difficulty == only) {
+			kept = append(kept, c)
 		}
-		cands = kept
 	}
+	cands = kept
 	ids := choose(cands, seen, want, rand.Shuffle) //nolint:gosec // not a secret: which questions come
 	if len(ids) == 0 {
 		return nil, ErrNoQuestions

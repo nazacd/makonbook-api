@@ -87,6 +87,14 @@ func TestAnswersChecksAndStats(t *testing.T) {
 	if err := svc.DiscardPractice(ctx, student, fresh.ID); err != nil {
 		t.Fatal(err)
 	}
+	// A chosen difficulty is kept to: two hard questions exist, so two come.
+	hardOnly, err := svc.StartPractice(ctx, student, PracticeRequest{Subject: "math", Skills: []string{"Linear functions"}, Difficulty: "hard", Count: 10})
+	if err != nil || len(hardOnly.Questions) != 2 || *hardOnly.Questions[0].Difficulty != "hard" {
+		t.Fatalf("hard only: %d %v", len(hardOnly.Questions), err)
+	}
+	if err := svc.DiscardPractice(ctx, student, hardOnly.ID); err != nil {
+		t.Fatal(err)
+	}
 
 	// An answer last Sunday at 23:30 Tashkent time: last week, not this one.
 	now := time.Now().In(tashkent)
@@ -102,6 +110,11 @@ func TestAnswersChecksAndStats(t *testing.T) {
 		t.Errorf("save an unknown question: %v", err)
 	}
 
+	// On a Monday the Sunday-night answer is yesterday: two days in a row.
+	wantStreak := 1
+	if now.Weekday() == time.Monday {
+		wantStreak = 2
+	}
 	st, err := svc.Stats(ctx, student, time.Now(), tashkent)
 	if err != nil {
 		t.Fatal(err)
@@ -113,8 +126,8 @@ func TestAnswersChecksAndStats(t *testing.T) {
 		t.Errorf("totals: %+v", st)
 	case m.Total != 7 || m.Solved != 3 || m.Attempted != 5 || m.Skills["Linear functions"] != 3:
 		t.Errorf("math: %+v", m)
-	case st.Saved != 1 || st.Streak != 1:
-		t.Errorf("saved %d streak %d", st.Saved, st.Streak)
+	case st.Saved != 1 || st.Streak != wantStreak:
+		t.Errorf("saved %d streak %d, want %d", st.Saved, st.Streak, wantStreak)
 	case len(st.Weeks) != WeeksShown:
 		t.Errorf("weeks: %d", len(st.Weeks))
 	}

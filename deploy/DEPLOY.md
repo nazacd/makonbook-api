@@ -451,6 +451,16 @@ record, … with a logo`. A university gone from the data stays, unlisted, for
 the students who chose it. Students see changes at once (the list's ETag
 moves only when something changed).
 
+## The question bank's answers (migration 00045, once)
+
+After `migrate up` has applied 00045, fill the question bank's answers from
+the level checks, homework and practice sets finished before it, so students'
+solved counts and analytics include them (safe to run again):
+
+```bash
+docker compose run --rm api practice backfill-answers
+```
+
 ## The Library's books
 
 SAT MAKON's books (spec 25) live in the private repository
