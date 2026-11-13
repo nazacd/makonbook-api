@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/nazacd/makonbook-api/internal/practice"
 	"github.com/nazacd/makonbook-api/internal/roadmap/roadmapdb"
@@ -20,19 +20,22 @@ import (
 // (topics, difficulty, how many, time a question) and takes it like a level
 // check, graded on submit. One unfinished set at a time.
 
-var (
-	// ErrPracticeOpen means the student has an unfinished set; it is returned
-	// with the error, to continue or discard.
-	ErrPracticeOpen = errors.New("finish or discard the practice set you started first")
-	// ErrPracticeLimit means a free account used today's questions.
-	ErrPracticeLimit = fmt.Errorf("free accounts practise up to %d questions a day", FreeQuestionsADay)
+// ErrPracticeOpen means the student has an unfinished set; it is returned
+// with the error, to continue or discard.
+var ErrPracticeOpen = errors.New("finish or discard the practice set you started first")
+
+// Practice modes: a rush is timed and graded when handed in; at one's own
+// pace, each question is checked as it is answered, with its explanation.
+const (
+	ModeRush    = "rush"
+	ModeOwnPace = "own_pace"
 )
 
 const (
-	// FreeQuestionsADay is how many practice questions a free account gets a school day.
-	FreeQuestionsADay = 40
-	// MaxPracticeQuestions is the most a set may have.
+	// MaxPracticeQuestions is the most a rush may have.
 	MaxPracticeQuestions = 50
+	// MaxOwnPaceQuestions is the most a set taken at one's own pace may have.
+	MaxOwnPaceQuestions = 200
 )
 
 // PracticeError is a practice request that can't be met as sent.
@@ -51,6 +54,12 @@ type PracticeRequest struct {
 	Count              int      `json:"count"`
 	SecondsPerQuestion int      `json:"seconds_per_question"` // 0: untimed
 	QuestionIDs        []string `json:"question_ids"`
+	// Mode is rush (the default) or own_pace.
+	Mode string `json:"mode"`
+	// Unsolved leaves out the questions the student has answered right before.
+	Unsolved bool `json:"unsolved"`
+	// Shuffle mixes the order; otherwise easy to hard.
+	Shuffle bool `json:"shuffle"`
 }
 
 // PracticeInfo is what a set was built from, kept with it.
@@ -60,6 +69,7 @@ type PracticeInfo struct {
 	Skills             []string `json:"skills"`
 	Difficulty         string   `json:"difficulty"`
 	SecondsPerQuestion int      `json:"seconds_per_question"`
+	Mode               string   `json:"mode"`
 }
 
 // PracticeSummary is one of a student's sets, for their history.
@@ -84,11 +94,23 @@ func (r *PracticeRequest) check() error {
 	case r.Difficulty != "mixed" && !slices.Contains(Difficulties, r.Difficulty):
 		return &PracticeError{"difficulty is easy, medium, hard or mixed"}
 	}
+	switch r.Mode {
+	case "":
+		r.Mode = ModeRush
+	case ModeRush, ModeOwnPace:
+	default:
+		return &PracticeError{"mode is rush or own_pace"}
+	}
+	most := MaxPracticeQuestions
+	if r.Mode == ModeOwnPace {
+		most = MaxOwnPaceQuestions
+		r.SecondsPerQuestion = 0 // at one's own pace: no clock
+	}
 	switch {
-	case len(r.QuestionIDs) > MaxPracticeQuestions:
-		return &PracticeError{fmt.Sprintf("at most %d questions", MaxPracticeQuestions)}
-	case len(r.QuestionIDs) == 0 && (r.Count < 1 || r.Count > MaxPracticeQuestions):
-		return &PracticeError{fmt.Sprintf("count is 1 to %d", MaxPracticeQuestions)}
+	case len(r.QuestionIDs) > most:
+		return &PracticeError{fmt.Sprintf("at most %d questions", most)}
+	case len(r.QuestionIDs) == 0 && (r.Count < 1 || r.Count > most):
+		return &PracticeError{fmt.Sprintf("count is 1 to %d", most)}
 	case r.SecondsPerQuestion != 0 && (r.SecondsPerQuestion < 15 || r.SecondsPerQuestion > 600):
 		return &PracticeError{"seconds_per_question is 0 (untimed) or 15 to 600"}
 	case len(r.Skills) > 30:
@@ -111,10 +133,9 @@ func practiceTitle(r PracticeRequest, n int) string {
 	return fmt.Sprintf("%s · %d questions", subject, n)
 }
 
-// StartPractice makes a practice set. registered: a free account, held to
-// FreeQuestionsADay since dayStart. An unfinished set comes back with
+// StartPractice makes a practice set. An unfinished set comes back with
 // ErrPracticeOpen.
-func (s *Service) StartPractice(ctx context.Context, student int32, registered bool, r PracticeRequest, dayStart time.Time) (Assessment, error) {
+func (s *Service) StartPractice(ctx context.Context, student int32, r PracticeRequest) (Assessment, error) {
 	if err := r.check(); err != nil {
 		return Assessment{}, err
 	}
@@ -158,6 +179,17 @@ func (s *Service) StartPractice(ctx context.Context, student int32, registered b
 		for _, id := range seenIDs {
 			seen[uuidString(id)] = true
 		}
+		var leaveOut map[string]bool
+		if r.Unsolved {
+			solved, err := q.SolvedQuestions(ctx, student)
+			if err != nil {
+				return Assessment{}, err
+			}
+			leaveOut = make(map[string]bool, len(solved))
+			for _, id := range solved {
+				leaveOut[uuidString(id)] = true
+			}
+		}
 		want := map[string]int{r.Difficulty: r.Count}
 		if r.Difficulty == "mixed" {
 			// About a third each, the rest medium.
@@ -170,20 +202,14 @@ func (s *Service) StartPractice(ctx context.Context, student int32, registered b
 				skills = append(skills, names...)
 			}
 		}
-		if ids, err = s.Draw(ctx, r.Subject, skills, want, seen); err != nil {
+		if ids, err = s.drawLeavingOut(ctx, r.Subject, skills, want, seen, leaveOut); err != nil {
 			return Assessment{}, err
 		}
-	}
-	if registered {
-		used, err := q.PracticeQuestionsSince(ctx, roadmapdb.PracticeQuestionsSinceParams{Student: student, Since: pgtype.Timestamptz{Time: dayStart, Valid: true}})
-		if err != nil {
-			return Assessment{}, err
-		}
-		if int(used)+len(ids) > FreeQuestionsADay {
-			return Assessment{}, ErrPracticeLimit
+		if r.Shuffle {
+			rand.Shuffle(len(ids), func(i, j int) { ids[i], ids[j] = ids[j], ids[i] }) //nolint:gosec // not a secret: the order
 		}
 	}
-	info := PracticeInfo{Title: practiceTitle(r, len(ids)), Subject: r.Subject, Skills: r.Skills, Difficulty: r.Difficulty, SecondsPerQuestion: r.SecondsPerQuestion}
+	info := PracticeInfo{Title: practiceTitle(r, len(ids)), Subject: r.Subject, Skills: r.Skills, Difficulty: r.Difficulty, SecondsPerQuestion: r.SecondsPerQuestion, Mode: r.Mode}
 	if info.Skills == nil {
 		info.Skills = []string{}
 	}
@@ -205,6 +231,28 @@ func (s *Service) StartPractice(ctx context.Context, student int32, registered b
 		return Assessment{}, err
 	}
 	return s.viewRow(ctx, row, p)
+}
+
+// drawLeavingOut is Draw without the questions in leaveOut (nil: none).
+func (s *Service) drawLeavingOut(ctx context.Context, subject string, skills []string, want map[string]int, seen, leaveOut map[string]bool) ([]string, error) {
+	cands, err := s.bank.Candidates(ctx, subject, resolveSkills(subject, skills))
+	if err != nil {
+		return nil, err
+	}
+	if leaveOut != nil {
+		kept := cands[:0]
+		for _, c := range cands {
+			if !leaveOut[c.ID] {
+				kept = append(kept, c)
+			}
+		}
+		cands = kept
+	}
+	ids := choose(cands, seen, want, rand.Shuffle) //nolint:gosec // not a secret: which questions come
+	if len(ids) == 0 {
+		return nil, ErrNoQuestions
+	}
+	return ids, nil
 }
 
 // DiscardPractice deletes a student's unfinished set. ErrNotFound otherwise.

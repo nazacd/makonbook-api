@@ -56,6 +56,7 @@ type Service struct {
 	groups Groups
 	mu     sync.Mutex
 	cache  map[string]cachedCourse
+	site   *siteCache // the question bank's site-wide averages
 }
 
 type cachedCourse struct {

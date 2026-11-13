@@ -183,3 +183,25 @@ func (s *Service) ApprovedQuestions(ctx context.Context, f QuestionFilter) ([]Qu
 
 // likeEscaper makes text match itself in an ILIKE pattern.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// PreviewsOf are the previews of approved questions by id, in the order
+// given (ids no longer approved are left out).
+func (s *Service) PreviewsOf(ctx context.Context, ids []string) ([]QuestionPreview, error) {
+	found, err := s.BankQuestions(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]QuestionPreview, 0, len(ids))
+	for _, id := range ids {
+		q, ok := found[id]
+		if !ok {
+			continue
+		}
+		passage := pgtype.Text{}
+		if q.Passage != nil {
+			passage = pgtype.Text{String: *q.Passage, Valid: true}
+		}
+		out = append(out, QuestionPreview{ID: id, Type: q.Type, Domain: q.Domain, Skill: q.Skill, Difficulty: q.Difficulty, Preview: preview(passage, q.Stem)})
+	}
+	return out, nil
+}

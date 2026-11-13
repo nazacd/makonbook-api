@@ -526,6 +526,17 @@ type QuestionAiReview struct {
 	ImportedAt pgtype.Timestamptz
 }
 
+type QuestionAnswer struct {
+	ID              int64
+	StudentClientID int32
+	QuestionID      pgtype.UUID
+	AssessmentID    pgtype.UUID
+	Answer          string
+	Correct         bool
+	Seconds         pgtype.Int4
+	AnsweredAt      pgtype.Timestamptz
+}
+
 type QuestionVersion struct {
 	QuestionID pgtype.UUID
 	Version    int32
@@ -571,6 +582,12 @@ type RoadmapChoice struct {
 	StudentClientID int32
 	RoadmapID       string
 	CreatedAt       pgtype.Timestamptz
+}
+
+type SavedQuestion struct {
+	StudentClientID int32
+	QuestionID      pgtype.UUID
+	SavedAt         pgtype.Timestamptz
 }
 
 type ScheduleItem struct {

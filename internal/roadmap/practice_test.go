@@ -3,7 +3,6 @@ package roadmap
 import (
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/testdb"
@@ -22,7 +21,6 @@ func TestPracticeSets(t *testing.T) {
 	addQuestions(t, pool, "math", "Linear functions", "medium", 6)
 	hard := addQuestions(t, pool, "math", "Linear functions", "hard", 6)
 	addQuestions(t, pool, "math", "Percentages", "medium", 30)
-	day := time.Now().Add(-time.Hour)
 
 	var bad *PracticeError
 	for name, r := range map[string]PracticeRequest{
@@ -31,13 +29,13 @@ func TestPracticeSets(t *testing.T) {
 		"difficulty": {Subject: "math", Count: 5, Difficulty: "brutal"},
 		"seconds":    {Subject: "math", Count: 5, SecondsPerQuestion: 5},
 	} {
-		if _, err := svc.StartPractice(ctx, student, false, r, day); !errors.As(err, &bad) {
+		if _, err := svc.StartPractice(ctx, student, r); !errors.As(err, &bad) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 
 	// A mixed set of one skill: easy, medium and hard, timed.
-	a, err := svc.StartPractice(ctx, student, false, PracticeRequest{Subject: "math", Skills: []string{"Linear functions"}, Difficulty: "mixed", Count: 9, SecondsPerQuestion: 60}, day)
+	a, err := svc.StartPractice(ctx, student, PracticeRequest{Subject: "math", Skills: []string{"Linear functions"}, Difficulty: "mixed", Count: 9, SecondsPerQuestion: 60})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +43,7 @@ func TestPracticeSets(t *testing.T) {
 		t.Fatalf("set: %+v", a)
 	}
 	// One open at a time: asking again gives it back.
-	again, err := svc.StartPractice(ctx, student, false, PracticeRequest{Subject: "math", Count: 5}, day)
+	again, err := svc.StartPractice(ctx, student, PracticeRequest{Subject: "math", Count: 5})
 	if !errors.Is(err, ErrPracticeOpen) || again.ID != a.ID {
 		t.Errorf("open: %v %s", err, again.ID)
 	}
@@ -64,7 +62,7 @@ func TestPracticeSets(t *testing.T) {
 	}
 
 	// A chosen question, then discarded.
-	one, err := svc.StartPractice(ctx, student, false, PracticeRequest{Subject: "math", QuestionIDs: []string{hard[0], "not-an-id"}}, day)
+	one, err := svc.StartPractice(ctx, student, PracticeRequest{Subject: "math", QuestionIDs: []string{hard[0], "not-an-id"}})
 	if err != nil || len(one.Questions) != 1 || one.Questions[0].ID != hard[0] {
 		t.Fatalf("one: %+v %v", one, err)
 	}
@@ -75,24 +73,23 @@ func TestPracticeSets(t *testing.T) {
 		t.Errorf("discard a finished set: %v", err)
 	}
 
-	// A free account: 40 questions a day.
-	thirty, err := svc.StartPractice(ctx, student, true, PracticeRequest{Subject: "math", Skills: []string{"Percentages"}, Count: 30}, day)
+	// Every skill of the subject when none is named.
+	all, err := svc.StartPractice(ctx, student, PracticeRequest{Subject: "math", Count: 15})
+	if err != nil || len(all.Questions) != 15 {
+		t.Fatalf("every skill: %d %v", len(all.Questions), err)
+	}
+	if err := svc.DiscardPractice(ctx, student, all.ID); err != nil {
+		t.Fatal(err)
+	}
+	thirty, err := svc.StartPractice(ctx, student, PracticeRequest{Subject: "math", Skills: []string{"Percentages"}, Count: 30})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := svc.Submit(ctx, Who{ID: student}, thirty.ID, Answers{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.StartPractice(ctx, student, true, PracticeRequest{Subject: "math", Count: 15}, day); !errors.Is(err, ErrPracticeLimit) {
-		t.Errorf("limit: %v", err)
-	}
-	// Every skill of the subject when none is named.
-	all, err := svc.StartPractice(ctx, student, false, PracticeRequest{Subject: "math", Count: 15}, day)
-	if err != nil || len(all.Questions) != 15 {
-		t.Errorf("enrolled, every skill: %d %v", len(all.Questions), err)
-	}
 	sets, err := svc.PracticeSets(ctx, student, 10)
-	if err != nil || len(sets) != 3 || sets[2].Percent == nil || *sets[2].Percent != 66 || sets[0].FinishedAt != nil {
+	if err != nil || len(sets) != 2 || sets[1].Percent == nil || *sets[1].Percent != 66 || sets[0].FinishedAt == nil {
 		t.Errorf("sets: %+v %v", sets, err)
 	}
 }

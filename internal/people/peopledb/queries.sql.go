@@ -606,6 +606,20 @@ func (q *Queries) MarkStudentsMissing(ctx context.Context, presentIds []int32) (
 	return result.RowsAffected(), nil
 }
 
+const moveStudentAnswers = `-- name: MoveStudentAnswers :exec
+UPDATE question_answers SET student_client_id = $1 WHERE student_client_id = $2
+`
+
+type MoveStudentAnswersParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentAnswers(ctx context.Context, arg MoveStudentAnswersParams) error {
+	_, err := q.db.Exec(ctx, moveStudentAnswers, arg.ToID, arg.FromID)
+	return err
+}
+
 const moveStudentAssessments = `-- name: MoveStudentAssessments :exec
 UPDATE roadmap_assessments SET student_client_id = $1 WHERE student_client_id = $2
 `
@@ -785,6 +799,22 @@ type MoveStudentReviewsParams struct {
 
 func (q *Queries) MoveStudentReviews(ctx context.Context, arg MoveStudentReviewsParams) error {
 	_, err := q.db.Exec(ctx, moveStudentReviews, arg.ToID, arg.FromID)
+	return err
+}
+
+const moveStudentSavedQuestions = `-- name: MoveStudentSavedQuestions :exec
+INSERT INTO saved_questions (student_client_id, question_id, saved_at)
+SELECT $1::int, question_id, saved_at FROM saved_questions WHERE student_client_id = $2::int
+ON CONFLICT DO NOTHING
+`
+
+type MoveStudentSavedQuestionsParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentSavedQuestions(ctx context.Context, arg MoveStudentSavedQuestionsParams) error {
+	_, err := q.db.Exec(ctx, moveStudentSavedQuestions, arg.ToID, arg.FromID)
 	return err
 }
 

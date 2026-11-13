@@ -841,14 +841,35 @@ func TestAssignments(t *testing.T) {
 	if r := do("POST", "/v1/me/practice/sets", s3, map[string]any{"subject": "math", "count": 0}); r.status != http.StatusUnprocessableEntity || r.code() != CodeInvalidPractice {
 		t.Errorf("practice set, bad count: %v", r)
 	}
-	if r := do("GET", "/v1/me/practice/sets", s3, nil); r.status != http.StatusOK || len(r.list("sets")) != 1 || r.body["free_questions_a_day"] != nil {
+	if r := do("GET", "/v1/me/practice/sets", s3, nil); r.status != http.StatusOK || len(r.list("sets")) != 1 {
 		t.Errorf("practice sets: %v", r)
 	}
 	if r := do("DELETE", "/v1/me/practice/sets/"+setID, s3, nil); r.status != http.StatusNoContent {
 		t.Errorf("discard practice: %v", r)
 	}
-	if r := do("GET", "/v1/me/practice/sets", registered, nil); r.status != http.StatusOK || r.body["free_questions_a_day"] != 40.0 {
-		t.Errorf("practice sets, free account: %v", r)
+	// At one's own pace: a check gives the key; a second check is refused.
+	r = do("POST", "/v1/me/practice/sets", s3, map[string]any{"subject": "math", "skills": []string{"Percentages"}, "count": 2, "mode": "own_pace"})
+	if r.status != http.StatusCreated || obj(r.body["practice"])["mode"] != "own_pace" {
+		t.Fatalf("own pace set: %v", r)
+	}
+	own, firstQ := r.body["id"].(string), obj(r.list("questions")[0])["id"].(string)
+	if r := do("POST", "/v1/me/assessments/"+own+"/check", s3, map[string]any{"question_id": firstQ, "answer": "A", "seconds": 30}); r.status != http.StatusOK || r.body["correct_answer"] == nil || r.body["explanation"] == nil {
+		t.Errorf("check: %v", r)
+	}
+	if r := do("POST", "/v1/me/assessments/"+own+"/check", s3, map[string]any{"question_id": firstQ, "answer": "B"}); r.status != http.StatusConflict || r.code() != CodeAlreadyChecked {
+		t.Errorf("check twice: %v", r)
+	}
+	if r := do("PUT", "/v1/me/practice/saved/"+firstQ, s3, nil); r.status != http.StatusNoContent {
+		t.Errorf("save question: %v", r)
+	}
+	if r := do("GET", "/v1/me/practice/saved", s3, nil); r.status != http.StatusOK || len(r.list("questions")) != 1 {
+		t.Errorf("saved questions: %v", r)
+	}
+	if r := do("GET", "/v1/me/practice/stats", s3, nil); r.status != http.StatusOK || r.body["attempted"] != 1.0 || r.body["saved"] != 1.0 || len(r.list("weeks")) != 8 {
+		t.Errorf("stats: %v", r)
+	}
+	if r := do("GET", "/v1/me/practice/stats", registered, nil); r.status != http.StatusOK {
+		t.Errorf("stats, a free account: %v", r)
 	}
 
 	// What teachers build sets from.

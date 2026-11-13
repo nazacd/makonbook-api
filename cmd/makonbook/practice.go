@@ -13,6 +13,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/platform/r2"
 	"github.com/nazacd/makonbook-api/internal/platform/render"
 	"github.com/nazacd/makonbook-api/internal/practice"
+	"github.com/nazacd/makonbook-api/internal/roadmap"
 	adminweb "github.com/nazacd/makonbook-api/web/admin"
 )
 
@@ -27,6 +28,9 @@ const practiceUsage = `
                             stem, choices and correct (or accepted), explanation, domain, skill,
                             difficulty and an optional passage. They wait in review until an
                             editor approves them in the admin panel; repeats are skipped
+  practice backfill-answers fill the question bank's answers (question_answers) from level
+                            checks, homework and practice sets finished before migration 00045;
+                            safe to run again (an answer already there stays)
   practice list             tests and how far their review has come
   practice publish          publish every test whose questions are all approved and that changed
                             since its last version (the worker does this every few minutes)
@@ -38,7 +42,7 @@ const practiceUsage = `
 
 func validPracticeArgs(args []string) bool {
 	switch {
-	case len(args) == 2 && (args[1] == "list" || args[1] == "publish"):
+	case len(args) == 2 && (args[1] == "list" || args[1] == "publish" || args[1] == "backfill-answers"):
 		return true
 	case len(args) == 6 && args[1] == "picture":
 		return args[4] == "original" || args[4] == "fix" || args[4] == "question"
@@ -60,6 +64,14 @@ func runPractice(ctx context.Context, cfg config.Config, args []string, stdout i
 
 	if args[1] == "add" {
 		return practiceAdd(ctx, cfg, pool, args[2], stdout)
+	}
+	if args[1] == "backfill-answers" {
+		n, err := roadmap.NewService(pool, practice.NewService(pool, nil), nil).BackfillAnswers(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "%d answers added.\n", n)
+		return nil
 	}
 	if args[1] == "picture" {
 		return practicePicture(ctx, cfg, pool, args[2], args[3], args[4], args[5], stdout)

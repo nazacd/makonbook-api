@@ -11,6 +11,57 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const answerDays = `-- name: AnswerDays :many
+SELECT DISTINCT (answered_at AT TIME ZONE $1::text)::date AS day
+FROM question_answers WHERE student_client_id = $2
+ORDER BY day DESC LIMIT 400
+`
+
+type AnswerDaysParams struct {
+	Tz      string
+	Student int32
+}
+
+// Days (school time) the student answered on, newest first.
+func (q *Queries) AnswerDays(ctx context.Context, arg AnswerDaysParams) ([]pgtype.Date, error) {
+	rows, err := q.db.Query(ctx, answerDays, arg.Tz, arg.Student)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.Date
+	for rows.Next() {
+		var day pgtype.Date
+		if err := rows.Scan(&day); err != nil {
+			return nil, err
+		}
+		items = append(items, day)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const answerTotals = `-- name: AnswerTotals :one
+SELECT count(*)::int AS answers, count(*) FILTER (WHERE correct)::int AS correct,
+       count(DISTINCT question_id)::int AS questions
+FROM question_answers WHERE student_client_id = $1
+`
+
+type AnswerTotalsRow struct {
+	Answers   int32
+	Correct   int32
+	Questions int32
+}
+
+func (q *Queries) AnswerTotals(ctx context.Context, student int32) (AnswerTotalsRow, error) {
+	row := q.db.QueryRow(ctx, answerTotals, student)
+	var i AnswerTotalsRow
+	err := row.Scan(&i.Answers, &i.Correct, &i.Questions)
+	return i, err
+}
+
 const assessmentAssignment = `-- name: AssessmentAssignment :one
 SELECT id, kind, title, subject, due_at FROM assignments WHERE id = $1
 `
@@ -35,6 +86,36 @@ func (q *Queries) AssessmentAssignment(ctx context.Context, id pgtype.UUID) (Ass
 		&i.DueAt,
 	)
 	return i, err
+}
+
+const checkedAnswers = `-- name: CheckedAnswers :many
+SELECT question_id, correct FROM question_answers WHERE assessment_id = $1
+`
+
+type CheckedAnswersRow struct {
+	QuestionID pgtype.UUID
+	Correct    bool
+}
+
+// The questions of an assessment already checked one at a time, and how.
+func (q *Queries) CheckedAnswers(ctx context.Context, assessmentID pgtype.UUID) ([]CheckedAnswersRow, error) {
+	rows, err := q.db.Query(ctx, checkedAnswers, assessmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CheckedAnswersRow
+	for rows.Next() {
+		var i CheckedAnswersRow
+		if err := rows.Scan(&i.QuestionID, &i.Correct); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const choices = `-- name: Choices :many
@@ -87,6 +168,53 @@ func (q *Queries) DeleteChoices(ctx context.Context, student int32) error {
 	return err
 }
 
+const difficultyStats = `-- name: DifficultyStats :many
+SELECT q.subject, q.difficulty::text AS difficulty, count(*)::int AS answers, count(*) FILTER (WHERE a.correct)::int AS correct,
+       coalesce(avg(a.seconds) FILTER (WHERE a.seconds > 0), 0)::float8 AS avg_seconds,
+       count(a.seconds) FILTER (WHERE a.seconds > 0)::int AS timed
+FROM question_answers a JOIN questions q ON q.id = a.question_id
+WHERE ($1::int = 0 OR a.student_client_id = $1::int) AND q.difficulty IS NOT NULL
+GROUP BY q.subject, q.difficulty
+`
+
+type DifficultyStatsRow struct {
+	Subject    string
+	Difficulty string
+	Answers    int32
+	Correct    int32
+	AvgSeconds float64
+	Timed      int32
+}
+
+// Per subject and difficulty: answers, right ones, and seconds (where timed).
+// student 0: everyone (the site-wide averages).
+func (q *Queries) DifficultyStats(ctx context.Context, student int32) ([]DifficultyStatsRow, error) {
+	rows, err := q.db.Query(ctx, difficultyStats, student)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DifficultyStatsRow
+	for rows.Next() {
+		var i DifficultyStatsRow
+		if err := rows.Scan(
+			&i.Subject,
+			&i.Difficulty,
+			&i.Answers,
+			&i.Correct,
+			&i.AvgSeconds,
+			&i.Timed,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const discardPractice = `-- name: DiscardPractice :execrows
 DELETE FROM roadmap_assessments WHERE id = $1 AND student_client_id = $2 AND kind = 'practice' AND finished_at IS NULL
 `
@@ -102,6 +230,46 @@ func (q *Queries) DiscardPractice(ctx context.Context, arg DiscardPracticeParams
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const domainAccuracy = `-- name: DomainAccuracy :many
+SELECT q.subject, q.domain, count(*)::int AS answers, count(*) FILTER (WHERE a.correct)::int AS correct
+FROM question_answers a JOIN questions q ON q.id = a.question_id
+WHERE a.student_client_id = $1
+GROUP BY q.subject, q.domain
+`
+
+type DomainAccuracyRow struct {
+	Subject string
+	Domain  string
+	Answers int32
+	Correct int32
+}
+
+// Per subject and domain: answers and right ones.
+func (q *Queries) DomainAccuracy(ctx context.Context, student int32) ([]DomainAccuracyRow, error) {
+	rows, err := q.db.Query(ctx, domainAccuracy, student)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DomainAccuracyRow
+	for rows.Next() {
+		var i DomainAccuracyRow
+		if err := rows.Scan(
+			&i.Subject,
+			&i.Domain,
+			&i.Answers,
+			&i.Correct,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const finishAssessment = `-- name: FinishAssessment :exec
@@ -129,6 +297,48 @@ func (q *Queries) FinishAssessment(ctx context.Context, arg FinishAssessmentPara
 		arg.ID,
 	)
 	return err
+}
+
+const finishedAssessments = `-- name: FinishedAssessments :many
+SELECT id, student_client_id, question_ids, answers, times, finished_at FROM roadmap_assessments
+WHERE finished_at IS NOT NULL ORDER BY finished_at
+`
+
+type FinishedAssessmentsRow struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+	QuestionIds     []pgtype.UUID
+	Answers         []byte
+	Times           []byte
+	FinishedAt      pgtype.Timestamptz
+}
+
+// Finished assessments, for filling question_answers from them.
+func (q *Queries) FinishedAssessments(ctx context.Context) ([]FinishedAssessmentsRow, error) {
+	rows, err := q.db.Query(ctx, finishedAssessments)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FinishedAssessmentsRow
+	for rows.Next() {
+		var i FinishedAssessmentsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.StudentClientID,
+			&i.QuestionIds,
+			&i.Answers,
+			&i.Times,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const finishedQuestions = `-- name: FinishedQuestions :many
@@ -228,6 +438,40 @@ func (q *Queries) HasOnboarding(ctx context.Context, student int32) (bool, error
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const insertAnswer = `-- name: InsertAnswer :execrows
+
+INSERT INTO question_answers (student_client_id, question_id, assessment_id, answer, correct, seconds, answered_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (assessment_id, question_id) DO NOTHING
+`
+
+type InsertAnswerParams struct {
+	Student      int32
+	QuestionID   pgtype.UUID
+	AssessmentID pgtype.UUID
+	Answer       string
+	Correct      bool
+	Seconds      pgtype.Int4
+	AnsweredAt   pgtype.Timestamptz
+}
+
+// Answers (spec 22.8) ----------------------------------------------------------
+func (q *Queries) InsertAnswer(ctx context.Context, arg InsertAnswerParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertAnswer,
+		arg.Student,
+		arg.QuestionID,
+		arg.AssessmentID,
+		arg.Answer,
+		arg.Correct,
+		arg.Seconds,
+		arg.AnsweredAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertAssessment = `-- name: InsertAssessment :one
@@ -688,24 +932,6 @@ func (q *Queries) OpenPractice(ctx context.Context, student int32) (RoadmapAsses
 	return i, err
 }
 
-const practiceQuestionsSince = `-- name: PracticeQuestionsSince :one
-SELECT coalesce(sum(cardinality(question_ids)), 0)::int FROM roadmap_assessments
-WHERE student_client_id = $1 AND kind = 'practice' AND created_at >= $2
-`
-
-type PracticeQuestionsSinceParams struct {
-	Student int32
-	Since   pgtype.Timestamptz
-}
-
-// Questions in the practice sets a student started since a moment (a free account's day).
-func (q *Queries) PracticeQuestionsSince(ctx context.Context, arg PracticeQuestionsSinceParams) (int32, error) {
-	row := q.db.QueryRow(ctx, practiceQuestionsSince, arg.Student, arg.Since)
-	var column_1 int32
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
 const practiceSets = `-- name: PracticeSets :many
 SELECT id, practice, cardinality(question_ids)::int AS questions, created_at, finished_at, correct, total, percent
 FROM roadmap_assessments WHERE student_client_id = $1 AND kind = 'practice'
@@ -896,6 +1122,48 @@ func (q *Queries) SaveOnboarding(ctx context.Context, arg SaveOnboardingParams) 
 	return err
 }
 
+const saveQuestion = `-- name: SaveQuestion :exec
+INSERT INTO saved_questions (student_client_id, question_id)
+SELECT $1, id FROM questions WHERE id = $2 AND status = 'approved'
+ON CONFLICT DO NOTHING
+`
+
+type SaveQuestionParams struct {
+	Student    int32
+	QuestionID pgtype.UUID
+}
+
+func (q *Queries) SaveQuestion(ctx context.Context, arg SaveQuestionParams) error {
+	_, err := q.db.Exec(ctx, saveQuestion, arg.Student, arg.QuestionID)
+	return err
+}
+
+const savedQuestionIDs = `-- name: SavedQuestionIDs :many
+
+SELECT question_id FROM saved_questions WHERE student_client_id = $1 ORDER BY saved_at DESC
+`
+
+// Saved questions ---------------------------------------------------------------
+func (q *Queries) SavedQuestionIDs(ctx context.Context, student int32) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, savedQuestionIDs, student)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var question_id pgtype.UUID
+		if err := rows.Scan(&question_id); err != nil {
+			return nil, err
+		}
+		items = append(items, question_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const seenQuestions = `-- name: SeenQuestions :many
 SELECT DISTINCT unnest(question_ids)::uuid AS id FROM roadmap_assessments WHERE student_client_id = $1
 `
@@ -914,6 +1182,170 @@ func (q *Queries) SeenQuestions(ctx context.Context, student int32) ([]pgtype.UU
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const skillSolved = `-- name: SkillSolved :many
+SELECT q.subject, q.skill, count(*)::int AS solved
+FROM questions q
+WHERE q.status = 'approved'
+  AND EXISTS (SELECT 1 FROM question_answers a WHERE a.student_client_id = $1 AND a.question_id = q.id AND a.correct)
+GROUP BY q.subject, q.skill
+`
+
+type SkillSolvedRow struct {
+	Subject string
+	Skill   string
+	Solved  int32
+}
+
+// Per skill, the approved questions the student solved.
+func (q *Queries) SkillSolved(ctx context.Context, student int32) ([]SkillSolvedRow, error) {
+	rows, err := q.db.Query(ctx, skillSolved, student)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SkillSolvedRow
+	for rows.Next() {
+		var i SkillSolvedRow
+		if err := rows.Scan(&i.Subject, &i.Skill, &i.Solved); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const solvedQuestions = `-- name: SolvedQuestions :many
+SELECT DISTINCT question_id FROM question_answers WHERE student_client_id = $1 AND correct
+`
+
+func (q *Queries) SolvedQuestions(ctx context.Context, student int32) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, solvedQuestions, student)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var question_id pgtype.UUID
+		if err := rows.Scan(&question_id); err != nil {
+			return nil, err
+		}
+		items = append(items, question_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const subjectProgress = `-- name: SubjectProgress :many
+
+SELECT q.subject,
+       count(*)::int AS total,
+       count(*) FILTER (WHERE EXISTS (SELECT 1 FROM question_answers a WHERE a.student_client_id = $1 AND a.question_id = q.id))::int AS attempted,
+       count(*) FILTER (WHERE EXISTS (SELECT 1 FROM question_answers a WHERE a.student_client_id = $1 AND a.question_id = q.id AND a.correct))::int AS solved
+FROM questions q WHERE q.status = 'approved'
+GROUP BY q.subject
+`
+
+type SubjectProgressRow struct {
+	Subject   string
+	Total     int32
+	Attempted int32
+	Solved    int32
+}
+
+// Stats (spec 22.8), school time (tz) -------------------------------------------
+// Per subject: approved questions, and those the student answered and solved.
+func (q *Queries) SubjectProgress(ctx context.Context, student int32) ([]SubjectProgressRow, error) {
+	rows, err := q.db.Query(ctx, subjectProgress, student)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SubjectProgressRow
+	for rows.Next() {
+		var i SubjectProgressRow
+		if err := rows.Scan(
+			&i.Subject,
+			&i.Total,
+			&i.Attempted,
+			&i.Solved,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const unsaveQuestion = `-- name: UnsaveQuestion :exec
+DELETE FROM saved_questions WHERE student_client_id = $1 AND question_id = $2
+`
+
+type UnsaveQuestionParams struct {
+	Student    int32
+	QuestionID pgtype.UUID
+}
+
+func (q *Queries) UnsaveQuestion(ctx context.Context, arg UnsaveQuestionParams) error {
+	_, err := q.db.Exec(ctx, unsaveQuestion, arg.Student, arg.QuestionID)
+	return err
+}
+
+const weeklyAnswers = `-- name: WeeklyAnswers :many
+SELECT date_trunc('week', a.answered_at AT TIME ZONE $1::text)::date AS week,
+       a.correct, coalesce(q.difficulty, '')::text AS difficulty, count(*)::int AS n
+FROM question_answers a JOIN questions q ON q.id = a.question_id
+WHERE a.student_client_id = $2 AND a.answered_at >= $3
+GROUP BY 1, 2, 3
+`
+
+type WeeklyAnswersParams struct {
+	Tz      string
+	Student int32
+	Since   pgtype.Timestamptz
+}
+
+type WeeklyAnswersRow struct {
+	Week       pgtype.Date
+	Correct    bool
+	Difficulty string
+	N          int32
+}
+
+// Answers by week (Monday, school time), right or wrong, and difficulty.
+func (q *Queries) WeeklyAnswers(ctx context.Context, arg WeeklyAnswersParams) ([]WeeklyAnswersRow, error) {
+	rows, err := q.db.Query(ctx, weeklyAnswers, arg.Tz, arg.Student, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WeeklyAnswersRow
+	for rows.Next() {
+		var i WeeklyAnswersRow
+		if err := rows.Scan(
+			&i.Week,
+			&i.Correct,
+			&i.Difficulty,
+			&i.N,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

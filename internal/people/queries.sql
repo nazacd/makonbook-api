@@ -262,6 +262,14 @@ INSERT INTO student_saved_universities (student_client_id, university_id, saved_
 SELECT @to_id::int, university_id, saved_at FROM student_saved_universities WHERE student_client_id = @from_id::int
 ON CONFLICT DO NOTHING;
 
+-- name: MoveStudentAnswers :exec
+UPDATE question_answers SET student_client_id = @to_id WHERE student_client_id = @from_id;
+
+-- name: MoveStudentSavedQuestions :exec
+INSERT INTO saved_questions (student_client_id, question_id, saved_at)
+SELECT @to_id::int, question_id, saved_at FROM saved_questions WHERE student_client_id = @from_id::int
+ON CONFLICT DO NOTHING;
+
 -- name: MoveStudentParked :exec
 UPDATE parked_questions SET student_client_id = @to_id WHERE student_client_id = @from_id;
 

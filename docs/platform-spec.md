@@ -67,6 +67,7 @@ enrol).
 | D37 | **Assignments** (section 23): teachers give their groups **homework, level checks and exams with deadlines**. Every student of the group gets the **same questions**; work after the deadline is taken and **marked late**; an exam is a mock test whose **first finished attempt** counts (retakes allowed); an assigned curriculum level check or homework **counts for the roadmap**. **Every current teacher of a group** may assign to it; content creation stays with the editors (9.4). | 2026-11-08, the product owner. |
 | D38 | A group whose discipline names the subject but **no level** takes the level from **HolliHop's group level**; without a subject, no roadmap. | 2026-11-08. |
 | D39 | **In-app notifications** (a table, the web's drawer): a new assignment notifies the group's students. Nothing outside the app yet; Telegram later. | 2026-11-08. |
+| D43 | **The question bank** (section 22.8): every answer to a bank question is kept (`question_answers`) for solved counts and analytics; practice sets as a timed rush or at one's own pace with each question checked; analytics and the bank open to every student with a phone, no paid tier. | 2026-11-13. |
 | D42 | **Vocabulary, social** (section 11.4–11.6): word games (Pairs, Unscramble, Fill the gap) whose results are kept on the server and shown to teachers; a monthly **leaderboard** of everyone (names shortened) for all students, and of their own groups for enrolled students only; **students make decks**, private or shared with everyone, moderated by teachers and by students' reports. | 2026-11-11. |
 | D41 | **The Library** (section 25): SAT MAKON's own books (PDFs), kept in the private `makonbook-library` repository and imported; **everyone signed in reads and downloads** every book; each reader's page is remembered, and a book shows how many people opened it. No uploads by students. | 2026-11-11. |
 | D40 | **A dream university is the main goal** (section 24): about 1500 universities (QS's top 1500, every university in Uzbekistan, the roadmaps' 48), collected in the private `makonbook-universities` repository and imported; QS's rank is shown as QS gives it (the owner's decision, knowing QS's terms); the logos are kept in MakonBook's R2 bucket. | 2026-11-09. |
@@ -1082,17 +1083,29 @@ university_logos    (slug PK, content_type, body bytea, sha256, updated_at)     
 - `stop.logo_url` on each unit of `GET /v1/me/roadmaps/{id}`, and `current.logo_url` in the summaries:
   `/v1/logos/{slug}?v=<first 8 of the sha>` (relative, the API's origin; a new logo is a new URL), or null.
 
-### 22.8 Practice sets and the question bank (built, for the web)
-Students practise outside their roadmap. The **question bank** (`GET /v1/me/practice/topics`, the domains and
-skills with their approved questions; `GET /v1/me/practice/questions`, the teachers' search, each question
-marked `done` once submitted) is browsed by topic and difficulty. A **practice set** (`POST /v1/me/practice/sets`)
-is built from chosen skills (none: the whole subject), a difficulty (easy, medium, hard or mixed), a number of
-questions (1–50) and an optional time a question (15 s–10 min), or from questions picked in the bank. It is an
-assessment of kind `practice` (`roadmap_assessments.practice` holds what was asked for), answered and submitted
-like a level check, graded on submit, with explanations; the web runs the clock and submits when it ends. Drawing
-prefers questions the student hasn't had. One unfinished set at a time (`409 practice_open` gives it back, to
-continue or discard). Free accounts get 40 questions a school day (`403 practice_limit`); enrolled students have
-no limit. Practice sets touch no roadmap progress or assignment.
+### 22.8 The question bank (built, for the web)
+Students practise outside their roadmap, open to every student with a phone (no daily limit).
+- **Topics and questions:** `GET /v1/me/practice/topics` (the domains and skills with their approved
+  questions) and `GET /v1/me/practice/questions` (the teachers' search, each question marked `done`).
+- **Practice sets** (`POST /v1/me/practice/sets`): chosen skills (none: the whole subject), a difficulty (easy,
+  medium, hard or mixed), how many, unsolved only, shuffled or easy to hard; or questions picked by id. Two
+  modes: a **rush** (1–50 questions, an optional time a question, graded when handed in) and **at one's own pace**
+  (up to 200, untimed, each question checked as it is answered: `POST /v1/me/assessments/{id}/check` grades it,
+  records it, and gives the key and explanation; once per question, and its answer can't change afterwards; only
+  for own-pace practice sets, so no key of a level check or homework leaks). A set is an assessment of kind
+  `practice` (`roadmap_assessments.practice`); one unfinished at a time (`409 practice_open` gives it back);
+  sets touch no roadmap progress or assignment.
+- **Answers** (`question_answers`, D43): every answer to a bank question in a level check, homework or practice
+  set, graded with the same rule as the set, written on submit and on each check; a discarded set keeps its
+  answers. Mock tests aren't counted (their answers stay on the device and in the attempt). `makonbook practice
+  backfill-answers` fills it from assessments finished before it.
+- **Analytics** (`GET /v1/me/practice/stats`, school time): per subject the approved questions, attempted and
+  solved (right at least once) and solved per skill; questions attempted, accuracy (right answers / answers),
+  saved questions, the streak (days in a row with an answer), the last 8 weeks by right and wrong and difficulty;
+  per subject accuracy by domain, and by difficulty with the average time, beside the site-wide figures (cached
+  10 minutes, shown from 100 answers).
+- **Saved questions** (`saved_questions`): a bookmark on a bank question (`PUT`/`DELETE
+  /v1/me/practice/saved/{id}`, `GET /v1/me/practice/saved`), not the tests' "Ask later".
 
 ## 23. Assignments and notifications (built, for the web)
 

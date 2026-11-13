@@ -62,6 +62,10 @@ type Assessment struct {
 	Result *Result        `json:"result"`
 	// Practice is what a practice set (kind practice) was built from; null otherwise.
 	Practice *PracticeInfo `json:"practice"`
+	// Checked: in a practice set taken at one's own pace, the questions
+	// already checked and whether they were right (their key and
+	// explanation then come with them before the set is finished).
+	Checked map[string]bool `json:"checked"`
 }
 
 // AssignmentBrief is the assignment an assessment comes from.
@@ -385,6 +389,9 @@ func (s *Service) SaveAnswers(ctx context.Context, who Who, id string, in Answer
 		if row.FinishedAt.Valid {
 			return ErrFinished
 		}
+		if err := dropChecked(ctx, q, row, in.Answers); err != nil {
+			return err
+		}
 		merged, err := mergeAnswers(row, in.Answers)
 		if err != nil {
 			return err
@@ -415,6 +422,9 @@ func (s *Service) Submit(ctx context.Context, who Who, id string, in Answers) (A
 		}
 		if row.FinishedAt.Valid {
 			return ErrFinished
+		}
+		if err := dropChecked(ctx, q, row, in.Answers); err != nil {
+			return err
 		}
 		merged, err := mergeAnswers(row, in.Answers)
 		if err != nil {
@@ -451,6 +461,9 @@ func (s *Service) Submit(ctx context.Context, who Who, id string, in Answers) (A
 			ID: row.ID, Answers: body, Times: times, Correct: int2(correct), Total: int2(total), Percent: int2(percent),
 		})
 		if err != nil {
+			return err
+		}
+		if err := recordAnswers(ctx, q, row.StudentClientID, row.ID, merged, times, questions, time.Now()); err != nil {
 			return err
 		}
 		finished, err = q.GetAssessment(ctx, row.ID)
@@ -527,10 +540,23 @@ func (s *Service) view(ctx context.Context, row roadmapdb.RoadmapAssessment, c *
 		return Assessment{}, fmt.Errorf("stored times: %w", err)
 	}
 	finished := row.FinishedAt.Valid
+	checked := map[string]bool{}
+	if row.Kind == kindPractice {
+		rows, err := roadmapdb.New(s.pool).CheckedAnswers(ctx, row.ID)
+		if err != nil {
+			return Assessment{}, err
+		}
+		for _, r := range rows {
+			checked[uuidString(r.QuestionID)] = r.Correct
+		}
+	}
 	out := Assessment{
 		ID: uuidString(row.ID), Kind: row.Kind, RoadmapID: textValue(row.RoadmapID), LessonID: textValue(row.LessonID),
 		Assignment: brief, CreatedAt: row.CreatedAt.Time.UTC(), Questions: []AssessmentQuestion{},
-		Answers: map[string]*string{}, Times: times,
+		Answers: map[string]*string{}, Times: times, Checked: map[string]bool{},
+	}
+	if !finished {
+		out.Checked = checked
 	}
 	switch {
 	case c != nil:
@@ -598,6 +624,9 @@ func (s *Service) view(ctx context.Context, row roadmapdb.RoadmapAssessment, c *
 			keys = append(keys, f.Key)
 		}
 		out.Answers[qid] = saved[qid]
+		if _, ok := checked[qid]; ok && !finished {
+			aq.Correct, aq.Accepted, aq.Explanation = pq.Key, pq.Accepted, &pq.Explanation
+		}
 		if finished {
 			aq.Correct, aq.Accepted, aq.Explanation = pq.Key, pq.Accepted, &pq.Explanation
 			item := ResultItem{QuestionID: qid, Given: saved[qid], Explanation: pq.Explanation}

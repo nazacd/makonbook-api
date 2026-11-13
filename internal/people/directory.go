@@ -150,6 +150,12 @@ func MergeSelfStudent(ctx context.Context, db peopledb.DBTX, from, toStudent int
 				return q.MoveStudentSavedUniversities(ctx, peopledb.MoveStudentSavedUniversitiesParams{ToID: toStudent, FromID: from})
 			},
 			func(ctx context.Context) error {
+				return q.MoveStudentAnswers(ctx, peopledb.MoveStudentAnswersParams{ToID: toStudent, FromID: from})
+			},
+			func(ctx context.Context) error {
+				return q.MoveStudentSavedQuestions(ctx, peopledb.MoveStudentSavedQuestionsParams{ToID: toStudent, FromID: from})
+			},
+			func(ctx context.Context) error {
 				return q.MoveStudentParked(ctx, peopledb.MoveStudentParkedParams{ToID: toStudent, FromID: from})
 			},
 			func(ctx context.Context) error {

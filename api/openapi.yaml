@@ -2303,15 +2303,14 @@ paths:
       security: [{ bearer: [] }]
       responses:
         "200":
-          description: The sets, and a free account's daily allowance (null when unlimited)
+          description: The sets
           content:
             application/json:
               schema:
                 type: object
-                required: [sets, free_questions_a_day]
+                required: [sets]
                 properties:
                   sets: { type: array, items: { $ref: "#/components/schemas/PracticeSet" } }
-                  free_questions_a_day: { type: [integer, "null"] }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
     post:
@@ -2322,8 +2321,9 @@ paths:
         the rest medium), preferring ones the student hasn't had; or
         `question_ids` as they are (a question from the bank). The answer is
         an assessment (kind practice): answer and submit it like any other
-        (`/v1/me/assessments/{id}`…). One unfinished set at a time. Free
-        accounts get 40 questions a school day.
+        (`/v1/me/assessments/{id}`…), or at one's own pace, checking each
+        question as it is answered. One unfinished set at a time; open to
+        every student with a phone.
       operationId: startPractice
       tags: [roadmaps]
       security: [{ bearer: [] }]
@@ -2338,17 +2338,18 @@ paths:
                 subject: { type: string, enum: [math, english] }
                 skills: { type: array, items: { type: string }, maxItems: 30 }
                 difficulty: { type: string, enum: [easy, medium, hard, mixed], default: mixed }
-                count: { type: integer, minimum: 1, maximum: 50, description: Without question_ids }
+                count: { type: integer, minimum: 1, maximum: 200, description: "Without question_ids: up to 50 for a rush, 200 at one's own pace" }
                 seconds_per_question: { type: integer, description: "0 (untimed) or 15–600" }
-                question_ids: { type: array, items: { type: string, format: uuid }, maxItems: 50 }
+                question_ids: { type: array, items: { type: string, format: uuid }, maxItems: 200 }
+                mode: { type: string, enum: [rush, own_pace], default: rush, description: "own_pace: untimed, up to 200 questions, each checked as it is answered" }
+                unsolved: { type: boolean, description: Leave out questions answered right before }
+                shuffle: { type: boolean, description: "Mix the order (otherwise easy to hard)" }
       responses:
         "201":
           description: The set
           content: { application/json: { schema: { $ref: "#/components/schemas/Assessment" } } }
         "401": { $ref: "#/components/responses/Error" }
-        "403":
-          description: "`practice_limit`: a free account used today's questions; `forbidden`: not a student"
-          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "403": { $ref: "#/components/responses/Error" }
         "409":
           description: "`practice_open`: an unfinished set, given as `open`, to continue or discard; `no_questions`"
           content:
@@ -2375,6 +2376,110 @@ paths:
         "204": { description: Discarded }
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+
+  /v1/me/assessments/{id}/check:
+    post:
+      summary: Check one question of a practice set taken at one's own pace
+      description: |
+        Spec 22.8. Grades the answer, records it (a question is checked once:
+        a second check is `409 already_checked`, and its answer can't change
+        afterwards) and gives back the key and the explanation. Only for a
+        practice set with `mode` own_pace (`409 not_checkable` otherwise).
+      operationId: checkQuestion
+      tags: [roadmaps]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question_id, answer]
+              properties:
+                question_id: { type: string, format: uuid }
+                answer: { type: string, maxLength: 32 }
+                seconds: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: How it went
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [correct, answer, correct_answer, accepted, explanation]
+                properties:
+                  correct: { type: boolean }
+                  answer: { type: string }
+                  correct_answer: { type: [string, "null"], description: The letter (multiple choice) }
+                  accepted: { type: array, items: { type: string }, description: The accepted forms (grid-in) }
+                  explanation: { type: string }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`already_checked`, `not_checkable`, `finished`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_answers`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/me/practice/stats:
+    get:
+      summary: The question bank's analytics for the student
+      description: |
+        Spec 22.8. From every answer to a bank question in a level check,
+        homework or practice set (mock tests aren't counted). School time.
+        Site-wide figures are null below 100 answers.
+      operationId: practiceStats
+      tags: [roadmaps]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The analytics
+          content: { application/json: { schema: { $ref: "#/components/schemas/PracticeStats" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/me/practice/saved:
+    get:
+      summary: The questions the student saved, newest first
+      operationId: savedQuestions
+      tags: [roadmaps]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: Previews
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [questions]
+                properties:
+                  questions: { type: array, items: { $ref: "#/components/schemas/QuestionPreview" } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/me/practice/saved/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      summary: Save a question
+      operationId: saveQuestion
+      tags: [roadmaps]
+      security: [{ bearer: [] }]
+      responses:
+        "204": { description: Saved }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    delete:
+      summary: Unsave a question
+      operationId: unsaveQuestion
+      tags: [roadmaps]
+      security: [{ bearer: [] }]
+      responses:
+        "204": { description: Done }
+        "401": { $ref: "#/components/responses/Error" }
 
   /v1/me/assessments/{id}:
     get:
@@ -4985,6 +5090,10 @@ components:
                       correct_answer: { type: string, description: The letter, or the first accepted form }
                       explanation: { type: string }
 
+        checked:
+          type: object
+          additionalProperties: { type: boolean }
+          description: "A practice set taken at one's own pace: question id → right or not, for those checked (they carry their key and explanation already)"
         practice:
           description: "A practice set (kind practice): what it was built from; null otherwise"
           oneOf:
@@ -5362,13 +5471,71 @@ components:
 
     PracticeInfo:
       type: object
-      required: [title, subject, skills, difficulty, seconds_per_question]
+      required: [title, subject, skills, difficulty, seconds_per_question, mode]
       properties:
         title: { type: string }
         subject: { type: string, enum: [math, english] }
         skills: { type: array, items: { type: string }, description: Empty for every skill of the subject }
         difficulty: { type: string, enum: [easy, medium, hard, mixed] }
         seconds_per_question: { type: integer, description: "0: untimed" }
+        mode: { type: string, enum: [rush, own_pace], description: "own_pace: each question is checked as it is answered (POST /v1/me/assessments/{id}/check)" }
+
+    PracticeStats:
+      type: object
+      required: [subjects, attempted, answers, correct, saved, streak, weeks]
+      properties:
+        subjects:
+          type: object
+          required: [math, english]
+          properties:
+            math: { $ref: "#/components/schemas/PracticeSubjectStats" }
+            english: { $ref: "#/components/schemas/PracticeSubjectStats" }
+        attempted: { type: integer, description: Questions answered at least once }
+        answers: { type: integer, description: Every answer }
+        correct: { type: integer, description: Right answers }
+        saved: { type: integer }
+        streak: { type: integer, description: "School days in a row with an answer, to today or yesterday" }
+        weeks:
+          type: array
+          description: The last 8 weeks, oldest first, each from its Monday
+          items:
+            type: object
+            required: [week, correct, wrong]
+            properties:
+              week: { type: string, format: date }
+              correct: { type: object, additionalProperties: { type: integer }, description: "By difficulty: easy, medium, hard, unrated" }
+              wrong: { type: object, additionalProperties: { type: integer } }
+
+    PracticeSubjectStats:
+      type: object
+      required: [total, attempted, solved, skills, domains, difficulty]
+      properties:
+        total: { type: integer, description: Approved questions }
+        attempted: { type: integer }
+        solved: { type: integer, description: Answered right at least once }
+        skills: { type: object, additionalProperties: { type: integer }, description: Skill → questions solved }
+        domains:
+          type: array
+          items:
+            type: object
+            required: [domain, answers, correct]
+            properties:
+              domain: { type: string }
+              answers: { type: integer }
+              correct: { type: integer }
+        difficulty:
+          type: array
+          description: easy, medium, hard
+          items:
+            type: object
+            required: [difficulty, answers, correct, avg_seconds, site_accuracy, site_avg_seconds]
+            properties:
+              difficulty: { type: string, enum: [easy, medium, hard] }
+              answers: { type: integer }
+              correct: { type: integer }
+              avg_seconds: { type: [number, "null"] }
+              site_accuracy: { type: [number, "null"], description: 0–1 }
+              site_avg_seconds: { type: [number, "null"] }
 
     PracticeSet:
       type: object
@@ -5947,7 +6114,8 @@ components:
                 - own_deck
                 - invalid_practice
                 - practice_open
-                - practice_limit
+                - already_checked
+                - not_checkable
             message:
               type: string
               description: Human-readable explanation; may change.

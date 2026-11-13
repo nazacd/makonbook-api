@@ -23,7 +23,8 @@ import (
 const (
 	CodeInvalidPractice = "invalid_practice"
 	CodePracticeOpen    = "practice_open"
-	CodePracticeLimit   = "practice_limit"
+	CodeAlreadyChecked  = "already_checked"
+	CodeNotCheckable    = "not_checkable"
 )
 
 func (h *Handler) registerPractice(mux *http.ServeMux) {
@@ -32,6 +33,11 @@ func (h *Handler) registerPractice(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/me/practice/sets", h.requireContent(h.student(h.practiceSets)))
 	mux.HandleFunc("POST /v1/me/practice/sets", h.requireContent(h.student(h.startPractice)))
 	mux.HandleFunc("DELETE /v1/me/practice/sets/{id}", h.requireContent(h.student(h.discardPractice)))
+	mux.HandleFunc("POST /v1/me/assessments/{id}/check", h.requireContent(h.student(h.checkQuestion)))
+	mux.HandleFunc("GET /v1/me/practice/stats", h.requireContent(h.student(h.practiceStats)))
+	mux.HandleFunc("GET /v1/me/practice/saved", h.requireContent(h.student(h.savedQuestions)))
+	mux.HandleFunc("PUT /v1/me/practice/saved/{id}", h.requireContent(h.student(h.saveQuestion(true))))
+	mux.HandleFunc("DELETE /v1/me/practice/saved/{id}", h.requireContent(h.student(h.saveQuestion(false))))
 }
 
 // student lets only students through.
@@ -102,15 +108,7 @@ func (h *Handler) practiceSets(w http.ResponseWriter, r *http.Request, p auth.Pr
 		h.fail(w, r, "practice sets", err)
 		return
 	}
-	httpx.WriteJSON(w, r, http.StatusOK, map[string]any{"sets": sets, "free_questions_a_day": freeLimit(p)})
-}
-
-func freeLimit(p auth.Principal) *int {
-	if !p.Registered {
-		return nil
-	}
-	n := roadmap.FreeQuestionsADay
-	return &n
+	httpx.WriteJSON(w, r, http.StatusOK, map[string]any{"sets": sets})
 }
 
 func (h *Handler) startPractice(w http.ResponseWriter, r *http.Request, p auth.Principal) {
@@ -118,9 +116,7 @@ func (h *Handler) startPractice(w http.ResponseWriter, r *http.Request, p auth.P
 	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
-	local := time.Now().In(h.location)
-	dayStart := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, h.location)
-	a, err := h.svc.roadmap.StartPractice(r.Context(), p.ID, p.Registered, in, dayStart)
+	a, err := h.svc.roadmap.StartPractice(r.Context(), p.ID, in)
 	var bad *roadmap.PracticeError
 	switch {
 	case errors.Is(err, roadmap.ErrPracticeOpen):
@@ -133,8 +129,6 @@ func (h *Handler) startPractice(w http.ResponseWriter, r *http.Request, p auth.P
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		_, _ = w.Write(body)
-	case errors.Is(err, roadmap.ErrPracticeLimit):
-		httpx.WriteError(w, r, http.StatusForbidden, CodePracticeLimit, err.Error())
 	case errors.As(err, &bad):
 		httpx.WriteError(w, r, http.StatusUnprocessableEntity, CodeInvalidPractice, bad.Reason)
 	case err != nil:
@@ -150,4 +144,63 @@ func (h *Handler) discardPractice(w http.ResponseWriter, r *http.Request, p auth
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// checkQuestion grades one question of a practice set taken at one's own pace.
+func (h *Handler) checkQuestion(w http.ResponseWriter, r *http.Request, p auth.Principal) {
+	var in struct {
+		QuestionID string `json:"question_id"`
+		Answer     string `json:"answer"`
+		Seconds    int    `json:"seconds"`
+	}
+	if !httpx.DecodeJSON(w, r, &in) {
+		return
+	}
+	c, err := h.svc.roadmap.Check(r.Context(), roadmap.Who{ID: p.ID}, r.PathValue("id"), in.QuestionID, in.Answer, in.Seconds)
+	switch {
+	case errors.Is(err, roadmap.ErrAlreadyChecked):
+		httpx.WriteError(w, r, http.StatusConflict, CodeAlreadyChecked, err.Error())
+	case errors.Is(err, roadmap.ErrNotCheckable):
+		httpx.WriteError(w, r, http.StatusConflict, CodeNotCheckable, err.Error())
+	case errors.Is(err, roadmap.ErrFinished):
+		httpx.WriteError(w, r, http.StatusConflict, roadmap.CodeFinished, err.Error())
+	case err != nil:
+		h.fail(w, r, "check", err)
+	default:
+		httpx.WriteJSON(w, r, http.StatusOK, c)
+	}
+}
+
+func (h *Handler) practiceStats(w http.ResponseWriter, r *http.Request, p auth.Principal) {
+	st, err := h.svc.roadmap.Stats(r.Context(), p.ID, time.Now(), h.location)
+	if err != nil {
+		h.fail(w, r, "practice stats", err)
+		return
+	}
+	httpx.WriteJSON(w, r, http.StatusOK, st)
+}
+
+// savedQuestions lists the saved questions as previews, newest first.
+func (h *Handler) savedQuestions(w http.ResponseWriter, r *http.Request, p auth.Principal) {
+	ids, err := h.svc.roadmap.SavedQuestions(r.Context(), p.ID)
+	if err != nil {
+		h.fail(w, r, "saved questions", err)
+		return
+	}
+	list, err := h.svc.practice.PreviewsOf(r.Context(), ids)
+	if err != nil {
+		h.fail(w, r, "saved questions", err)
+		return
+	}
+	httpx.WriteJSON(w, r, http.StatusOK, map[string]any{"questions": list})
+}
+
+func (h *Handler) saveQuestion(on bool) func(http.ResponseWriter, *http.Request, auth.Principal) {
+	return func(w http.ResponseWriter, r *http.Request, p auth.Principal) {
+		if err := h.svc.roadmap.SaveQuestion(r.Context(), p.ID, r.PathValue("id"), on); err != nil {
+			h.fail(w, r, "save question", err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
 }

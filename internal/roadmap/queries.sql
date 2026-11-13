@@ -138,13 +138,95 @@ SELECT id, practice, cardinality(question_ids)::int AS questions, created_at, fi
 FROM roadmap_assessments WHERE student_client_id = @student AND kind = 'practice'
 ORDER BY created_at DESC LIMIT @lim;
 
--- Questions in the practice sets a student started since a moment (a free account's day).
--- name: PracticeQuestionsSince :one
-SELECT coalesce(sum(cardinality(question_ids)), 0)::int FROM roadmap_assessments
-WHERE student_client_id = @student AND kind = 'practice' AND created_at >= @since;
-
 -- Questions the student finished in any assessment, and whether they got
 -- each right the last time is worked out by the caller.
 -- name: FinishedQuestions :many
 SELECT DISTINCT unnest(question_ids)::uuid AS id FROM roadmap_assessments
 WHERE student_client_id = @student AND finished_at IS NOT NULL;
+
+-- Answers (spec 22.8) ----------------------------------------------------------
+
+-- name: InsertAnswer :execrows
+INSERT INTO question_answers (student_client_id, question_id, assessment_id, answer, correct, seconds, answered_at)
+VALUES (@student, @question_id, @assessment_id, @answer, @correct, sqlc.narg(seconds), @answered_at)
+ON CONFLICT (assessment_id, question_id) DO NOTHING;
+
+-- The questions of an assessment already checked one at a time, and how.
+-- name: CheckedAnswers :many
+SELECT question_id, correct FROM question_answers WHERE assessment_id = @assessment_id;
+
+-- Finished assessments, for filling question_answers from them.
+-- name: FinishedAssessments :many
+SELECT id, student_client_id, question_ids, answers, times, finished_at FROM roadmap_assessments
+WHERE finished_at IS NOT NULL ORDER BY finished_at;
+
+-- name: SolvedQuestions :many
+SELECT DISTINCT question_id FROM question_answers WHERE student_client_id = @student AND correct;
+
+-- Saved questions ---------------------------------------------------------------
+
+-- name: SavedQuestionIDs :many
+SELECT question_id FROM saved_questions WHERE student_client_id = @student ORDER BY saved_at DESC;
+
+-- name: SaveQuestion :exec
+INSERT INTO saved_questions (student_client_id, question_id)
+SELECT @student, id FROM questions WHERE id = @question_id AND status = 'approved'
+ON CONFLICT DO NOTHING;
+
+-- name: UnsaveQuestion :exec
+DELETE FROM saved_questions WHERE student_client_id = @student AND question_id = @question_id;
+
+-- Stats (spec 22.8), school time (tz) -------------------------------------------
+
+-- Per subject: approved questions, and those the student answered and solved.
+-- name: SubjectProgress :many
+SELECT q.subject,
+       count(*)::int AS total,
+       count(*) FILTER (WHERE EXISTS (SELECT 1 FROM question_answers a WHERE a.student_client_id = @student AND a.question_id = q.id))::int AS attempted,
+       count(*) FILTER (WHERE EXISTS (SELECT 1 FROM question_answers a WHERE a.student_client_id = @student AND a.question_id = q.id AND a.correct))::int AS solved
+FROM questions q WHERE q.status = 'approved'
+GROUP BY q.subject;
+
+-- Per skill, the approved questions the student solved.
+-- name: SkillSolved :many
+SELECT q.subject, q.skill, count(*)::int AS solved
+FROM questions q
+WHERE q.status = 'approved'
+  AND EXISTS (SELECT 1 FROM question_answers a WHERE a.student_client_id = @student AND a.question_id = q.id AND a.correct)
+GROUP BY q.subject, q.skill;
+
+-- name: AnswerTotals :one
+SELECT count(*)::int AS answers, count(*) FILTER (WHERE correct)::int AS correct,
+       count(DISTINCT question_id)::int AS questions
+FROM question_answers WHERE student_client_id = @student;
+
+-- Days (school time) the student answered on, newest first.
+-- name: AnswerDays :many
+SELECT DISTINCT (answered_at AT TIME ZONE @tz::text)::date AS day
+FROM question_answers WHERE student_client_id = @student
+ORDER BY day DESC LIMIT 400;
+
+-- Answers by week (Monday, school time), right or wrong, and difficulty.
+-- name: WeeklyAnswers :many
+SELECT date_trunc('week', a.answered_at AT TIME ZONE @tz::text)::date AS week,
+       a.correct, coalesce(q.difficulty, '')::text AS difficulty, count(*)::int AS n
+FROM question_answers a JOIN questions q ON q.id = a.question_id
+WHERE a.student_client_id = @student AND a.answered_at >= @since
+GROUP BY 1, 2, 3;
+
+-- Per subject and domain: answers and right ones.
+-- name: DomainAccuracy :many
+SELECT q.subject, q.domain, count(*)::int AS answers, count(*) FILTER (WHERE a.correct)::int AS correct
+FROM question_answers a JOIN questions q ON q.id = a.question_id
+WHERE a.student_client_id = @student
+GROUP BY q.subject, q.domain;
+
+-- Per subject and difficulty: answers, right ones, and seconds (where timed).
+-- student 0: everyone (the site-wide averages).
+-- name: DifficultyStats :many
+SELECT q.subject, q.difficulty::text AS difficulty, count(*)::int AS answers, count(*) FILTER (WHERE a.correct)::int AS correct,
+       coalesce(avg(a.seconds) FILTER (WHERE a.seconds > 0), 0)::float8 AS avg_seconds,
+       count(a.seconds) FILTER (WHERE a.seconds > 0)::int AS timed
+FROM question_answers a JOIN questions q ON q.id = a.question_id
+WHERE (@student::int = 0 OR a.student_client_id = @student::int) AND q.difficulty IS NOT NULL
+GROUP BY q.subject, q.difficulty;
