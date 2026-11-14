@@ -92,6 +92,12 @@ func TestCompetitions(t *testing.T) {
 	if err := svc.SaveAnswers(ctx, Who{ID: bek}, bk.ID, Answers{Answers: map[string]*string{drawn[1]: &b}}); !errors.Is(err, ErrTimeUp) {
 		t.Errorf("late answer: %v", err)
 	}
+	if got, _ := svc.CompetitionByID(ctx, c.ID, bek, false, time.Now()); got.Mine == nil || !got.Mine.Finished || *got.Mine.Correct != 1 {
+		t.Errorf("an attempt past its time reads finished: %+v", got.Mine)
+	}
+	if _, err := svc.StartCompetition(ctx, bek, c.ID, time.Now()); !errors.Is(err, ErrAttempted) {
+		t.Errorf("start past its time: %v", err)
+	}
 	board, err := svc.CompetitionBoard(ctx, c.ID, bek, false)
 	if err != nil || board.Participants != 2 || board.Entries[0].Name != "Ali V." || board.Entries[0].Correct != 2 ||
 		board.Me == nil || board.Me.Correct != 1 || board.Me.Seconds > 10*60 {

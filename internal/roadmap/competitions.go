@@ -183,6 +183,9 @@ func (s *Service) Competitions(ctx context.Context, student int32, editor bool, 
 			for _, a := range attempts {
 				if a.CompetitionID == r.ID {
 					c := roadmapdb.Competition{Minutes: r.Minutes, EndsAt: r.EndsAt}
+					if a, err = s.finishIfOver(ctx, a, c, now); err != nil {
+						return nil, err
+					}
 					out[i].Mine = attemptOut(a, c)
 				}
 			}
@@ -220,12 +223,27 @@ func (s *Service) CompetitionByID(ctx context.Context, id string, student int32,
 		a, err := q.CompetitionAttempt(ctx, roadmapdb.CompetitionAttemptParams{Student: student, CompetitionID: c.ID})
 		switch {
 		case err == nil:
+			if a, err = s.finishIfOver(ctx, a, c, now); err != nil {
+				return Competition{}, err
+			}
 			out.Mine = attemptOut(a, c)
 		case !errors.Is(err, pgx.ErrNoRows):
 			return Competition{}, err
 		}
 	}
 	return out, nil
+}
+
+// finishIfOver grades an open attempt whose time (with Grace) is up, with
+// what it saved, and gives the attempt as it is now.
+func (s *Service) finishIfOver(ctx context.Context, a roadmapdb.RoadmapAssessment, c roadmapdb.Competition, now time.Time) (roadmapdb.RoadmapAssessment, error) {
+	if a.FinishedAt.Valid || !now.After(deadlineOf(c, a.CreatedAt.Time).Add(Grace)) {
+		return a, nil
+	}
+	if _, err := s.Submit(ctx, Who{ID: a.StudentClientID}, uuidString(a.ID), Answers{}); err != nil && !errors.Is(err, ErrFinished) {
+		return a, err
+	}
+	return roadmapdb.New(s.pool).CompetitionAttempt(ctx, roadmapdb.CompetitionAttemptParams{Student: a.StudentClientID, CompetitionID: a.CompetitionID})
 }
 
 func (s *Service) competition(ctx context.Context, id string) (roadmapdb.Competition, error) {
@@ -254,6 +272,9 @@ func (s *Service) StartCompetition(ctx context.Context, student int32, id string
 	row, err := q.CompetitionAttempt(ctx, roadmapdb.CompetitionAttemptParams{Student: student, CompetitionID: c.ID})
 	switch {
 	case err == nil:
+		if row, err = s.finishIfOver(ctx, row, c, now); err != nil {
+			return Assessment{}, err
+		}
 		if row.FinishedAt.Valid {
 			return Assessment{}, ErrAttempted
 		}
