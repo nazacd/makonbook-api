@@ -5312,7 +5312,7 @@ components:
                 title: { type: string }
                 due_at: { type: string, format: date-time }
         title: { type: string }
-        subject: { type: string, enum: [math, english] }
+        subject: { type: string, enum: [math, english, mixed], description: "mixed: a competition on both subjects" }
         created_at: { type: string, format: date-time }
         finished_at: { type: [string, "null"], format: date-time }
         questions:

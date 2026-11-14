@@ -3943,8 +3943,11 @@ export interface components {
                 due_at: string;
             };
             title: string;
-            /** @enum {string} */
-            subject: "math" | "english";
+            /**
+             * @description mixed: a competition on both subjects
+             * @enum {string}
+             */
+            subject: "math" | "english" | "mixed";
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */

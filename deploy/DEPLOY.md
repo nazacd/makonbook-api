@@ -451,6 +451,18 @@ record, … with a logo`. A university gone from the data stays, unlisted, for
 the students who chose it. Students see changes at once (the list's ETag
 moves only when something changed).
 
+## Competitions (migration 00046)
+
+Nothing to run: `migrate up` applies 00046 and editors make competitions in
+the admin panel (Practice → Competitions). A competition with **reserved**
+questions needs questions that are in no mock test: write them as JSON lines
+(the same shape as for `practice add`) and load them, then approve each in
+the admin panel before publishing:
+
+```
+docker compose run --rm -v /tmp/cup.jsonl:/cup.jsonl api practice add /cup.jsonl
+```
+
 ## The question bank's answers (migration 00045, once)
 
 After `migrate up` has applied 00045, fill the question bank's answers from

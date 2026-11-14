@@ -313,7 +313,7 @@ function Reserve({ id, subject, have, onAdd }: { id: string; subject: Form['subj
   return (
     <div className="card stack">
       <b>Pick reserved questions</b>
-      <p className="small muted">Questions in no mock test. Write new ones in the question editor first; they need approving before you publish.</p>
+      <p className="small muted">Questions in no mock test: ones added on the server with makonbook practice add (see DEPLOY.md). Each needs approving in the question editor (Open) before you publish.</p>
       <div className="toolbar">
         <input className="input" placeholder="Search the text" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), setQ(text))} />
         <button type="button" className="btn secondary" onClick={() => setQ(text)}>
