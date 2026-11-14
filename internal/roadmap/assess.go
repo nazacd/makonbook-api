@@ -19,9 +19,10 @@ import (
 
 // Assessment kinds.
 const (
-	kindLevelCheck = "level_check"
-	kindHomework   = "homework"
-	kindPractice   = "practice"
+	kindLevelCheck  = "level_check"
+	kindHomework    = "homework"
+	kindPractice    = "practice"
+	kindCompetition = "competition"
 )
 
 // maxAnswer bounds one answer's length (a letter or a grid-in entry).
@@ -66,6 +67,10 @@ type Assessment struct {
 	// already checked and whether they were right (their key and
 	// explanation then come with them before the set is finished).
 	Checked map[string]bool `json:"checked"`
+	// Competition is the competition an attempt (kind competition) belongs
+	// to; null otherwise. Until it ends, a finished attempt shows its score
+	// only: no keys, explanations or per-question results.
+	Competition *CompetitionBrief `json:"competition"`
 }
 
 // AssignmentBrief is the assignment an assessment comes from.
@@ -389,6 +394,13 @@ func (s *Service) SaveAnswers(ctx context.Context, who Who, id string, in Answer
 		if row.FinishedAt.Valid {
 			return ErrFinished
 		}
+		if row.Kind == kindCompetition {
+			if over, err := timeIsUp(ctx, q, row, time.Now()); err != nil {
+				return err
+			} else if over {
+				return ErrTimeUp
+			}
+		}
 		if err := dropChecked(ctx, q, row, in.Answers); err != nil {
 			return err
 		}
@@ -422,6 +434,14 @@ func (s *Service) Submit(ctx context.Context, who Who, id string, in Answers) (A
 		}
 		if row.FinishedAt.Valid {
 			return ErrFinished
+		}
+		if row.Kind == kindCompetition {
+			// Past the time (and its grace), only what was saved in time counts.
+			if over, err := timeIsUp(ctx, q, row, time.Now()); err != nil {
+				return err
+			} else if over {
+				in = Answers{}
+			}
 		}
 		if err := dropChecked(ctx, q, row, in.Answers); err != nil {
 			return err
@@ -590,6 +610,18 @@ func (s *Service) view(ctx context.Context, row roadmapdb.RoadmapAssessment, c *
 	if brief != nil {
 		out.Title = brief.Title
 	}
+	reveal := finished
+	if row.Kind == kindCompetition {
+		c, err := roadmapdb.New(s.pool).GetCompetition(ctx, row.CompetitionID)
+		if err != nil {
+			return Assessment{}, fmt.Errorf("competition of %s: %w", uuidString(row.ID), err)
+		}
+		now := time.Now()
+		ended := !now.Before(c.EndsAt.Time)
+		out.Competition = &CompetitionBrief{ID: uuidString(c.ID), Title: c.Title, EndsAt: c.EndsAt.Time.UTC(), Deadline: deadlineOf(c, row.CreatedAt.Time).UTC(), ServerTime: now.UTC(), Ended: ended}
+		out.Title, out.Subject = c.Title, c.Subject
+		reveal = finished && ended
+	}
 	if row.Kind == kindPractice && row.Practice != nil {
 		var info PracticeInfo
 		if err := json.Unmarshal(row.Practice, &info); err != nil {
@@ -627,7 +659,7 @@ func (s *Service) view(ctx context.Context, row roadmapdb.RoadmapAssessment, c *
 		if _, ok := checked[qid]; ok && !finished {
 			aq.Correct, aq.Accepted, aq.Explanation = pq.Key, pq.Accepted, &pq.Explanation
 		}
-		if finished {
+		if reveal {
 			aq.Correct, aq.Accepted, aq.Explanation = pq.Key, pq.Accepted, &pq.Explanation
 			item := ResultItem{QuestionID: qid, Given: saved[qid], Explanation: pq.Explanation}
 			item.Correct = saved[qid] != nil && pq.Correct(*saved[qid])

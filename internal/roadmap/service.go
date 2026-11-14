@@ -40,6 +40,7 @@ type Bank interface {
 	ApprovedCounts(ctx context.Context, subject string) (map[string]map[string]int, error)
 	BankQuestions(ctx context.Context, ids []string) (map[string]practice.PackageQuestion, error)
 	FigureLinks(ctx context.Context, keys []string) (map[string]practice.ImageLink, error)
+	Held(ctx context.Context, ids []string) (map[string]bool, error)
 	SetGoals(ctx context.Context, student int32, in practice.GoalsInput, today time.Time) (practice.Goals, error)
 }
 

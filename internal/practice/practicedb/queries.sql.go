@@ -189,6 +189,7 @@ func (q *Queries) ApproveQuestion(ctx context.Context, arg ApproveQuestionParams
 const approvedCounts = `-- name: ApprovedCounts :many
 SELECT skill, coalesce(difficulty, '')::text AS difficulty, count(*)::int AS n
 FROM questions WHERE status = 'approved' AND subject = $1
+  AND id NOT IN (SELECT question_id FROM held_questions)
 GROUP BY skill, difficulty
 `
 
@@ -221,6 +222,7 @@ func (q *Queries) ApprovedCounts(ctx context.Context, subject string) ([]Approve
 const approvedQuestions = `-- name: ApprovedQuestions :many
 SELECT id, type, domain, skill, difficulty, passage, stem FROM questions
 WHERE status = 'approved' AND subject = $1
+  AND id NOT IN (SELECT question_id FROM held_questions)
   AND ($2::text IS NULL OR lower(skill) = lower($2::text))
   AND ($3::text IS NULL OR difficulty = $3::text)
   AND ($4::text IS NULL OR stem ILIKE $4::text OR passage ILIKE $4::text)
@@ -335,6 +337,7 @@ func (q *Queries) BankQuestions(ctx context.Context, ids []pgtype.UUID) ([]Quest
 const candidates = `-- name: Candidates :many
 SELECT id, difficulty FROM questions
 WHERE status = 'approved' AND subject = $1 AND lower(skill) = ANY ($2::text[])
+  AND id NOT IN (SELECT question_id FROM held_questions)
 `
 
 type CandidatesParams struct {
@@ -469,6 +472,7 @@ func (q *Queries) CompleteTests(ctx context.Context) ([]CompleteTestsRow, error)
 const countApprovedQuestions = `-- name: CountApprovedQuestions :one
 SELECT count(*)::int FROM questions
 WHERE status = 'approved' AND subject = $1
+  AND id NOT IN (SELECT question_id FROM held_questions)
   AND ($2::text IS NULL OR lower(skill) = lower($2::text))
   AND ($3::text IS NULL OR difficulty = $3::text)
   AND ($4::text IS NULL OR stem ILIKE $4::text OR passage ILIKE $4::text)
@@ -784,6 +788,31 @@ func (q *Queries) GroupStudents(ctx context.Context, arg GroupStudentsParams) ([
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const heldAmong = `-- name: HeldAmong :many
+SELECT question_id::uuid AS question_id FROM held_questions WHERE question_id = ANY ($1::uuid[])
+`
+
+// Which of these questions a competition holds now (out of the bank).
+func (q *Queries) HeldAmong(ctx context.Context, ids []pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, heldAmong, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var question_id pgtype.UUID
+		if err := rows.Scan(&question_id); err != nil {
+			return nil, err
+		}
+		items = append(items, question_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

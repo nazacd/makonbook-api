@@ -226,7 +226,11 @@ func (s *Service) SaveQuestion(ctx context.Context, student int32, id string, on
 	if err != nil {
 		return err
 	}
-	if _, ok := found[id]; !ok {
+	held, err := s.bank.Held(ctx, []string{id})
+	if err != nil {
+		return err
+	}
+	if _, ok := found[id]; !ok || held[id] {
 		return ErrNotFound
 	}
 	return q.SaveQuestion(ctx, roadmapdb.SaveQuestionParams{Student: student, QuestionID: u})

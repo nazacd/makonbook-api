@@ -88,6 +88,54 @@ func (q *Queries) AssessmentAssignment(ctx context.Context, id pgtype.UUID) (Ass
 	return i, err
 }
 
+const attemptsIn = `-- name: AttemptsIn :many
+SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice, competition_id FROM roadmap_assessments WHERE student_client_id = $1 AND competition_id = ANY ($2::uuid[])
+`
+
+type AttemptsInParams struct {
+	Student      int32
+	Competitions []pgtype.UUID
+}
+
+// A student's attempts in some competitions.
+func (q *Queries) AttemptsIn(ctx context.Context, arg AttemptsInParams) ([]RoadmapAssessment, error) {
+	rows, err := q.db.Query(ctx, attemptsIn, arg.Student, arg.Competitions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RoadmapAssessment
+	for rows.Next() {
+		var i RoadmapAssessment
+		if err := rows.Scan(
+			&i.ID,
+			&i.StudentClientID,
+			&i.RoadmapID,
+			&i.LessonID,
+			&i.Kind,
+			&i.HomeworkIndex,
+			&i.QuestionIds,
+			&i.Answers,
+			&i.CreatedAt,
+			&i.FinishedAt,
+			&i.Correct,
+			&i.Total,
+			&i.Percent,
+			&i.AssignmentID,
+			&i.Times,
+			&i.Practice,
+			&i.CompetitionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const checkedAnswers = `-- name: CheckedAnswers :many
 SELECT question_id, correct FROM question_answers WHERE assessment_id = $1
 `
@@ -142,6 +190,102 @@ func (q *Queries) Choices(ctx context.Context, student int32) ([]string, error) 
 	return items, nil
 }
 
+const competitionAttempt = `-- name: CompetitionAttempt :one
+SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice, competition_id FROM roadmap_assessments WHERE student_client_id = $1 AND competition_id = $2
+`
+
+type CompetitionAttemptParams struct {
+	Student       int32
+	CompetitionID pgtype.UUID
+}
+
+func (q *Queries) CompetitionAttempt(ctx context.Context, arg CompetitionAttemptParams) (RoadmapAssessment, error) {
+	row := q.db.QueryRow(ctx, competitionAttempt, arg.Student, arg.CompetitionID)
+	var i RoadmapAssessment
+	err := row.Scan(
+		&i.ID,
+		&i.StudentClientID,
+		&i.RoadmapID,
+		&i.LessonID,
+		&i.Kind,
+		&i.HomeworkIndex,
+		&i.QuestionIds,
+		&i.Answers,
+		&i.CreatedAt,
+		&i.FinishedAt,
+		&i.Correct,
+		&i.Total,
+		&i.Percent,
+		&i.AssignmentID,
+		&i.Times,
+		&i.Practice,
+		&i.CompetitionID,
+	)
+	return i, err
+}
+
+const competitionAttempts = `-- name: CompetitionAttempts :one
+SELECT count(*)::int FROM roadmap_assessments WHERE competition_id = $1
+`
+
+func (q *Queries) CompetitionAttempts(ctx context.Context, competitionID pgtype.UUID) (int32, error) {
+	row := q.db.QueryRow(ctx, competitionAttempts, competitionID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const competitionBoard = `-- name: CompetitionBoard :many
+SELECT a.student_client_id, st.first_name, st.last_name, cr.photo_id, a.correct::int AS correct, a.total::int AS total,
+       extract(epoch FROM least(a.finished_at, a.created_at + make_interval(mins => c.minutes), c.ends_at) - a.created_at)::int AS seconds
+FROM roadmap_assessments a
+JOIN competitions c ON c.id = a.competition_id
+JOIN students st ON st.client_id = a.student_client_id
+LEFT JOIN credentials cr ON cr.person_kind = 'student' AND cr.person_id = a.student_client_id
+WHERE a.competition_id = $1 AND a.finished_at IS NOT NULL
+ORDER BY a.correct DESC, seconds ASC, a.finished_at ASC
+`
+
+type CompetitionBoardRow struct {
+	StudentClientID int32
+	FirstName       string
+	LastName        string
+	PhotoID         pgtype.Text
+	Correct         int32
+	Total           int32
+	Seconds         int32
+}
+
+// The board: every finished attempt, best first (right answers, then the
+// seconds taken, kept within the limit; then who finished first).
+func (q *Queries) CompetitionBoard(ctx context.Context, competitionID pgtype.UUID) ([]CompetitionBoardRow, error) {
+	rows, err := q.db.Query(ctx, competitionBoard, competitionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CompetitionBoardRow
+	for rows.Next() {
+		var i CompetitionBoardRow
+		if err := rows.Scan(
+			&i.StudentClientID,
+			&i.FirstName,
+			&i.LastName,
+			&i.PhotoID,
+			&i.Correct,
+			&i.Total,
+			&i.Seconds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const courseContent = `-- name: CourseContent :one
 SELECT content FROM curriculum_versions WHERE subject = $1 AND level = $2 AND version = $3
 `
@@ -165,6 +309,15 @@ DELETE FROM roadmap_choices WHERE student_client_id = $1
 
 func (q *Queries) DeleteChoices(ctx context.Context, student int32) error {
 	_, err := q.db.Exec(ctx, deleteChoices, student)
+	return err
+}
+
+const deleteCompetition = `-- name: DeleteCompetition :exec
+UPDATE competitions SET deleted_at = now(), updated_at = now() WHERE id = $1
+`
+
+func (q *Queries) DeleteCompetition(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteCompetition, id)
 	return err
 }
 
@@ -272,6 +425,38 @@ func (q *Queries) DomainAccuracy(ctx context.Context, student int32) ([]DomainAc
 	return items, nil
 }
 
+const expiredAttempts = `-- name: ExpiredAttempts :many
+SELECT a.id, a.student_client_id FROM roadmap_assessments a JOIN competitions c ON c.id = a.competition_id
+WHERE a.competition_id = $1 AND a.finished_at IS NULL
+  AND (a.created_at + make_interval(mins => c.minutes) < now() OR c.ends_at < now())
+`
+
+type ExpiredAttemptsRow struct {
+	ID              pgtype.UUID
+	StudentClientID int32
+}
+
+// Open attempts whose time is up: past their limit or the competition's end.
+func (q *Queries) ExpiredAttempts(ctx context.Context, competitionID pgtype.UUID) ([]ExpiredAttemptsRow, error) {
+	rows, err := q.db.Query(ctx, expiredAttempts, competitionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ExpiredAttemptsRow
+	for rows.Next() {
+		var i ExpiredAttemptsRow
+		if err := rows.Scan(&i.ID, &i.StudentClientID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const finishAssessment = `-- name: FinishAssessment :exec
 UPDATE roadmap_assessments
 SET answers = $1, times = $2, finished_at = now(), correct = $3, total = $4, percent = $5
@@ -369,7 +554,7 @@ func (q *Queries) FinishedQuestions(ctx context.Context, student int32) ([]pgtyp
 }
 
 const getAssessment = `-- name: GetAssessment :one
-SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice FROM roadmap_assessments WHERE id = $1
+SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice, competition_id FROM roadmap_assessments WHERE id = $1
 `
 
 func (q *Queries) GetAssessment(ctx context.Context, id pgtype.UUID) (RoadmapAssessment, error) {
@@ -392,6 +577,34 @@ func (q *Queries) GetAssessment(ctx context.Context, id pgtype.UUID) (RoadmapAss
 		&i.AssignmentID,
 		&i.Times,
 		&i.Practice,
+		&i.CompetitionID,
+	)
+	return i, err
+}
+
+const getCompetition = `-- name: GetCompetition :one
+SELECT id, title, description, prize, subject, source, question_ids, starts_at, ends_at, minutes, published_at, created_by, created_at, updated_at, deleted_at FROM competitions WHERE id = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) GetCompetition(ctx context.Context, id pgtype.UUID) (Competition, error) {
+	row := q.db.QueryRow(ctx, getCompetition, id)
+	var i Competition
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Description,
+		&i.Prize,
+		&i.Subject,
+		&i.Source,
+		&i.QuestionIds,
+		&i.StartsAt,
+		&i.EndsAt,
+		&i.Minutes,
+		&i.PublishedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -478,8 +691,8 @@ const insertAssessment = `-- name: InsertAssessment :one
 INSERT INTO roadmap_assessments (student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, assignment_id)
 VALUES ($1, $2, $3, $4, $5, $6::uuid[], $7)
 ON CONFLICT (student_client_id, coalesce(lesson_id, ''), kind, coalesce(homework_index, -1),
-             coalesce(assignment_id, '00000000-0000-0000-0000-000000000000'::uuid)) WHERE finished_at IS NULL DO NOTHING
-RETURNING id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice
+             coalesce(assignment_id, '00000000-0000-0000-0000-000000000000'::uuid)) WHERE finished_at IS NULL AND kind <> 'competition' DO NOTHING
+RETURNING id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice, competition_id
 `
 
 type InsertAssessmentParams struct {
@@ -520,6 +733,7 @@ func (q *Queries) InsertAssessment(ctx context.Context, arg InsertAssessmentPara
 		&i.AssignmentID,
 		&i.Times,
 		&i.Practice,
+		&i.CompetitionID,
 	)
 	return i, err
 }
@@ -537,6 +751,99 @@ type InsertChoiceParams struct {
 func (q *Queries) InsertChoice(ctx context.Context, arg InsertChoiceParams) error {
 	_, err := q.db.Exec(ctx, insertChoice, arg.Student, arg.RoadmapID)
 	return err
+}
+
+const insertCompetition = `-- name: InsertCompetition :one
+
+INSERT INTO competitions (title, description, prize, subject, source, question_ids, starts_at, ends_at, minutes, created_by)
+VALUES ($1, $2, $3, $4, $5, $6::uuid[], $7, $8, $9, $10)
+RETURNING id, title, description, prize, subject, source, question_ids, starts_at, ends_at, minutes, published_at, created_by, created_at, updated_at, deleted_at
+`
+
+type InsertCompetitionParams struct {
+	Title       string
+	Description string
+	Prize       string
+	Subject     string
+	Source      string
+	QuestionIds []pgtype.UUID
+	StartsAt    pgtype.Timestamptz
+	EndsAt      pgtype.Timestamptz
+	Minutes     int32
+	CreatedBy   string
+}
+
+// Competitions (spec 26) -------------------------------------------------------
+func (q *Queries) InsertCompetition(ctx context.Context, arg InsertCompetitionParams) (Competition, error) {
+	row := q.db.QueryRow(ctx, insertCompetition,
+		arg.Title,
+		arg.Description,
+		arg.Prize,
+		arg.Subject,
+		arg.Source,
+		arg.QuestionIds,
+		arg.StartsAt,
+		arg.EndsAt,
+		arg.Minutes,
+		arg.CreatedBy,
+	)
+	var i Competition
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Description,
+		&i.Prize,
+		&i.Subject,
+		&i.Source,
+		&i.QuestionIds,
+		&i.StartsAt,
+		&i.EndsAt,
+		&i.Minutes,
+		&i.PublishedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const insertCompetitionAttempt = `-- name: InsertCompetitionAttempt :one
+INSERT INTO roadmap_assessments (student_client_id, kind, question_ids, competition_id)
+VALUES ($1, 'competition', $2::uuid[], $3)
+ON CONFLICT (student_client_id, competition_id) WHERE competition_id IS NOT NULL DO NOTHING
+RETURNING id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice, competition_id
+`
+
+type InsertCompetitionAttemptParams struct {
+	Student       int32
+	QuestionIds   []pgtype.UUID
+	CompetitionID pgtype.UUID
+}
+
+func (q *Queries) InsertCompetitionAttempt(ctx context.Context, arg InsertCompetitionAttemptParams) (RoadmapAssessment, error) {
+	row := q.db.QueryRow(ctx, insertCompetitionAttempt, arg.Student, arg.QuestionIds, arg.CompetitionID)
+	var i RoadmapAssessment
+	err := row.Scan(
+		&i.ID,
+		&i.StudentClientID,
+		&i.RoadmapID,
+		&i.LessonID,
+		&i.Kind,
+		&i.HomeworkIndex,
+		&i.QuestionIds,
+		&i.Answers,
+		&i.CreatedAt,
+		&i.FinishedAt,
+		&i.Correct,
+		&i.Total,
+		&i.Percent,
+		&i.AssignmentID,
+		&i.Times,
+		&i.Practice,
+		&i.CompetitionID,
+	)
+	return i, err
 }
 
 const insertCourseVersion = `-- name: InsertCourseVersion :exec
@@ -568,8 +875,8 @@ const insertPractice = `-- name: InsertPractice :one
 INSERT INTO roadmap_assessments (student_client_id, kind, question_ids, practice)
 VALUES ($1, 'practice', $2::uuid[], $3)
 ON CONFLICT (student_client_id, coalesce(lesson_id, ''), kind, coalesce(homework_index, -1),
-             coalesce(assignment_id, '00000000-0000-0000-0000-000000000000'::uuid)) WHERE finished_at IS NULL DO NOTHING
-RETURNING id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice
+             coalesce(assignment_id, '00000000-0000-0000-0000-000000000000'::uuid)) WHERE finished_at IS NULL AND kind <> 'competition' DO NOTHING
+RETURNING id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice, competition_id
 `
 
 type InsertPracticeParams struct {
@@ -599,6 +906,7 @@ func (q *Queries) InsertPractice(ctx context.Context, arg InsertPracticeParams) 
 		&i.AssignmentID,
 		&i.Times,
 		&i.Practice,
+		&i.CompetitionID,
 	)
 	return i, err
 }
@@ -676,7 +984,7 @@ func (q *Queries) LatestVersions(ctx context.Context) ([]LatestVersionsRow, erro
 }
 
 const lessonAssessments = `-- name: LessonAssessments :many
-SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice FROM roadmap_assessments
+SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice, competition_id FROM roadmap_assessments
 WHERE student_client_id = $1 AND lesson_id = $2
 ORDER BY created_at, id
 `
@@ -712,6 +1020,71 @@ func (q *Queries) LessonAssessments(ctx context.Context, arg LessonAssessmentsPa
 			&i.AssignmentID,
 			&i.Times,
 			&i.Practice,
+			&i.CompetitionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCompetitions = `-- name: ListCompetitions :many
+SELECT c.id, c.title, c.description, c.prize, c.subject, c.source, c.question_ids, c.starts_at, c.ends_at, c.minutes, c.published_at, c.created_by, c.created_at, c.updated_at, c.deleted_at, (SELECT count(*) FROM roadmap_assessments a WHERE a.competition_id = c.id)::int AS participants
+FROM competitions c
+WHERE c.deleted_at IS NULL AND (c.published_at IS NOT NULL OR $1::bool)
+ORDER BY c.starts_at DESC
+LIMIT 200
+`
+
+type ListCompetitionsRow struct {
+	ID           pgtype.UUID
+	Title        string
+	Description  string
+	Prize        string
+	Subject      string
+	Source       string
+	QuestionIds  []pgtype.UUID
+	StartsAt     pgtype.Timestamptz
+	EndsAt       pgtype.Timestamptz
+	Minutes      int32
+	PublishedAt  pgtype.Timestamptz
+	CreatedBy    string
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	DeletedAt    pgtype.Timestamptz
+	Participants int32
+}
+
+func (q *Queries) ListCompetitions(ctx context.Context, withDrafts bool) ([]ListCompetitionsRow, error) {
+	rows, err := q.db.Query(ctx, listCompetitions, withDrafts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCompetitionsRow
+	for rows.Next() {
+		var i ListCompetitionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Description,
+			&i.Prize,
+			&i.Subject,
+			&i.Source,
+			&i.QuestionIds,
+			&i.StartsAt,
+			&i.EndsAt,
+			&i.Minutes,
+			&i.PublishedAt,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.Participants,
 		); err != nil {
 			return nil, err
 		}
@@ -724,7 +1097,7 @@ func (q *Queries) LessonAssessments(ctx context.Context, arg LessonAssessmentsPa
 }
 
 const lockAssessment = `-- name: LockAssessment :one
-SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice FROM roadmap_assessments WHERE id = $1 FOR UPDATE
+SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice, competition_id FROM roadmap_assessments WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockAssessment(ctx context.Context, id pgtype.UUID) (RoadmapAssessment, error) {
@@ -747,6 +1120,7 @@ func (q *Queries) LockAssessment(ctx context.Context, id pgtype.UUID) (RoadmapAs
 		&i.AssignmentID,
 		&i.Times,
 		&i.Practice,
+		&i.CompetitionID,
 	)
 	return i, err
 }
@@ -781,7 +1155,7 @@ func (q *Queries) LogoHashes(ctx context.Context) ([]LogoHashesRow, error) {
 }
 
 const openAssessment = `-- name: OpenAssessment :one
-SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice FROM roadmap_assessments
+SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice, competition_id FROM roadmap_assessments
 WHERE student_client_id = $1 AND lesson_id = $2::text AND kind = $3
   AND coalesce(homework_index, -1) = $4::int AND finished_at IS NULL
 ORDER BY assignment_id IS NULL, created_at
@@ -822,12 +1196,13 @@ func (q *Queries) OpenAssessment(ctx context.Context, arg OpenAssessmentParams) 
 		&i.AssignmentID,
 		&i.Times,
 		&i.Practice,
+		&i.CompetitionID,
 	)
 	return i, err
 }
 
 const openAssigned = `-- name: OpenAssigned :one
-SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice FROM roadmap_assessments
+SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice, competition_id FROM roadmap_assessments
 WHERE student_client_id = $1 AND assignment_id = $2 AND finished_at IS NULL
 `
 
@@ -856,12 +1231,13 @@ func (q *Queries) OpenAssigned(ctx context.Context, arg OpenAssignedParams) (Roa
 		&i.AssignmentID,
 		&i.Times,
 		&i.Practice,
+		&i.CompetitionID,
 	)
 	return i, err
 }
 
 const openOwnAssessment = `-- name: OpenOwnAssessment :one
-SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice FROM roadmap_assessments
+SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice, competition_id FROM roadmap_assessments
 WHERE student_client_id = $1 AND lesson_id = $2::text AND kind = $3
   AND coalesce(homework_index, -1) = $4::int AND finished_at IS NULL AND assignment_id IS NULL
 `
@@ -900,12 +1276,13 @@ func (q *Queries) OpenOwnAssessment(ctx context.Context, arg OpenOwnAssessmentPa
 		&i.AssignmentID,
 		&i.Times,
 		&i.Practice,
+		&i.CompetitionID,
 	)
 	return i, err
 }
 
 const openPractice = `-- name: OpenPractice :one
-SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice FROM roadmap_assessments WHERE student_client_id = $1 AND kind = 'practice' AND finished_at IS NULL
+SELECT id, student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, answers, created_at, finished_at, correct, total, percent, assignment_id, times, practice, competition_id FROM roadmap_assessments WHERE student_client_id = $1 AND kind = 'practice' AND finished_at IS NULL
 `
 
 func (q *Queries) OpenPractice(ctx context.Context, student int32) (RoadmapAssessment, error) {
@@ -928,6 +1305,7 @@ func (q *Queries) OpenPractice(ctx context.Context, student int32) (RoadmapAsses
 		&i.AssignmentID,
 		&i.Times,
 		&i.Practice,
+		&i.CompetitionID,
 	)
 	return i, err
 }
@@ -1069,6 +1447,162 @@ func (q *Queries) ProgressOf(ctx context.Context, students []int32) ([]ProgressO
 	return items, nil
 }
 
+const questionCards = `-- name: QuestionCards :many
+SELECT id, subject, type, domain, skill, difficulty, status, passage, stem FROM questions WHERE id = ANY ($1::uuid[])
+`
+
+type QuestionCardsRow struct {
+	ID         pgtype.UUID
+	Subject    string
+	Type       string
+	Domain     string
+	Skill      string
+	Difficulty pgtype.Text
+	Status     string
+	Passage    pgtype.Text
+	Stem       string
+}
+
+// Questions by id, whatever their status (an editor's view of a competition).
+func (q *Queries) QuestionCards(ctx context.Context, ids []pgtype.UUID) ([]QuestionCardsRow, error) {
+	rows, err := q.db.Query(ctx, questionCards, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QuestionCardsRow
+	for rows.Next() {
+		var i QuestionCardsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Subject,
+			&i.Type,
+			&i.Domain,
+			&i.Skill,
+			&i.Difficulty,
+			&i.Status,
+			&i.Passage,
+			&i.Stem,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const questionStanding = `-- name: QuestionStanding :many
+SELECT q.id, q.subject, q.status,
+       EXISTS (SELECT 1 FROM practice_test_questions t WHERE t.question_id = q.id) AS in_test,
+       EXISTS (SELECT 1 FROM competitions c WHERE c.deleted_at IS NULL AND c.id <> $1 AND c.ends_at > now() AND q.id = ANY (c.question_ids)
+               AND (c.published_at IS NOT NULL OR c.source = 'reserved')) AS held
+FROM questions q WHERE q.id = ANY ($2::uuid[])
+`
+
+type QuestionStandingParams struct {
+	CompetitionID pgtype.UUID
+	Ids           []pgtype.UUID
+}
+
+type QuestionStandingRow struct {
+	ID      pgtype.UUID
+	Subject string
+	Status  string
+	InTest  bool
+	Held    bool
+}
+
+// How the chosen questions stand: their status, whether a mock test has them,
+// and whether another live or reserved competition holds them.
+func (q *Queries) QuestionStanding(ctx context.Context, arg QuestionStandingParams) ([]QuestionStandingRow, error) {
+	rows, err := q.db.Query(ctx, questionStanding, arg.CompetitionID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []QuestionStandingRow
+	for rows.Next() {
+		var i QuestionStandingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Subject,
+			&i.Status,
+			&i.InTest,
+			&i.Held,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const reservableQuestions = `-- name: ReservableQuestions :many
+SELECT id, subject, type, domain, skill, difficulty, status, passage, stem FROM questions q
+WHERE subject = ANY ($1::text[]) AND status IN ('review', 'approved')
+  AND NOT EXISTS (SELECT 1 FROM practice_test_questions t WHERE t.question_id = q.id)
+  AND NOT EXISTS (SELECT 1 FROM competitions c WHERE c.deleted_at IS NULL AND c.id <> $2 AND c.ends_at > now() AND q.id = ANY (c.question_ids))
+  AND ($3::text = '' OR q.stem ILIKE '%' || $3::text || '%' OR q.passage ILIKE '%' || $3::text || '%')
+ORDER BY q.created_at DESC
+LIMIT 100
+`
+
+type ReservableQuestionsParams struct {
+	Subjects      []string
+	CompetitionID pgtype.UUID
+	Q             string
+}
+
+type ReservableQuestionsRow struct {
+	ID         pgtype.UUID
+	Subject    string
+	Type       string
+	Domain     string
+	Skill      string
+	Difficulty pgtype.Text
+	Status     string
+	Passage    pgtype.Text
+	Stem       string
+}
+
+// Questions a reserved competition may use: in no mock test and held by no
+// other competition.
+func (q *Queries) ReservableQuestions(ctx context.Context, arg ReservableQuestionsParams) ([]ReservableQuestionsRow, error) {
+	rows, err := q.db.Query(ctx, reservableQuestions, arg.Subjects, arg.CompetitionID, arg.Q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReservableQuestionsRow
+	for rows.Next() {
+		var i ReservableQuestionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Subject,
+			&i.Type,
+			&i.Domain,
+			&i.Skill,
+			&i.Difficulty,
+			&i.Status,
+			&i.Passage,
+			&i.Stem,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const saveAnswers = `-- name: SaveAnswers :exec
 UPDATE roadmap_assessments SET answers = $1, times = $2 WHERE id = $3
 `
@@ -1189,6 +1723,21 @@ func (q *Queries) SeenQuestions(ctx context.Context, student int32) ([]pgtype.UU
 	return items, nil
 }
 
+const setCompetitionPublished = `-- name: SetCompetitionPublished :exec
+UPDATE competitions SET published_at = CASE WHEN $1::bool THEN coalesce(published_at, now()) END, updated_at = now()
+WHERE id = $2
+`
+
+type SetCompetitionPublishedParams struct {
+	Publish bool
+	ID      pgtype.UUID
+}
+
+func (q *Queries) SetCompetitionPublished(ctx context.Context, arg SetCompetitionPublishedParams) error {
+	_, err := q.db.Exec(ctx, setCompetitionPublished, arg.Publish, arg.ID)
+	return err
+}
+
 const skillSolved = `-- name: SkillSolved :many
 SELECT q.subject, q.skill, count(*)::int AS solved
 FROM questions q
@@ -1304,6 +1853,60 @@ type UnsaveQuestionParams struct {
 func (q *Queries) UnsaveQuestion(ctx context.Context, arg UnsaveQuestionParams) error {
 	_, err := q.db.Exec(ctx, unsaveQuestion, arg.Student, arg.QuestionID)
 	return err
+}
+
+const updateCompetition = `-- name: UpdateCompetition :one
+UPDATE competitions SET title = $1, description = $2, prize = $3, subject = $4, source = $5,
+    question_ids = $6::uuid[], starts_at = $7, ends_at = $8, minutes = $9, updated_at = now()
+WHERE id = $10 AND deleted_at IS NULL
+RETURNING id, title, description, prize, subject, source, question_ids, starts_at, ends_at, minutes, published_at, created_by, created_at, updated_at, deleted_at
+`
+
+type UpdateCompetitionParams struct {
+	Title       string
+	Description string
+	Prize       string
+	Subject     string
+	Source      string
+	QuestionIds []pgtype.UUID
+	StartsAt    pgtype.Timestamptz
+	EndsAt      pgtype.Timestamptz
+	Minutes     int32
+	ID          pgtype.UUID
+}
+
+func (q *Queries) UpdateCompetition(ctx context.Context, arg UpdateCompetitionParams) (Competition, error) {
+	row := q.db.QueryRow(ctx, updateCompetition,
+		arg.Title,
+		arg.Description,
+		arg.Prize,
+		arg.Subject,
+		arg.Source,
+		arg.QuestionIds,
+		arg.StartsAt,
+		arg.EndsAt,
+		arg.Minutes,
+		arg.ID,
+	)
+	var i Competition
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Description,
+		&i.Prize,
+		&i.Subject,
+		&i.Source,
+		&i.QuestionIds,
+		&i.StartsAt,
+		&i.EndsAt,
+		&i.Minutes,
+		&i.PublishedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
 }
 
 const weeklyAnswers = `-- name: WeeklyAnswers :many

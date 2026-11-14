@@ -205,3 +205,24 @@ func (s *Service) PreviewsOf(ctx context.Context, ids []string) ([]QuestionPrevi
 	}
 	return out, nil
 }
+
+// Held are the questions among ids that a competition holds now (out of
+// the bank until it ends).
+func (s *Service) Held(ctx context.Context, ids []string) (map[string]bool, error) {
+	us := make([]pgtype.UUID, 0, len(ids))
+	for _, id := range ids {
+		var u pgtype.UUID
+		if err := u.Scan(id); err == nil {
+			us = append(us, u)
+		}
+	}
+	rows, err := practicedb.New(s.pool).HeldAmong(ctx, us)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		out[uuidString(r)] = true
+	}
+	return out, nil
+}

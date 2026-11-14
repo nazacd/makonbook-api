@@ -168,6 +168,9 @@ func MergeSelfStudent(ctx context.Context, db peopledb.DBTX, from, toStudent int
 				return q.DropClashingAssessments(ctx, peopledb.DropClashingAssessmentsParams{ToID: toStudent, FromID: from})
 			},
 			func(ctx context.Context) error {
+				if err := q.DropClashingCompetitionAttempts(ctx, peopledb.DropClashingCompetitionAttemptsParams{ToID: toStudent, FromID: from}); err != nil {
+					return err
+				}
 				return q.MoveStudentAssessments(ctx, peopledb.MoveStudentAssessmentsParams{ToID: toStudent, FromID: from})
 			},
 			func(ctx context.Context) error {

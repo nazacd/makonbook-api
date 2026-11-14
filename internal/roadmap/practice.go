@@ -162,8 +162,12 @@ func (s *Service) StartPractice(ctx context.Context, student int32, r PracticeRe
 		if err != nil {
 			return Assessment{}, err
 		}
+		held, err := s.bank.Held(ctx, r.QuestionIDs) // a competition's questions stay out until it ends
+		if err != nil {
+			return Assessment{}, err
+		}
 		for _, id := range r.QuestionIDs {
-			if _, ok := found[id]; ok && !slices.Contains(ids, id) {
+			if _, ok := found[id]; ok && !held[id] && !slices.Contains(ids, id) {
 				ids = append(ids, id)
 			}
 		}

@@ -276,6 +276,23 @@ func (q *Queries) DropClashingAssessments(ctx context.Context, arg DropClashingA
 	return err
 }
 
+const dropClashingCompetitionAttempts = `-- name: DropClashingCompetitionAttempts :exec
+DELETE FROM roadmap_assessments AS a
+WHERE a.student_client_id = $1::int AND a.competition_id IS NOT NULL
+  AND EXISTS (SELECT 1 FROM roadmap_assessments b WHERE b.student_client_id = $2::int AND b.competition_id = a.competition_id)
+`
+
+type DropClashingCompetitionAttemptsParams struct {
+	FromID int32
+	ToID   int32
+}
+
+// A competition both took: the other's attempt stays (one each, ever).
+func (q *Queries) DropClashingCompetitionAttempts(ctx context.Context, arg DropClashingCompetitionAttemptsParams) error {
+	_, err := q.db.Exec(ctx, dropClashingCompetitionAttempts, arg.FromID, arg.ToID)
+	return err
+}
+
 const findByLoginPhone = `-- name: FindByLoginPhone :many
 
 SELECT 'student'::text AS kind, client_id AS id, coalesce(first_name_custom, first_name)::text AS first_name,

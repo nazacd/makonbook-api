@@ -369,6 +369,12 @@ WHERE a.student_client_id = @from_id::int AND a.finished_at IS NULL
                 AND coalesce(b.homework_index, -1) = coalesce(a.homework_index, -1)
                 AND b.assignment_id IS NOT DISTINCT FROM a.assignment_id);
 
+-- A competition both took: the other's attempt stays (one each, ever).
+-- name: DropClashingCompetitionAttempts :exec
+DELETE FROM roadmap_assessments AS a
+WHERE a.student_client_id = @from_id::int AND a.competition_id IS NOT NULL
+  AND EXISTS (SELECT 1 FROM roadmap_assessments b WHERE b.student_client_id = @to_id::int AND b.competition_id = a.competition_id);
+
 -- name: MoveStudentAssessments :exec
 UPDATE roadmap_assessments SET student_client_id = @to_id WHERE student_client_id = @from_id;
 

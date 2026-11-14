@@ -2377,6 +2377,270 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
 
+  /v1/competitions:
+    get:
+      summary: Published competitions, newest first (students and teachers)
+      description: Spec 26. Each with its status now and, for a student, their attempt.
+      operationId: competitions
+      tags: [competitions]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The competitions and the server's clock
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [competitions, server_time]
+                properties:
+                  competitions: { type: array, items: { $ref: "#/components/schemas/Competition" } }
+                  server_time: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /v1/competitions/{id}:
+    get:
+      summary: A published competition
+      operationId: competition
+      tags: [competitions]
+      security: [{ bearer: [] }]
+      parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The competition
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [competition, server_time]
+                properties:
+                  competition: { $ref: "#/components/schemas/Competition" }
+                  server_time: { type: string, format: date-time }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /v1/competitions/{id}/board:
+    get:
+      summary: A competition's board
+      description: Finished attempts ranked by right answers, then seconds taken (within the limit), then who finished first; attempts whose time is up are graded first. The first 100 and the viewer's place.
+      operationId: competitionBoard
+      tags: [competitions]
+      security: [{ bearer: [] }]
+      parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The board
+          content: { application/json: { schema: { $ref: "#/components/schemas/CompetitionBoard" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /v1/competitions/{id}/start:
+    post:
+      summary: Take part (students with a phone, free accounts included)
+      description: |
+        The student's attempt, an assessment of kind competition: the open
+        one, or a new one while the competition is live. One attempt each,
+        ever (`409 already_attempted` once finished). Answer and submit it
+        like any assessment; after the attempt's deadline (and 30 s of grace)
+        answers are refused (`409 time_up`) and a submit keeps only what was
+        saved in time.
+      operationId: startCompetition
+      tags: [competitions]
+      security: [{ bearer: [] }]
+      parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The attempt
+          content: { application/json: { schema: { $ref: "#/components/schemas/Assessment" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`not_live`, `already_attempted`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/admin/competitions:
+    get:
+      summary: Every competition, drafts included (editors)
+      operationId: adminCompetitions
+      tags: [admin]
+      responses:
+        "200":
+          description: The competitions
+          content:
+            application/json:
+              schema: { type: object, required: [competitions], properties: { competitions: { type: array, items: { $ref: "#/components/schemas/Competition" } } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+    post:
+      summary: Make a competition, as a draft (editors)
+      operationId: adminCreateCompetition
+      tags: [admin]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CompetitionInput" } } }
+      responses:
+        "201":
+          description: Made
+          content:
+            application/json:
+              schema: { type: object, required: [competition], properties: { competition: { $ref: "#/components/schemas/Competition" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`invalid_competition`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/admin/competitions/draw:
+    post:
+      summary: Draw bank questions for a competition (editors)
+      description: The counts asked per difficulty from the skills (none, the whole subject), the same for everyone, easy to hard. Held questions are left out.
+      operationId: adminDrawCompetition
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject]
+              properties:
+                subject: { type: string, enum: [math, english] }
+                skills: { type: array, items: { type: string } }
+                easy: { type: integer, minimum: 0 }
+                medium: { type: integer, minimum: 0 }
+                hard: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: The drawn questions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [question_ids, questions]
+                properties:
+                  question_ids: { type: array, items: { type: string, format: uuid } }
+                  questions: { type: array, items: { $ref: "#/components/schemas/CompetitionQuestion" } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`no_questions`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "422":
+          description: "`invalid_competition`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/admin/competitions/reservable:
+    get:
+      summary: Questions a reserved competition may use (editors)
+      description: In review or approved, in no mock test and held by no other competition; newest first, 100 at most.
+      operationId: adminReservableQuestions
+      tags: [admin]
+      parameters:
+        - { name: competition, in: query, schema: { type: string, format: uuid }, description: The competition being edited }
+        - { name: subject, in: query, schema: { type: string, enum: [math, english] } }
+        - { name: q, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: The questions
+          content:
+            application/json:
+              schema: { type: object, required: [questions], properties: { questions: { type: array, items: { $ref: "#/components/schemas/CompetitionQuestion" } } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+
+  /v1/admin/competitions/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: A competition with its questions (editors)
+      operationId: adminCompetition
+      tags: [admin]
+      responses:
+        "200":
+          description: The competition
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [competition, questions]
+                properties:
+                  competition: { $ref: "#/components/schemas/Competition" }
+                  questions: { type: array, items: { $ref: "#/components/schemas/CompetitionQuestion" } }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      summary: Change a competition (editors)
+      description: Once it has started or anyone has taken it, only the title, description and prize change; the rest stays.
+      operationId: adminUpdateCompetition
+      tags: [admin]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/CompetitionInput" } } }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { type: object, required: [competition], properties: { competition: { $ref: "#/components/schemas/Competition" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`invalid_competition`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    delete:
+      summary: Delete a competition nobody has taken (editors)
+      operationId: adminDeleteCompetition
+      tags: [admin]
+      responses:
+        "204": { description: Done }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`competition_locked`"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/admin/competitions/{id}/published:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      summary: Publish a competition (editors)
+      description: Checks its questions first, at least one and all approved, of its subject, held by no other competition and, for a reserved one, in no mock test.
+      operationId: adminPublishCompetition
+      tags: [admin]
+      responses:
+        "204": { description: Done }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422":
+          description: "`invalid_competition`: the message says what"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    delete:
+      summary: Take a competition back before it starts (editors)
+      operationId: adminUnpublishCompetition
+      tags: [admin]
+      responses:
+        "204": { description: Done }
+        "401": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`competition_locked`: it has started"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /v1/admin/competitions/{id}/board:
+    get:
+      summary: A competition's board (editors, drafts too)
+      operationId: adminCompetitionBoard
+      tags: [admin]
+      parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The board
+          content: { application/json: { schema: { $ref: "#/components/schemas/CompetitionBoard" } } }
+        "401": { $ref: "#/components/responses/Error" }
+
   /v1/me/assessments/{id}/check:
     post:
       summary: Check one question of a practice set taken at one's own pace
@@ -5010,7 +5274,7 @@ components:
       required: [id, kind, roadmap_id, lesson_id, homework_index, assignment, title, subject, created_at, finished_at, questions, images, answers, times, result]
       properties:
         id: { type: string, format: uuid }
-        kind: { type: string, enum: [level_check, homework, practice] }
+        kind: { type: string, enum: [level_check, homework, practice, competition] }
         roadmap_id: { type: [string, "null"], description: "The course; null for a custom homework assignment" }
         lesson_id: { type: [string, "null"], description: "null for a custom homework assignment" }
         homework_index: { type: [integer, "null"] }
@@ -5090,6 +5354,11 @@ components:
                       correct_answer: { type: string, description: The letter, or the first accepted form }
                       explanation: { type: string }
 
+        competition:
+          description: "A competition attempt (kind competition): its competition, the attempt's deadline and the server's clock; until the competition ends, a finished attempt carries its score only (no keys, explanations or result items)"
+          oneOf:
+            - type: "null"
+            - { $ref: "#/components/schemas/CompetitionBrief" }
         checked:
           type: object
           additionalProperties: { type: boolean }
@@ -5479,6 +5748,98 @@ components:
         difficulty: { type: string, enum: [easy, medium, hard, mixed] }
         seconds_per_question: { type: integer, description: "0: untimed" }
         mode: { type: string, enum: [rush, own_pace], description: "own_pace: each question is checked as it is answered (POST /v1/me/assessments/{id}/check)" }
+
+    Competition:
+      type: object
+      required: [id, title, description, prize, subject, source, starts_at, ends_at, minutes, questions, published, status, participants, mine]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string }
+        prize: { type: string, description: "As the editor wrote it; empty: none" }
+        subject: { type: string, enum: [math, english, mixed] }
+        source: { type: string, enum: [bank, reserved] }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        minutes: { type: integer, description: Each attempt's time limit }
+        questions: { type: integer }
+        published: { type: boolean }
+        status: { type: string, enum: [draft, upcoming, live, ended] }
+        participants: { type: integer }
+        mine:
+          description: A student's attempt; null before they start (and for others)
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [assessment_id, finished, correct, total, deadline, finished_at]
+              properties:
+                assessment_id: { type: string, format: uuid }
+                finished: { type: boolean }
+                correct: { type: [integer, "null"] }
+                total: { type: [integer, "null"] }
+                deadline: { type: string, format: date-time }
+                finished_at: { type: [string, "null"], format: date-time }
+        question_ids: { type: array, items: { type: string, format: uuid }, description: Editors only }
+
+    CompetitionInput:
+      type: object
+      required: [title, subject, source, starts_at, ends_at, minutes]
+      properties:
+        title: { type: string, maxLength: 120 }
+        description: { type: string, maxLength: 2000 }
+        prize: { type: string, maxLength: 300 }
+        subject: { type: string, enum: [math, english, mixed] }
+        source: { type: string, enum: [bank, reserved] }
+        question_ids: { type: array, items: { type: string, format: uuid }, maxItems: 100 }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        minutes: { type: integer, minimum: 1, maximum: 300 }
+
+    CompetitionQuestion:
+      type: object
+      required: [id, type, domain, skill, difficulty, preview, subject, status]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [mcq, grid_in] }
+        domain: { type: string }
+        skill: { type: string }
+        difficulty: { type: [string, "null"], enum: [easy, medium, hard, null] }
+        preview: { type: string }
+        subject: { type: string, enum: [math, english] }
+        status: { type: string }
+
+    CompetitionBrief:
+      type: object
+      required: [id, title, ends_at, deadline, server_time, ended]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        ends_at: { type: string, format: date-time }
+        deadline: { type: string, format: date-time, description: "When this attempt's time is up: its limit, or the competition's end" }
+        server_time: { type: string, format: date-time, description: The server's clock when this was sent }
+        ended: { type: boolean, description: Answers and explanations are open }
+
+    CompetitionBoard:
+      type: object
+      required: [entries, me, participants]
+      properties:
+        entries:
+          type: array
+          items: { $ref: "#/components/schemas/CompetitionBoardEntry" }
+        me: { oneOf: [{ type: "null" }, { $ref: "#/components/schemas/CompetitionBoardEntry" }] }
+        participants: { type: integer, description: Finished attempts }
+
+    CompetitionBoardEntry:
+      type: object
+      required: [rank, name, photo_url, correct, total, seconds, me]
+      properties:
+        rank: { type: integer }
+        name: { type: string, description: "\"Madina K.\"" }
+        photo_url: { type: [string, "null"] }
+        correct: { type: integer }
+        total: { type: integer }
+        seconds: { type: integer }
+        me: { type: boolean }
 
     PracticeStats:
       type: object
@@ -6115,6 +6476,11 @@ components:
                 - invalid_practice
                 - practice_open
                 - already_checked
+                - competition_locked
+                - invalid_competition
+                - time_up
+                - already_attempted
+                - not_live
                 - not_checkable
             message:
               type: string
