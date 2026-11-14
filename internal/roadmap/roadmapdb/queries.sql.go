@@ -1497,7 +1497,7 @@ func (q *Queries) QuestionCards(ctx context.Context, ids []pgtype.UUID) ([]Quest
 const questionStanding = `-- name: QuestionStanding :many
 SELECT q.id, q.subject, q.status,
        EXISTS (SELECT 1 FROM practice_test_questions t WHERE t.question_id = q.id) AS in_test,
-       EXISTS (SELECT 1 FROM competitions c WHERE c.deleted_at IS NULL AND c.id <> $1 AND c.ends_at > now() AND q.id = ANY (c.question_ids)
+       EXISTS (SELECT 1 FROM competitions c WHERE c.deleted_at IS NULL AND c.id IS DISTINCT FROM $1::uuid AND c.ends_at > now() AND q.id = ANY (c.question_ids)
                AND (c.published_at IS NOT NULL OR c.source = 'reserved')) AS held
 FROM questions q WHERE q.id = ANY ($2::uuid[])
 `
@@ -1547,7 +1547,7 @@ const reservableQuestions = `-- name: ReservableQuestions :many
 SELECT id, subject, type, domain, skill, difficulty, status, passage, stem FROM questions q
 WHERE subject = ANY ($1::text[]) AND status IN ('review', 'approved')
   AND NOT EXISTS (SELECT 1 FROM practice_test_questions t WHERE t.question_id = q.id)
-  AND NOT EXISTS (SELECT 1 FROM competitions c WHERE c.deleted_at IS NULL AND c.id <> $2 AND c.ends_at > now() AND q.id = ANY (c.question_ids))
+  AND NOT EXISTS (SELECT 1 FROM competitions c WHERE c.deleted_at IS NULL AND c.id IS DISTINCT FROM $2::uuid AND c.ends_at > now() AND q.id = ANY (c.question_ids))
   AND ($3::text = '' OR q.stem ILIKE '%' || $3::text || '%' OR q.passage ILIKE '%' || $3::text || '%')
 ORDER BY q.created_at DESC
 LIMIT 100

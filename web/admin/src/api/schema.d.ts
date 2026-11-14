@@ -8444,7 +8444,10 @@ export interface operations {
     adminCreateCompetition: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -8481,7 +8484,10 @@ export interface operations {
     adminDrawCompetition: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
             path?: never;
             cookie?: never;
         };
@@ -8591,7 +8597,10 @@ export interface operations {
     adminUpdateCompetition: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
             path: {
                 id: string;
             };
@@ -8630,7 +8639,10 @@ export interface operations {
     adminDeleteCompetition: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
             path: {
                 id: string;
             };
@@ -8661,7 +8673,10 @@ export interface operations {
     adminPublishCompetition: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
             path: {
                 id: string;
             };
@@ -8692,7 +8707,10 @@ export interface operations {
     adminUnpublishCompetition: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
             path: {
                 id: string;
             };

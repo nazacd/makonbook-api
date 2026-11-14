@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Sun,
   Users,
+  Trophy,
   type LucideIcon,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -96,6 +97,9 @@ export function Shell() {
               </Item>
               <Item to="/practice/queue" icon={ListChecks}>
                 Questions to fix
+              </Item>
+              <Item to="/competitions" icon={Trophy}>
+                Competitions
               </Item>
             </>
           )}

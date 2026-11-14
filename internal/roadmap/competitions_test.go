@@ -136,6 +136,21 @@ func TestCompetitions(t *testing.T) {
 	if held, _ := practice.NewService(pool, nil).Held(ctx, reserved); len(held) != 2 {
 		t.Errorf("reserved draft not held: %v", held)
 	}
+	for _, competition := range []string{"", rc.ID} { // a new one is offered none of them; this one, its own
+		list, err := svc.ReservableQuestions(ctx, competition, "math", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, q := range list {
+			if q.ID == reserved[0] || q.ID == reserved[1] {
+				n++
+			}
+		}
+		if want := map[string]int{"": 0, rc.ID: 2}[competition]; n != want {
+			t.Errorf("reservable for %q: %d of the held questions, want %d", competition, n, want)
+		}
+	}
 	if _, err := pool.Exec(ctx, `INSERT INTO practice_tests (code, title) VALUES ('T1', 'T1')`); err != nil {
 		t.Fatal(err)
 	}

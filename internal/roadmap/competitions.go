@@ -3,6 +3,7 @@ package roadmap
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	"math/rand/v2"
 	"slices"
@@ -462,16 +463,22 @@ func (s *Service) PublishCompetition(ctx context.Context, id string, on bool, no
 	if len(standing) != len(c.QuestionIds) {
 		return &CompetitionError{"a question it names no longer exists"}
 	}
+	// Questions are named by their place in the list, as the editor sees them.
+	place := map[string]string{}
+	for i, qid := range c.QuestionIds {
+		place[uuidString(qid)] = "question " + strconv.Itoa(i+1)
+	}
 	for _, st := range standing {
+		n := place[uuidString(st.ID)]
 		switch {
 		case st.Status != "approved":
-			return &CompetitionError{"every question must be approved first (" + uuidString(st.ID) + " isn't)"}
+			return &CompetitionError{"every question must be approved first: " + n + " isn't yet"}
 		case c.Subject != "mixed" && st.Subject != c.Subject:
-			return &CompetitionError{"a question is of the other subject (" + uuidString(st.ID) + ")"}
+			return &CompetitionError{n + " is of the other subject"}
 		case st.Held:
-			return &CompetitionError{"another competition holds a question (" + uuidString(st.ID) + ")"}
+			return &CompetitionError{"another competition holds " + n}
 		case c.Source == "reserved" && st.InTest:
-			return &CompetitionError{"a reserved question is in a mock test (" + uuidString(st.ID) + "): students may know it"}
+			return &CompetitionError{n + " is in a mock test, so students may know it: a reserved competition needs questions written for it"}
 		}
 	}
 	return q.SetCompetitionPublished(ctx, roadmapdb.SetCompetitionPublishedParams{ID: c.ID, Publish: true})

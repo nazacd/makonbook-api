@@ -301,7 +301,7 @@ ORDER BY a.correct DESC, seconds ASC, a.finished_at ASC;
 SELECT id, subject, type, domain, skill, difficulty, status, passage, stem FROM questions q
 WHERE subject = ANY (@subjects::text[]) AND status IN ('review', 'approved')
   AND NOT EXISTS (SELECT 1 FROM practice_test_questions t WHERE t.question_id = q.id)
-  AND NOT EXISTS (SELECT 1 FROM competitions c WHERE c.deleted_at IS NULL AND c.id <> @competition_id AND c.ends_at > now() AND q.id = ANY (c.question_ids))
+  AND NOT EXISTS (SELECT 1 FROM competitions c WHERE c.deleted_at IS NULL AND c.id IS DISTINCT FROM @competition_id::uuid AND c.ends_at > now() AND q.id = ANY (c.question_ids))
   AND (@q::text = '' OR q.stem ILIKE '%' || @q::text || '%' OR q.passage ILIKE '%' || @q::text || '%')
 ORDER BY q.created_at DESC
 LIMIT 100;
@@ -311,7 +311,7 @@ LIMIT 100;
 -- name: QuestionStanding :many
 SELECT q.id, q.subject, q.status,
        EXISTS (SELECT 1 FROM practice_test_questions t WHERE t.question_id = q.id) AS in_test,
-       EXISTS (SELECT 1 FROM competitions c WHERE c.deleted_at IS NULL AND c.id <> @competition_id AND c.ends_at > now() AND q.id = ANY (c.question_ids)
+       EXISTS (SELECT 1 FROM competitions c WHERE c.deleted_at IS NULL AND c.id IS DISTINCT FROM @competition_id::uuid AND c.ends_at > now() AND q.id = ANY (c.question_ids)
                AND (c.published_at IS NOT NULL OR c.source = 'reserved')) AS held
 FROM questions q WHERE q.id = ANY (@ids::uuid[]);
 

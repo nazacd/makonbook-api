@@ -2463,6 +2463,7 @@ paths:
 
   /v1/admin/competitions:
     get:
+      security: [{ adminCookie: [] }]
       summary: Every competition, drafts included (editors)
       operationId: adminCompetitions
       tags: [admin]
@@ -2475,6 +2476,9 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
     post:
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
       summary: Make a competition, as a draft (editors)
       operationId: adminCreateCompetition
       tags: [admin]
@@ -2495,6 +2499,9 @@ paths:
 
   /v1/admin/competitions/draw:
     post:
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
       summary: Draw bank questions for a competition (editors)
       description: The counts asked per difficulty from the skills (none, the whole subject), the same for everyone, easy to hard. Held questions are left out.
       operationId: adminDrawCompetition
@@ -2534,6 +2541,7 @@ paths:
 
   /v1/admin/competitions/reservable:
     get:
+      security: [{ adminCookie: [] }]
       summary: Questions a reserved competition may use (editors)
       description: In review or approved, in no mock test and held by no other competition; newest first, 100 at most.
       operationId: adminReservableQuestions
@@ -2555,6 +2563,7 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     get:
+      security: [{ adminCookie: [] }]
       summary: A competition with its questions (editors)
       operationId: adminCompetition
       tags: [admin]
@@ -2572,6 +2581,9 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
     put:
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
       summary: Change a competition (editors)
       description: Once it has started or anyone has taken it, only the title, description and prize change; the rest stays.
       operationId: adminUpdateCompetition
@@ -2591,6 +2603,9 @@ paths:
           description: "`invalid_competition`"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     delete:
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
       summary: Delete a competition nobody has taken (editors)
       operationId: adminDeleteCompetition
       tags: [admin]
@@ -2606,6 +2621,9 @@ paths:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
     put:
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
       summary: Publish a competition (editors)
       description: Checks its questions first, at least one and all approved, of its subject, held by no other competition and, for a reserved one, in no mock test.
       operationId: adminPublishCompetition
@@ -2618,6 +2636,9 @@ paths:
           description: "`invalid_competition`: the message says what"
           content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
     delete:
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
       summary: Take a competition back before it starts (editors)
       operationId: adminUnpublishCompetition
       tags: [admin]
@@ -2630,6 +2651,7 @@ paths:
 
   /v1/admin/competitions/{id}/board:
     get:
+      security: [{ adminCookie: [] }]
       summary: A competition's board (editors, drafts too)
       operationId: adminCompetitionBoard
       tags: [admin]
