@@ -227,3 +227,41 @@ func personNames(first, last, fallback string) (string, string) {
 	}
 	return f, l
 }
+
+// ErrNotMergeable: the web account or the person to merge it into isn't
+// (any longer) as the admin saw them.
+var ErrNotMergeable = errors.New("these accounts can't be merged")
+
+// MergeWebAccount folds the registered (self-made) student from into the
+// HolliHop person (toKind, toID) whose number it holds, as an admin decided
+// for a self_account_conflict issue: the same merge as proving that number
+// (Google accounts, the email, a Telegram account, the photo, and for a
+// student everything done), then the number logs that person in and the
+// issue is resolved. The web account's sessions end.
+func (s *Service) MergeWebAccount(ctx context.Context, from int32, toKind string, toID int32, phone string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	dir := people.NewDirectory(tx)
+	u, err := dir.Get(ctx, people.KindStudent, from)
+	if errors.Is(err, people.ErrNotFound) || (err == nil && (!u.Registered || u.LoginPhone != phone)) {
+		return ErrNotMergeable
+	} else if err != nil {
+		return err
+	}
+	o, err := dir.Get(ctx, toKind, toID)
+	if errors.Is(err, people.ErrNotFound) || (err == nil && (!o.Active || o.Registered)) {
+		return ErrNotMergeable
+	} else if err != nil {
+		return err
+	}
+	if err := mergeInto(ctx, authdb.New(tx), tx, u, o); err != nil {
+		return err
+	}
+	if err := people.SettleSelfAccountConflict(ctx, tx, o.Kind, o.ID, phone); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}

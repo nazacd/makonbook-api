@@ -135,6 +135,24 @@ type AuthTicket struct {
 	PersonID          pgtype.Int4
 }
 
+type Competition struct {
+	ID          pgtype.UUID
+	Title       string
+	Description string
+	Prize       string
+	Subject     string
+	Source      string
+	QuestionIds []pgtype.UUID
+	StartsAt    pgtype.Timestamptz
+	EndsAt      pgtype.Timestamptz
+	Minutes     int32
+	PublishedAt pgtype.Timestamptz
+	CreatedBy   string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	DeletedAt   pgtype.Timestamptz
+}
+
 type Credential struct {
 	PersonKind        string
 	PersonID          int32
@@ -256,6 +274,10 @@ type GroupVote struct {
 	Name    string
 	Approve bool
 	VotedAt pgtype.Timestamptz
+}
+
+type HeldQuestion struct {
+	QuestionID pgtype.UUID
 }
 
 type HollihopOutbox struct {
@@ -526,6 +548,17 @@ type QuestionAiReview struct {
 	ImportedAt pgtype.Timestamptz
 }
 
+type QuestionAnswer struct {
+	ID              int64
+	StudentClientID int32
+	QuestionID      pgtype.UUID
+	AssessmentID    pgtype.UUID
+	Answer          string
+	Correct         bool
+	Seconds         pgtype.Int4
+	AnsweredAt      pgtype.Timestamptz
+}
+
 type QuestionVersion struct {
 	QuestionID pgtype.UUID
 	Version    int32
@@ -564,12 +597,20 @@ type RoadmapAssessment struct {
 	Percent         pgtype.Int2
 	AssignmentID    pgtype.UUID
 	Times           []byte
+	Practice        []byte
+	CompetitionID   pgtype.UUID
 }
 
 type RoadmapChoice struct {
 	StudentClientID int32
 	RoadmapID       string
 	CreatedAt       pgtype.Timestamptz
+}
+
+type SavedQuestion struct {
+	StudentClientID int32
+	QuestionID      pgtype.UUID
+	SavedAt         pgtype.Timestamptz
 }
 
 type ScheduleItem struct {

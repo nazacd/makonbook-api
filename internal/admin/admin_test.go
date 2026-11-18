@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nazacd/makonbook-api/internal/attendance"
+	"github.com/nazacd/makonbook-api/internal/auth"
 	"github.com/nazacd/makonbook-api/internal/hollihop"
 	"github.com/nazacd/makonbook-api/internal/lessons"
 	"github.com/nazacd/makonbook-api/internal/people"
@@ -172,7 +173,8 @@ func setup(t *testing.T) *env {
 	figs, uploads := fakeFigures{}, fakeFigures{}
 	panel := Panel{
 		Lessons: lessonsSvc, Attendance: attendance.NewService(pool, lessonsSvc), People: people.NewDirectory(pool), Location: tashkent,
-		Practice: practice.NewService(pool, uploads).WithBank(figs),
+		Practice:        practice.NewService(pool, uploads).WithBank(figs),
+		MergeWebAccount: auth.NewService(pool, people.NewDirectory(pool), auth.NewHasher()).MergeWebAccount, ErrNotMergeable: auth.ErrNotMergeable,
 	}
 	mux := http.NewServeMux()
 	NewHandler(svc, panel, false, false).Register(mux)

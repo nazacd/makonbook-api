@@ -820,6 +820,58 @@ func TestAssignments(t *testing.T) {
 		t.Errorf("a registered student starts: %v", r)
 	}
 
+	// Students' practice (spec 22.8): topics, questions, a set, the history.
+	if r := do("GET", "/v1/me/practice/topics", s3, nil); r.status != http.StatusOK || len(obj(r.body["subjects"])["math"].([]any)) == 0 {
+		t.Errorf("practice topics: %v", r)
+	}
+	if r := do("GET", "/v1/me/practice/topics", teacher, nil); r.status != http.StatusForbidden {
+		t.Errorf("practice topics, a teacher: %v", r)
+	}
+	if r := do("GET", "/v1/me/practice/questions?subject=math&skill=percentages&limit=2", s3, nil); r.status != http.StatusOK || len(r.list("questions")) != 2 || r.body["done"] == nil {
+		t.Errorf("practice questions: %v", r)
+	}
+	r = do("POST", "/v1/me/practice/sets", s3, map[string]any{"subject": "math", "skills": []string{"Percentages"}, "difficulty": "easy", "count": 3, "seconds_per_question": 60})
+	if r.status != http.StatusCreated || r.body["kind"] != "practice" || len(r.list("questions")) != 3 || obj(r.body["practice"])["seconds_per_question"] != 60.0 {
+		t.Fatalf("practice set: %v", r)
+	}
+	setID := r.body["id"].(string)
+	if r := do("POST", "/v1/me/practice/sets", s3, map[string]any{"subject": "math", "count": 3}); r.status != http.StatusConflict || r.code() != CodePracticeOpen || obj(r.body["open"])["id"] != setID {
+		t.Errorf("practice set open: %v", r)
+	}
+	if r := do("POST", "/v1/me/practice/sets", s3, map[string]any{"subject": "math", "count": 0}); r.status != http.StatusUnprocessableEntity || r.code() != CodeInvalidPractice {
+		t.Errorf("practice set, bad count: %v", r)
+	}
+	if r := do("GET", "/v1/me/practice/sets", s3, nil); r.status != http.StatusOK || len(r.list("sets")) != 1 {
+		t.Errorf("practice sets: %v", r)
+	}
+	if r := do("DELETE", "/v1/me/practice/sets/"+setID, s3, nil); r.status != http.StatusNoContent {
+		t.Errorf("discard practice: %v", r)
+	}
+	// At one's own pace: a check gives the key; a second check is refused.
+	r = do("POST", "/v1/me/practice/sets", s3, map[string]any{"subject": "math", "skills": []string{"Percentages"}, "count": 2, "mode": "own_pace"})
+	if r.status != http.StatusCreated || obj(r.body["practice"])["mode"] != "own_pace" {
+		t.Fatalf("own pace set: %v", r)
+	}
+	own, firstQ := r.body["id"].(string), obj(r.list("questions")[0])["id"].(string)
+	if r := do("POST", "/v1/me/assessments/"+own+"/check", s3, map[string]any{"question_id": firstQ, "answer": "A", "seconds": 30}); r.status != http.StatusOK || r.body["correct_answer"] == nil || r.body["explanation"] == nil {
+		t.Errorf("check: %v", r)
+	}
+	if r := do("POST", "/v1/me/assessments/"+own+"/check", s3, map[string]any{"question_id": firstQ, "answer": "B"}); r.status != http.StatusConflict || r.code() != CodeAlreadyChecked {
+		t.Errorf("check twice: %v", r)
+	}
+	if r := do("PUT", "/v1/me/practice/saved/"+firstQ, s3, nil); r.status != http.StatusNoContent {
+		t.Errorf("save question: %v", r)
+	}
+	if r := do("GET", "/v1/me/practice/saved", s3, nil); r.status != http.StatusOK || len(r.list("questions")) != 1 {
+		t.Errorf("saved questions: %v", r)
+	}
+	if r := do("GET", "/v1/me/practice/stats", s3, nil); r.status != http.StatusOK || r.body["attempted"] != 1.0 || r.body["saved"] != 1.0 || len(r.list("weeks")) != 8 {
+		t.Errorf("stats: %v", r)
+	}
+	if r := do("GET", "/v1/me/practice/stats", registered, nil); r.status != http.StatusOK {
+		t.Errorf("stats, a free account: %v", r)
+	}
+
 	// What teachers build sets from.
 	r = do("GET", "/v1/teacher/questions?subject=math&skill=percentages&difficulty=easy&limit=3", teacher, nil)
 	if r.status != http.StatusOK || r.body["total"] != 4.0 || len(r.list("questions")) != 3 || obj(r.list("questions")[0])["skill"] != "Percentages" ||

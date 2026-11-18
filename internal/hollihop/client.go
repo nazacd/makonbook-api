@@ -263,13 +263,30 @@ func (c *Client) do(ctx context.Context, httpMethod, u string, reqBody []byte) (
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		retry := resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests
+		// A refused key stays refused: asking again only delays the alert.
+		retry := (resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests) && !keyRefused(resp.StatusCode, body)
 		return nil, retry, statusError(resp.StatusCode, body)
 	}
 	if strings.Contains(string(body[:min(len(body), 512)]), "Requests limit is exceeded") {
 		return nil, true, errors.New("rate limit exceeded")
 	}
 	return body, false, nil
+}
+
+// ErrKeyRefused means HolliHop doesn't accept the API key (HOLLIHOP_AUTHKEY):
+// it was regenerated, revoked or expired, or its HolliHop user was changed.
+// The error says what to do, because it reaches admins as a sync alert.
+var ErrKeyRefused = errors.New("HolliHop refused the API key: put a valid one in HOLLIHOP_AUTHKEY (the API's .env on the server) and restart with docker compose up -d")
+
+// keyRefused tells a refused key from other failures: HTTP 401, or HolliHop's
+// "unauthorized operation, log in again" (Попытка выполнить несанкционированную
+// операцию … выполните повторный вход), which it may send with another status.
+func keyRefused(code int, body []byte) bool {
+	if code == http.StatusUnauthorized {
+		return true
+	}
+	s := string(body[:min(len(body), 2048)])
+	return code >= 400 && (strings.Contains(s, "несанкционированную операцию") || strings.Contains(s, "повторный вход"))
 }
 
 // statusError describes a failed response for logs and admin alerts. When
@@ -279,6 +296,8 @@ func statusError(code int, body []byte) error {
 	status := fmt.Sprintf("status %d %s", code, http.StatusText(code))
 	s := strings.TrimSpace(strings.TrimPrefix(string(body), "\ufeff"))
 	switch {
+	case keyRefused(code, body):
+		return fmt.Errorf("%s: %w", status, ErrKeyRefused)
 	case strings.HasPrefix(s, "<") && code >= 500:
 		return fmt.Errorf("%s: HolliHop is down or under maintenance", status)
 	case strings.HasPrefix(s, "<"):

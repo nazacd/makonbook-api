@@ -204,6 +204,13 @@ docker exec db psql -U postgres -d makonbook_api -c \
   "SELECT status, count(*) FROM hollihop_outbox GROUP BY status;"
 ```
 
+**"HolliHop refused the API key"** in a sync alert: HolliHop no longer accepts
+`HOLLIHOP_AUTHKEY` (regenerated, revoked or expired, or its HolliHop user was
+changed); signing in to HolliHop's website still works, because a browser uses
+a person's login, not the key. Ask SATMAKON's HolliHop administrator for the
+current API key, replace it in `.env` and `docker compose up -d`. Until then the
+apps run on the last good sync.
+
 Going live: set `HOLLIHOP_WRITE_ENABLED=true` in `.env`, `docker compose up -d`.
 Only lessons finished from then on are sent (earlier ones stay `dry_run`).
 Rows HolliHop refuses because an admin set the day by hand end as
@@ -443,6 +450,28 @@ first time, nothing after when unchanged) and prints what it did:
 record, … with a logo`. A university gone from the data stays, unlisted, for
 the students who chose it. Students see changes at once (the list's ETag
 moves only when something changed).
+
+## Competitions (migration 00046)
+
+Nothing to run: `migrate up` applies 00046 and editors make competitions in
+the admin panel (Practice → Competitions). A competition with **reserved**
+questions needs questions that are in no mock test: write them as JSON lines
+(the same shape as for `practice add`) and load them, then approve each in
+the admin panel before publishing:
+
+```
+docker compose run --rm -v /tmp/cup.jsonl:/cup.jsonl api practice add /cup.jsonl
+```
+
+## The question bank's answers (migration 00045, once)
+
+After `migrate up` has applied 00045, fill the question bank's answers from
+the level checks, homework and practice sets finished before it, so students'
+solved counts and analytics include them (safe to run again):
+
+```bash
+docker compose run --rm api practice backfill-answers
+```
 
 ## The Library's books
 

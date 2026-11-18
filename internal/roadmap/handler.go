@@ -20,6 +20,7 @@ const (
 	CodeLessonLocked      = "lesson_locked"
 	CodeEnrolledOnly      = "enrolled_only"
 	CodeNoQuestions       = "no_questions"
+	CodeTimeUp            = "time_up"
 	CodeFinished          = "finished"
 	CodeInvalidAnswers    = "invalid_answers"
 	CodeInvalidAssessment = "invalid_assessment"
@@ -237,6 +238,8 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, what string, err 
 		httpx.WriteError(w, r, http.StatusForbidden, CodeEnrolledOnly, err.Error())
 	case errors.Is(err, ErrNoQuestions):
 		httpx.WriteError(w, r, http.StatusConflict, CodeNoQuestions, err.Error())
+	case errors.Is(err, ErrTimeUp):
+		httpx.WriteError(w, r, http.StatusConflict, CodeTimeUp, err.Error())
 	case errors.Is(err, ErrFinished):
 		httpx.WriteError(w, r, http.StatusConflict, CodeFinished, err.Error())
 	case errors.Is(err, ErrNotNeeded):

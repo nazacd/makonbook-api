@@ -455,11 +455,13 @@ SELECT * FROM questions WHERE id = ANY (@ids::uuid[]);
 
 -- name: Candidates :many
 SELECT id, difficulty FROM questions
-WHERE status = 'approved' AND subject = @subject AND lower(skill) = ANY (@skills::text[]);
+WHERE status = 'approved' AND subject = @subject AND lower(skill) = ANY (@skills::text[])
+  AND id NOT IN (SELECT question_id FROM held_questions);
 
 -- name: ApprovedCounts :many
 SELECT skill, coalesce(difficulty, '')::text AS difficulty, count(*)::int AS n
 FROM questions WHERE status = 'approved' AND subject = @subject
+  AND id NOT IN (SELECT question_id FROM held_questions)
 GROUP BY skill, difficulty;
 
 -- name: FigureFiles :many
@@ -476,6 +478,7 @@ ON CONFLICT (key) DO UPDATE SET file = excluded.file;
 -- name: ApprovedQuestions :many
 SELECT id, type, domain, skill, difficulty, passage, stem FROM questions
 WHERE status = 'approved' AND subject = @subject
+  AND id NOT IN (SELECT question_id FROM held_questions)
   AND (sqlc.narg(skill)::text IS NULL OR lower(skill) = lower(sqlc.narg(skill)::text))
   AND (sqlc.narg(difficulty)::text IS NULL OR difficulty = sqlc.narg(difficulty)::text)
   AND (sqlc.narg(q)::text IS NULL OR stem ILIKE sqlc.narg(q)::text OR passage ILIKE sqlc.narg(q)::text)
@@ -485,6 +488,11 @@ LIMIT @lim OFFSET @off;
 -- name: CountApprovedQuestions :one
 SELECT count(*)::int FROM questions
 WHERE status = 'approved' AND subject = @subject
+  AND id NOT IN (SELECT question_id FROM held_questions)
   AND (sqlc.narg(skill)::text IS NULL OR lower(skill) = lower(sqlc.narg(skill)::text))
   AND (sqlc.narg(difficulty)::text IS NULL OR difficulty = sqlc.narg(difficulty)::text)
   AND (sqlc.narg(q)::text IS NULL OR stem ILIKE sqlc.narg(q)::text OR passage ILIKE sqlc.narg(q)::text);
+
+-- Which of these questions a competition holds now (out of the bank).
+-- name: HeldAmong :many
+SELECT question_id::uuid AS question_id FROM held_questions WHERE question_id = ANY (@ids::uuid[]);

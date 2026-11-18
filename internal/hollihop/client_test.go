@@ -129,6 +129,34 @@ func TestErrorSummarisesHTMLPages(t *testing.T) {
 	}
 }
 
+// A refused key (HTTP 401, or HolliHop's "unauthorized operation" with
+// another status) is said plainly, with what to do, and isn't retried.
+func TestErrorSaysWhenTheKeyIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		body   string
+	}{
+		{http.StatusUnauthorized, `{"Error":"Попытка выполнить несанкционированную операцию.\r\nПожалуйста, выполните повторный вход в систему."}`},
+		{http.StatusInternalServerError, `{"Error":"Попытка выполнить несанкционированную операцию."}`},
+		{http.StatusUnauthorized, ``},
+	} {
+		var calls atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls.Add(1)
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte(tc.body))
+		}))
+		_, err := New(srv.URL, testKey, WithRetry(3, time.Millisecond)).GetTeachers(t.Context())
+		srv.Close()
+		if !errors.Is(err, ErrKeyRefused) || !strings.Contains(err.Error(), "HOLLIHOP_AUTHKEY") || strings.Contains(err.Error(), testKey) {
+			t.Errorf("%d: err = %v", tc.status, err)
+		}
+		if calls.Load() != 1 {
+			t.Errorf("%d: calls = %d, want 1", tc.status, calls.Load())
+		}
+	}
+}
+
 // Go's HTTP client puts the full URL — auth key included — into its errors.
 func TestErrorsNeverContainAuthKey(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))

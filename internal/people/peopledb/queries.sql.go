@@ -276,6 +276,23 @@ func (q *Queries) DropClashingAssessments(ctx context.Context, arg DropClashingA
 	return err
 }
 
+const dropClashingCompetitionAttempts = `-- name: DropClashingCompetitionAttempts :exec
+DELETE FROM roadmap_assessments AS a
+WHERE a.student_client_id = $1::int AND a.competition_id IS NOT NULL
+  AND EXISTS (SELECT 1 FROM roadmap_assessments b WHERE b.student_client_id = $2::int AND b.competition_id = a.competition_id)
+`
+
+type DropClashingCompetitionAttemptsParams struct {
+	FromID int32
+	ToID   int32
+}
+
+// A competition both took: the other's attempt stays (one each, ever).
+func (q *Queries) DropClashingCompetitionAttempts(ctx context.Context, arg DropClashingCompetitionAttemptsParams) error {
+	_, err := q.db.Exec(ctx, dropClashingCompetitionAttempts, arg.FromID, arg.ToID)
+	return err
+}
+
 const findByLoginPhone = `-- name: FindByLoginPhone :many
 
 SELECT 'student'::text AS kind, client_id AS id, coalesce(first_name_custom, first_name)::text AS first_name,
@@ -606,6 +623,20 @@ func (q *Queries) MarkStudentsMissing(ctx context.Context, presentIds []int32) (
 	return result.RowsAffected(), nil
 }
 
+const moveStudentAnswers = `-- name: MoveStudentAnswers :exec
+UPDATE question_answers SET student_client_id = $1 WHERE student_client_id = $2
+`
+
+type MoveStudentAnswersParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentAnswers(ctx context.Context, arg MoveStudentAnswersParams) error {
+	_, err := q.db.Exec(ctx, moveStudentAnswers, arg.ToID, arg.FromID)
+	return err
+}
+
 const moveStudentAssessments = `-- name: MoveStudentAssessments :exec
 UPDATE roadmap_assessments SET student_client_id = $1 WHERE student_client_id = $2
 `
@@ -785,6 +816,22 @@ type MoveStudentReviewsParams struct {
 
 func (q *Queries) MoveStudentReviews(ctx context.Context, arg MoveStudentReviewsParams) error {
 	_, err := q.db.Exec(ctx, moveStudentReviews, arg.ToID, arg.FromID)
+	return err
+}
+
+const moveStudentSavedQuestions = `-- name: MoveStudentSavedQuestions :exec
+INSERT INTO saved_questions (student_client_id, question_id, saved_at)
+SELECT $1::int, question_id, saved_at FROM saved_questions WHERE student_client_id = $2::int
+ON CONFLICT DO NOTHING
+`
+
+type MoveStudentSavedQuestionsParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentSavedQuestions(ctx context.Context, arg MoveStudentSavedQuestionsParams) error {
+	_, err := q.db.Exec(ctx, moveStudentSavedQuestions, arg.ToID, arg.FromID)
 	return err
 }
 
@@ -970,6 +1017,23 @@ func (q *Queries) RekeySelfStudent(ctx context.Context, arg RekeySelfStudentPara
 	return result.RowsAffected(), nil
 }
 
+const resolveIssue = `-- name: ResolveIssue :exec
+UPDATE data_quality_issues SET resolved_at = now()
+WHERE person_kind = $1 AND person_id = $2 AND kind = $3 AND resolved_at IS NULL
+`
+
+type ResolveIssueParams struct {
+	PersonKind string
+	PersonID   int32
+	Kind       string
+}
+
+// An admin settled a person's issue (merging a web account into them).
+func (q *Queries) ResolveIssue(ctx context.Context, arg ResolveIssueParams) error {
+	_, err := q.db.Exec(ctx, resolveIssue, arg.PersonKind, arg.PersonID, arg.Kind)
+	return err
+}
+
 const resolveIssuesExcept = `-- name: ResolveIssuesExcept :execrows
 UPDATE data_quality_issues i
 SET resolved_at = now()
@@ -991,6 +1055,19 @@ func (q *Queries) ResolveIssuesExcept(ctx context.Context, arg ResolveIssuesExce
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const selfStudentByPhone = `-- name: SelfStudentByPhone :one
+SELECT client_id FROM students
+WHERE source = 'self' AND login_phone = $1 AND deactivated_at IS NULL
+`
+
+// The self-registered account that logs in with this number, if any.
+func (q *Queries) SelfStudentByPhone(ctx context.Context, phone pgtype.Text) (int32, error) {
+	row := q.db.QueryRow(ctx, selfStudentByPhone, phone)
+	var client_id int32
+	err := row.Scan(&client_id)
+	return client_id, err
 }
 
 const selfStudentPhones = `-- name: SelfStudentPhones :many

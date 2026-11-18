@@ -36,15 +36,24 @@ export function useMe() {
   });
 }
 
+/**
+ * Who is signed in changed: the last person's data goes, and the new
+ * profile (null: signed out) takes the place of the old one. The "me" query
+ * itself is kept, not cleared: the shell is subscribed to it, and a cleared
+ * query would take the new profile without the shell ever seeing it (the
+ * page stayed on the sign-in form until a reload).
+ */
+function switchPerson(qc: ReturnType<typeof useQueryClient>, profile: Profile | null) {
+  qc.removeQueries({ predicate: (q) => q.queryKey[0] !== meKey[0] });
+  qc.setQueryData(meKey, profile);
+}
+
 export function useSignIn() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { login: string; password: string }) =>
       call(api.POST("/v1/admin/login", { params: { header: CSRF }, body })),
-    onSuccess: (profile) => {
-      qc.clear();
-      qc.setQueryData(meKey, profile);
-    },
+    onSuccess: (profile) => switchPerson(qc, profile),
   });
 }
 
@@ -53,10 +62,7 @@ export function useSignOut() {
   return useMutation({
     mutationFn: () =>
       call(api.POST("/v1/admin/logout", { params: { header: CSRF } })),
-    onSettled: () => {
-      qc.clear();
-      qc.setQueryData(meKey, null);
-    },
+    onSettled: () => switchPerson(qc, null),
   });
 }
 
@@ -169,6 +175,20 @@ export function useRetryWrite() {
         }),
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["writes"] }),
+  });
+}
+
+/** Merges the web account holding a person's number into them (super admins). */
+export function useMergeWebAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (issueId: number) =>
+      call(
+        api.POST("/v1/admin/data-quality/issues/{id}/merge", {
+          params: { header: CSRF, path: { id: issueId } },
+        }),
+      ),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ["data-quality"] }),
   });
 }
 
@@ -424,5 +444,131 @@ export function useSetReportStatus() {
         }),
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["practice-reports"] }),
+  });
+}
+
+// ---- Competitions (editors; spec 26) ----
+
+export type Competition = Schemas["Competition"];
+export type CompetitionInput = Schemas["CompetitionInput"];
+export type CompetitionQuestion = Schemas["CompetitionQuestion"];
+export type CompetitionBoard = Schemas["CompetitionBoard"];
+
+export function useCompetitions() {
+  return useQuery({
+    queryKey: ["competitions"],
+    queryFn: () => call(api.GET("/v1/admin/competitions")),
+  });
+}
+
+export function useCompetition(id: string) {
+  return useQuery({
+    queryKey: ["competitions", id],
+    enabled: id !== "",
+    queryFn: () =>
+      call(
+        api.GET("/v1/admin/competitions/{id}", { params: { path: { id } } }),
+      ),
+    staleTime: Infinity, // an open editor must not be refreshed under the person's hands
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useCompetitionBoard(id: string, live: boolean) {
+  return useQuery({
+    queryKey: ["competitions", id, "board"],
+    enabled: id !== "",
+    refetchInterval: live ? 15_000 : false,
+    queryFn: () =>
+      call(
+        api.GET("/v1/admin/competitions/{id}/board", {
+          params: { path: { id } },
+        }),
+      ),
+  });
+}
+
+/** Makes (no id) or changes a competition. */
+export function useSaveCompetition(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CompetitionInput) =>
+      call(
+        id
+          ? api.PUT("/v1/admin/competitions/{id}", {
+              params: { header: CSRF, path: { id } },
+              body,
+            })
+          : api.POST("/v1/admin/competitions", {
+              params: { header: CSRF },
+              body,
+            }),
+      ),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["competitions"] }),
+  });
+}
+
+export function usePublishCompetition(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (on: boolean) =>
+      call(
+        on
+          ? api.PUT("/v1/admin/competitions/{id}/published", {
+              params: { header: CSRF, path: { id } },
+            })
+          : api.DELETE("/v1/admin/competitions/{id}/published", {
+              params: { header: CSRF, path: { id } },
+            }),
+      ),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["competitions"] }),
+  });
+}
+
+export function useDeleteCompetition(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      call(
+        api.DELETE("/v1/admin/competitions/{id}", {
+          params: { header: CSRF, path: { id } },
+        }),
+      ),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["competitions"] }),
+  });
+}
+
+export function useDrawCompetition() {
+  return useMutation({
+    mutationFn: (body: {
+      subject: "math" | "english";
+      skills: string[];
+      easy: number;
+      medium: number;
+      hard: number;
+    }) =>
+      call(
+        api.POST("/v1/admin/competitions/draw", {
+          params: { header: CSRF },
+          body,
+        }),
+      ),
+  });
+}
+
+export function useReservable(f: {
+  competition?: string;
+  subject?: "math" | "english";
+  q?: string;
+}) {
+  return useQuery({
+    queryKey: ["competitions", "reservable", f],
+    queryFn: () =>
+      call(
+        api.GET("/v1/admin/competitions/reservable", {
+          params: { query: f },
+        }),
+      ),
+    placeholderData: keepPreviousData,
   });
 }

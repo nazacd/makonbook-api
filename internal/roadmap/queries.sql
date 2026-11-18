@@ -85,7 +85,7 @@ SELECT DISTINCT unnest(question_ids)::uuid AS id FROM roadmap_assessments WHERE 
 INSERT INTO roadmap_assessments (student_client_id, roadmap_id, lesson_id, kind, homework_index, question_ids, assignment_id)
 VALUES (@student, @roadmap_id, @lesson_id, @kind, @homework_index, @question_ids::uuid[], @assignment_id)
 ON CONFLICT (student_client_id, coalesce(lesson_id, ''), kind, coalesce(homework_index, -1),
-             coalesce(assignment_id, '00000000-0000-0000-0000-000000000000'::uuid)) WHERE finished_at IS NULL DO NOTHING
+             coalesce(assignment_id, '00000000-0000-0000-0000-000000000000'::uuid)) WHERE finished_at IS NULL AND kind <> 'competition' DO NOTHING
 RETURNING *;
 
 -- name: GetAssessment :one
@@ -116,3 +116,205 @@ SELECT content_type, body, sha256 FROM university_logos WHERE slug = @slug;
 INSERT INTO university_logos (slug, content_type, body, sha256) VALUES (@slug, @content_type, @body, @sha256)
 ON CONFLICT (slug) DO UPDATE SET content_type = excluded.content_type, body = excluded.body,
     sha256 = excluded.sha256, updated_at = now();
+
+-- Practice sets (spec 22.8) ----------------------------------------------------
+
+-- name: InsertPractice :one
+INSERT INTO roadmap_assessments (student_client_id, kind, question_ids, practice)
+VALUES (@student, 'practice', @question_ids::uuid[], @practice)
+ON CONFLICT (student_client_id, coalesce(lesson_id, ''), kind, coalesce(homework_index, -1),
+             coalesce(assignment_id, '00000000-0000-0000-0000-000000000000'::uuid)) WHERE finished_at IS NULL AND kind <> 'competition' DO NOTHING
+RETURNING *;
+
+-- name: OpenPractice :one
+SELECT * FROM roadmap_assessments WHERE student_client_id = @student AND kind = 'practice' AND finished_at IS NULL;
+
+-- name: DiscardPractice :execrows
+DELETE FROM roadmap_assessments WHERE id = @id AND student_client_id = @student AND kind = 'practice' AND finished_at IS NULL;
+
+-- A student's practice sets, newest first.
+-- name: PracticeSets :many
+SELECT id, practice, cardinality(question_ids)::int AS questions, created_at, finished_at, correct, total, percent
+FROM roadmap_assessments WHERE student_client_id = @student AND kind = 'practice'
+ORDER BY created_at DESC LIMIT @lim;
+
+-- Questions the student finished in any assessment, and whether they got
+-- each right the last time is worked out by the caller.
+-- name: FinishedQuestions :many
+SELECT DISTINCT unnest(question_ids)::uuid AS id FROM roadmap_assessments
+WHERE student_client_id = @student AND finished_at IS NOT NULL;
+
+-- Answers (spec 22.8) ----------------------------------------------------------
+
+-- name: InsertAnswer :execrows
+INSERT INTO question_answers (student_client_id, question_id, assessment_id, answer, correct, seconds, answered_at)
+VALUES (@student, @question_id, @assessment_id, @answer, @correct, sqlc.narg(seconds), @answered_at)
+ON CONFLICT (assessment_id, question_id) DO NOTHING;
+
+-- The questions of an assessment already checked one at a time, and how.
+-- name: CheckedAnswers :many
+SELECT question_id, correct FROM question_answers WHERE assessment_id = @assessment_id;
+
+-- Finished assessments, for filling question_answers from them.
+-- name: FinishedAssessments :many
+SELECT id, student_client_id, question_ids, answers, times, finished_at FROM roadmap_assessments
+WHERE finished_at IS NOT NULL ORDER BY finished_at;
+
+-- name: SolvedQuestions :many
+SELECT DISTINCT question_id FROM question_answers WHERE student_client_id = @student AND correct;
+
+-- Saved questions ---------------------------------------------------------------
+
+-- name: SavedQuestionIDs :many
+SELECT question_id FROM saved_questions WHERE student_client_id = @student ORDER BY saved_at DESC;
+
+-- name: SaveQuestion :exec
+INSERT INTO saved_questions (student_client_id, question_id)
+SELECT @student, id FROM questions WHERE id = @question_id AND status = 'approved'
+ON CONFLICT DO NOTHING;
+
+-- name: UnsaveQuestion :exec
+DELETE FROM saved_questions WHERE student_client_id = @student AND question_id = @question_id;
+
+-- Stats (spec 22.8), school time (tz) -------------------------------------------
+
+-- Per subject: approved questions, and those the student answered and solved.
+-- name: SubjectProgress :many
+SELECT q.subject,
+       count(*)::int AS total,
+       count(*) FILTER (WHERE EXISTS (SELECT 1 FROM question_answers a WHERE a.student_client_id = @student AND a.question_id = q.id))::int AS attempted,
+       count(*) FILTER (WHERE EXISTS (SELECT 1 FROM question_answers a WHERE a.student_client_id = @student AND a.question_id = q.id AND a.correct))::int AS solved
+FROM questions q WHERE q.status = 'approved'
+GROUP BY q.subject;
+
+-- Per skill, the approved questions the student solved.
+-- name: SkillSolved :many
+SELECT q.subject, q.skill, count(*)::int AS solved
+FROM questions q
+WHERE q.status = 'approved'
+  AND EXISTS (SELECT 1 FROM question_answers a WHERE a.student_client_id = @student AND a.question_id = q.id AND a.correct)
+GROUP BY q.subject, q.skill;
+
+-- name: AnswerTotals :one
+SELECT count(*)::int AS answers, count(*) FILTER (WHERE correct)::int AS correct,
+       count(DISTINCT question_id)::int AS questions
+FROM question_answers WHERE student_client_id = @student;
+
+-- Days (school time) the student answered on, newest first.
+-- name: AnswerDays :many
+SELECT DISTINCT (answered_at AT TIME ZONE @tz::text)::date AS day
+FROM question_answers WHERE student_client_id = @student
+ORDER BY day DESC LIMIT 400;
+
+-- Answers by week (Monday, school time), right or wrong, and difficulty.
+-- name: WeeklyAnswers :many
+SELECT date_trunc('week', a.answered_at AT TIME ZONE @tz::text)::date AS week,
+       a.correct, coalesce(q.difficulty, '')::text AS difficulty, count(*)::int AS n
+FROM question_answers a JOIN questions q ON q.id = a.question_id
+WHERE a.student_client_id = @student AND a.answered_at >= @since
+GROUP BY 1, 2, 3;
+
+-- Per subject and domain: answers and right ones.
+-- name: DomainAccuracy :many
+SELECT q.subject, q.domain, count(*)::int AS answers, count(*) FILTER (WHERE a.correct)::int AS correct
+FROM question_answers a JOIN questions q ON q.id = a.question_id
+WHERE a.student_client_id = @student
+GROUP BY q.subject, q.domain;
+
+-- Per subject and difficulty: answers, right ones, and seconds (where timed).
+-- student 0: everyone (the site-wide averages).
+-- name: DifficultyStats :many
+SELECT q.subject, q.difficulty::text AS difficulty, count(*)::int AS answers, count(*) FILTER (WHERE a.correct)::int AS correct,
+       coalesce(avg(a.seconds) FILTER (WHERE a.seconds > 0), 0)::float8 AS avg_seconds,
+       count(a.seconds) FILTER (WHERE a.seconds > 0)::int AS timed
+FROM question_answers a JOIN questions q ON q.id = a.question_id
+WHERE (@student::int = 0 OR a.student_client_id = @student::int) AND q.difficulty IS NOT NULL
+GROUP BY q.subject, q.difficulty;
+
+-- Competitions (spec 26) -------------------------------------------------------
+
+-- name: InsertCompetition :one
+INSERT INTO competitions (title, description, prize, subject, source, question_ids, starts_at, ends_at, minutes, created_by)
+VALUES (@title, @description, @prize, @subject, @source, @question_ids::uuid[], @starts_at, @ends_at, @minutes, @created_by)
+RETURNING *;
+
+-- name: UpdateCompetition :one
+UPDATE competitions SET title = @title, description = @description, prize = @prize, subject = @subject, source = @source,
+    question_ids = @question_ids::uuid[], starts_at = @starts_at, ends_at = @ends_at, minutes = @minutes, updated_at = now()
+WHERE id = @id AND deleted_at IS NULL
+RETURNING *;
+
+-- name: GetCompetition :one
+SELECT * FROM competitions WHERE id = @id AND deleted_at IS NULL;
+
+-- name: ListCompetitions :many
+SELECT c.*, (SELECT count(*) FROM roadmap_assessments a WHERE a.competition_id = c.id)::int AS participants
+FROM competitions c
+WHERE c.deleted_at IS NULL AND (c.published_at IS NOT NULL OR @with_drafts::bool)
+ORDER BY c.starts_at DESC
+LIMIT 200;
+
+-- name: SetCompetitionPublished :exec
+UPDATE competitions SET published_at = CASE WHEN @publish::bool THEN coalesce(published_at, now()) END, updated_at = now()
+WHERE id = @id;
+
+-- name: DeleteCompetition :exec
+UPDATE competitions SET deleted_at = now(), updated_at = now() WHERE id = @id;
+
+-- name: CompetitionAttempts :one
+SELECT count(*)::int FROM roadmap_assessments WHERE competition_id = @competition_id;
+
+-- name: InsertCompetitionAttempt :one
+INSERT INTO roadmap_assessments (student_client_id, kind, question_ids, competition_id)
+VALUES (@student, 'competition', @question_ids::uuid[], @competition_id)
+ON CONFLICT (student_client_id, competition_id) WHERE competition_id IS NOT NULL DO NOTHING
+RETURNING *;
+
+-- name: CompetitionAttempt :one
+SELECT * FROM roadmap_assessments WHERE student_client_id = @student AND competition_id = @competition_id;
+
+-- A student's attempts in some competitions.
+-- name: AttemptsIn :many
+SELECT * FROM roadmap_assessments WHERE student_client_id = @student AND competition_id = ANY (@competitions::uuid[]);
+
+-- Open attempts whose time is up: past their limit or the competition's end.
+-- name: ExpiredAttempts :many
+SELECT a.id, a.student_client_id FROM roadmap_assessments a JOIN competitions c ON c.id = a.competition_id
+WHERE a.competition_id = @competition_id AND a.finished_at IS NULL
+  AND (a.created_at + make_interval(mins => c.minutes) < now() OR c.ends_at < now());
+
+-- The board: every finished attempt, best first (right answers, then the
+-- seconds taken, kept within the limit; then who finished first).
+-- name: CompetitionBoard :many
+SELECT a.student_client_id, st.first_name, st.last_name, cr.photo_id, a.correct::int AS correct, a.total::int AS total,
+       extract(epoch FROM least(a.finished_at, a.created_at + make_interval(mins => c.minutes), c.ends_at) - a.created_at)::int AS seconds
+FROM roadmap_assessments a
+JOIN competitions c ON c.id = a.competition_id
+JOIN students st ON st.client_id = a.student_client_id
+LEFT JOIN credentials cr ON cr.person_kind = 'student' AND cr.person_id = a.student_client_id
+WHERE a.competition_id = @competition_id AND a.finished_at IS NOT NULL
+ORDER BY a.correct DESC, seconds ASC, a.finished_at ASC;
+
+-- Questions a reserved competition may use: in no mock test and held by no
+-- other competition.
+-- name: ReservableQuestions :many
+SELECT id, subject, type, domain, skill, difficulty, status, passage, stem FROM questions q
+WHERE subject = ANY (@subjects::text[]) AND status IN ('review', 'approved')
+  AND NOT EXISTS (SELECT 1 FROM practice_test_questions t WHERE t.question_id = q.id)
+  AND NOT EXISTS (SELECT 1 FROM competitions c WHERE c.deleted_at IS NULL AND c.id IS DISTINCT FROM @competition_id::uuid AND c.ends_at > now() AND q.id = ANY (c.question_ids))
+  AND (@q::text = '' OR q.stem ILIKE '%' || @q::text || '%' OR q.passage ILIKE '%' || @q::text || '%')
+ORDER BY q.created_at DESC
+LIMIT 100;
+
+-- How the chosen questions stand: their status, whether a mock test has them,
+-- and whether another live or reserved competition holds them.
+-- name: QuestionStanding :many
+SELECT q.id, q.subject, q.status,
+       EXISTS (SELECT 1 FROM practice_test_questions t WHERE t.question_id = q.id) AS in_test,
+       EXISTS (SELECT 1 FROM competitions c WHERE c.deleted_at IS NULL AND c.id IS DISTINCT FROM @competition_id::uuid AND c.ends_at > now() AND q.id = ANY (c.question_ids)
+               AND (c.published_at IS NOT NULL OR c.source = 'reserved')) AS held
+FROM questions q WHERE q.id = ANY (@ids::uuid[]);
+
+-- Questions by id, whatever their status (an editor's view of a competition).
+-- name: QuestionCards :many
+SELECT id, subject, type, domain, skill, difficulty, status, passage, stem FROM questions WHERE id = ANY (@ids::uuid[]);

@@ -14,6 +14,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/assignments"
 	"github.com/nazacd/makonbook-api/internal/attendance"
 	"github.com/nazacd/makonbook-api/internal/auth"
+	"github.com/nazacd/makonbook-api/internal/competitions"
 	"github.com/nazacd/makonbook-api/internal/lessons"
 	"github.com/nazacd/makonbook-api/internal/library"
 	"github.com/nazacd/makonbook-api/internal/parents"
@@ -136,8 +137,11 @@ func Handler(d Deps) http.Handler {
 	panel := admin.Panel{
 		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory, Practice: practiceSvc, Parents: parentsSvc,
 		Location: d.Location, WriteEnabled: d.HolliHopWriteEnabled,
+		MergeWebAccount: authSvc.MergeWebAccount, ErrNotMergeable: auth.ErrNotMergeable,
 	}
-	admin.NewHandler(admin.NewService(d.Pool, d.HolliHop), panel, d.TrustProxy, d.SecureCookies).Register(mux)
+	adminHandler := admin.NewHandler(admin.NewService(d.Pool, d.HolliHop), panel, d.TrustProxy, d.SecureCookies)
+	adminHandler.Register(mux)
+	competitions.NewHandler(roadmapSvc, authHandler.Require, authHandler.RequireContent, adminHandler.RequireEditor).Register(mux)
 
 	var root http.Handler = mux
 	if d.AdminHost != "" {

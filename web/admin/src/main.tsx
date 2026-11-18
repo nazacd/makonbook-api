@@ -88,6 +88,20 @@ const router = createBrowserRouter([
             .PracticeQuestionPage,
         }),
       },
+      {
+        path: "competitions",
+        lazy: async () => ({
+          Component: (await import("./competitions/CompetitionsPage"))
+            .CompetitionsPage,
+        }),
+      },
+      {
+        path: "competitions/:id",
+        lazy: async () => ({
+          Component: (await import("./competitions/CompetitionPage"))
+            .CompetitionPage,
+        }),
+      },
       { path: "*", element: <Home /> },
     ],
   },

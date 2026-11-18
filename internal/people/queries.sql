@@ -262,6 +262,14 @@ INSERT INTO student_saved_universities (student_client_id, university_id, saved_
 SELECT @to_id::int, university_id, saved_at FROM student_saved_universities WHERE student_client_id = @from_id::int
 ON CONFLICT DO NOTHING;
 
+-- name: MoveStudentAnswers :exec
+UPDATE question_answers SET student_client_id = @to_id WHERE student_client_id = @from_id;
+
+-- name: MoveStudentSavedQuestions :exec
+INSERT INTO saved_questions (student_client_id, question_id, saved_at)
+SELECT @to_id::int, question_id, saved_at FROM saved_questions WHERE student_client_id = @from_id::int
+ON CONFLICT DO NOTHING;
+
 -- name: MoveStudentParked :exec
 UPDATE parked_questions SET student_client_id = @to_id WHERE student_client_id = @from_id;
 
@@ -361,6 +369,12 @@ WHERE a.student_client_id = @from_id::int AND a.finished_at IS NULL
                 AND coalesce(b.homework_index, -1) = coalesce(a.homework_index, -1)
                 AND b.assignment_id IS NOT DISTINCT FROM a.assignment_id);
 
+-- A competition both took: the other's attempt stays (one each, ever).
+-- name: DropClashingCompetitionAttempts :exec
+DELETE FROM roadmap_assessments AS a
+WHERE a.student_client_id = @from_id::int AND a.competition_id IS NOT NULL
+  AND EXISTS (SELECT 1 FROM roadmap_assessments b WHERE b.student_client_id = @to_id::int AND b.competition_id = a.competition_id);
+
 -- name: MoveStudentAssessments :exec
 UPDATE roadmap_assessments SET student_client_id = @to_id WHERE student_client_id = @from_id;
 
@@ -397,3 +411,13 @@ WHERE c.student_client_id = @from_id::int
 UPDATE onboarding AS o SET student_client_id = @to_id::int
 WHERE o.student_client_id = @from_id::int
   AND NOT EXISTS (SELECT 1 FROM onboarding p WHERE p.student_client_id = @to_id::int);
+
+-- An admin settled a person's issue (merging a web account into them).
+-- name: ResolveIssue :exec
+UPDATE data_quality_issues SET resolved_at = now()
+WHERE person_kind = @person_kind AND person_id = @person_id AND kind = @kind AND resolved_at IS NULL;
+
+-- The self-registered account that logs in with this number, if any.
+-- name: SelfStudentByPhone :one
+SELECT client_id FROM students
+WHERE source = 'self' AND login_phone = @phone AND deactivated_at IS NULL;

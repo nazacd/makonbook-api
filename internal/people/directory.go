@@ -150,6 +150,12 @@ func MergeSelfStudent(ctx context.Context, db peopledb.DBTX, from, toStudent int
 				return q.MoveStudentSavedUniversities(ctx, peopledb.MoveStudentSavedUniversitiesParams{ToID: toStudent, FromID: from})
 			},
 			func(ctx context.Context) error {
+				return q.MoveStudentAnswers(ctx, peopledb.MoveStudentAnswersParams{ToID: toStudent, FromID: from})
+			},
+			func(ctx context.Context) error {
+				return q.MoveStudentSavedQuestions(ctx, peopledb.MoveStudentSavedQuestionsParams{ToID: toStudent, FromID: from})
+			},
+			func(ctx context.Context) error {
 				return q.MoveStudentParked(ctx, peopledb.MoveStudentParkedParams{ToID: toStudent, FromID: from})
 			},
 			func(ctx context.Context) error {
@@ -162,6 +168,9 @@ func MergeSelfStudent(ctx context.Context, db peopledb.DBTX, from, toStudent int
 				return q.DropClashingAssessments(ctx, peopledb.DropClashingAssessmentsParams{ToID: toStudent, FromID: from})
 			},
 			func(ctx context.Context) error {
+				if err := q.DropClashingCompetitionAttempts(ctx, peopledb.DropClashingCompetitionAttemptsParams{ToID: toStudent, FromID: from}); err != nil {
+					return err
+				}
 				return q.MoveStudentAssessments(ctx, peopledb.MoveStudentAssessmentsParams{ToID: toStudent, FromID: from})
 			},
 			func(ctx context.Context) error {
@@ -398,4 +407,32 @@ func (d *Directory) OpenIssues(ctx context.Context, offices scope.Offices) ([]Op
 		})
 	}
 	return out, nil
+}
+
+// SelfStudentByPhone is the registered (self-made) account that logs in with
+// phone (E.164); ErrNotFound if none.
+func (d *Directory) SelfStudentByPhone(ctx context.Context, phone string) (int32, error) {
+	id, err := d.q.SelfStudentByPhone(ctx, pgtype.Text{String: phone, Valid: true})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return id, err
+}
+
+// SettleSelfAccountConflict finishes an admin's merge of a web account into
+// a HolliHop person (inside the merge's transaction): the number, freed by
+// the merge, logs that person in at once rather than at the next sync, and
+// their issue is resolved.
+func SettleSelfAccountConflict(ctx context.Context, db peopledb.DBTX, kind string, id int32, phone string) error {
+	q := peopledb.New(db)
+	var err error
+	if kind == KindStudent {
+		err = q.SetStudentLoginPhones(ctx, peopledb.SetStudentLoginPhonesParams{Ids: []int32{id}, Phones: []string{phone}})
+	} else {
+		err = q.SetTeacherLoginPhones(ctx, peopledb.SetTeacherLoginPhonesParams{Ids: []int32{id}, Phones: []string{phone}})
+	}
+	if err != nil {
+		return fmt.Errorf("give login phone: %w", err)
+	}
+	return q.ResolveIssue(ctx, peopledb.ResolveIssueParams{PersonKind: kind, PersonID: id, Kind: IssueSelfAccount})
 }

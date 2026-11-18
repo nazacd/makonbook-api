@@ -1469,6 +1469,377 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/practice/topics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The question bank's domains and skills, with their approved questions (students)
+         * @description The same answer as /v1/teacher/taxonomy, for building a practice set (spec 22.8).
+         */
+        get: operations["practiceTopics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/practice/questions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Approved questions to browse (students)
+         * @description The teachers' question search; `done` lists the questions on this page the student has submitted in any assessment.
+         */
+        get: operations["practiceQuestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/practice/sets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The student's practice sets, newest first (the last 50) */
+        get: operations["practiceSets"];
+        put?: never;
+        /**
+         * Build a practice set (students)
+         * @description Spec 22.8. Questions drawn from `skills` (none: every skill of the
+         *     subject) at `difficulty` (mixed: about a third easy, a third hard,
+         *     the rest medium), preferring ones the student hasn't had; or
+         *     `question_ids` as they are (a question from the bank). The answer is
+         *     an assessment (kind practice): answer and submit it like any other
+         *     (`/v1/me/assessments/{id}`…), or at one's own pace, checking each
+         *     question as it is answered. One unfinished set at a time; open to
+         *     every student with a phone.
+         */
+        post: operations["startPractice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/practice/sets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Discard an unfinished practice set */
+        delete: operations["discardPractice"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/competitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Published competitions, newest first (students and teachers)
+         * @description Spec 26. Each with its status now and, for a student, their attempt.
+         */
+        get: operations["competitions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/competitions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A published competition */
+        get: operations["competition"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/competitions/{id}/board": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A competition's board
+         * @description Finished attempts ranked by right answers, then seconds taken (within the limit), then who finished first; attempts whose time is up are graded first. The first 100 and the viewer's place.
+         */
+        get: operations["competitionBoard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/competitions/{id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Take part (students with a phone, free accounts included)
+         * @description The student's attempt, an assessment of kind competition: the open
+         *     one, or a new one while the competition is live. One attempt each,
+         *     ever (`409 already_attempted` once finished). Answer and submit it
+         *     like any assessment; after the attempt's deadline (and 30 s of grace)
+         *     answers are refused (`409 time_up`) and a submit keeps only what was
+         *     saved in time.
+         */
+        post: operations["startCompetition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/competitions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every competition, drafts included (editors) */
+        get: operations["adminCompetitions"];
+        put?: never;
+        /** Make a competition, as a draft (editors) */
+        post: operations["adminCreateCompetition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/competitions/draw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Draw bank questions for a competition (editors)
+         * @description The counts asked per difficulty from the skills (none, the whole subject), the same for everyone, easy to hard. Held questions are left out.
+         */
+        post: operations["adminDrawCompetition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/competitions/reservable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Questions a reserved competition may use (editors)
+         * @description In review or approved, in no mock test and held by no other competition; newest first, 100 at most.
+         */
+        get: operations["adminReservableQuestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/competitions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** A competition with its questions (editors) */
+        get: operations["adminCompetition"];
+        /**
+         * Change a competition (editors)
+         * @description Once it has started or anyone has taken it, only the title, description and prize change; the rest stays.
+         */
+        put: operations["adminUpdateCompetition"];
+        post?: never;
+        /** Delete a competition nobody has taken (editors) */
+        delete: operations["adminDeleteCompetition"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/competitions/{id}/published": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Publish a competition (editors)
+         * @description Checks its questions first, at least one and all approved, of its subject, held by no other competition and, for a reserved one, in no mock test.
+         */
+        put: operations["adminPublishCompetition"];
+        post?: never;
+        /** Take a competition back before it starts (editors) */
+        delete: operations["adminUnpublishCompetition"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/competitions/{id}/board": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A competition's board (editors, drafts too) */
+        get: operations["adminCompetitionBoard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/assessments/{id}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check one question of a practice set taken at one's own pace
+         * @description Spec 22.8. Grades the answer, records it (a question is checked once:
+         *     a second check is `409 already_checked`, and its answer can't change
+         *     afterwards) and gives back the key and the explanation. Only for a
+         *     practice set with `mode` own_pace (`409 not_checkable` otherwise).
+         */
+        post: operations["checkQuestion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/practice/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The question bank's analytics for the student
+         * @description Spec 22.8. From every answer to a bank question in a level check,
+         *     homework or practice set (mock tests aren't counted). School time.
+         *     Site-wide figures are null below 100 answers.
+         */
+        get: operations["practiceStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/practice/saved": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The questions the student saved, newest first */
+        get: operations["savedQuestions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/practice/saved/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Save a question */
+        put: operations["saveQuestion"];
+        post?: never;
+        /** Unsave a question */
+        delete: operations["unsaveQuestion"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/assessments/{id}": {
         parameters: {
             query?: never;
@@ -2407,6 +2778,33 @@ export interface paths {
         get: operations["adminDataQuality"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/admin/data-quality/issues/{id}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge the web account that holds a person's number into them (super admins)
+         * @description For an open `self_account_conflict` issue: the person signed up on
+         *     the web with their number before HolliHop had it (or their HolliHop
+         *     number is now a web account's). The web account is merged into them
+         *     as when a number is proved (spec 21.4): its Google accounts, email,
+         *     Telegram account and photo move, and for a student everything it did;
+         *     for a teacher its student work is deleted. The web account is removed,
+         *     its sessions end, the number signs the person in at once, and the
+         *     issue is resolved.
+         */
+        post: operations["adminMergeWebAccount"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3556,7 +3954,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             /** @enum {string} */
-            kind: "level_check" | "homework";
+            kind: "level_check" | "homework" | "practice" | "competition";
             /** @description The course; null for a custom homework assignment */
             roadmap_id: string | null;
             /** @description null for a custom homework assignment */
@@ -3572,8 +3970,11 @@ export interface components {
                 due_at: string;
             };
             title: string;
-            /** @enum {string} */
-            subject: "math" | "english";
+            /**
+             * @description mixed: a competition on both subjects
+             * @enum {string}
+             */
+            subject: "math" | "english" | "mixed";
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -3638,6 +4039,14 @@ export interface components {
                     explanation: string;
                 }[];
             };
+            /** @description A competition attempt (kind competition): its competition, the attempt's deadline and the server's clock; until the competition ends, a finished attempt carries its score only (no keys, explanations or result items) */
+            competition?: null | components["schemas"]["CompetitionBrief"];
+            /** @description A practice set taken at one's own pace: question id → right or not, for those checked (they carry their key and explanation already) */
+            checked?: {
+                [key: string]: boolean;
+            };
+            /** @description A practice set (kind practice): what it was built from; null otherwise */
+            practice?: null | components["schemas"]["PracticeInfo"];
         };
         /** @enum {string} */
         AssignmentKind: "homework" | "level_check" | "exam";
@@ -3990,6 +4399,190 @@ export interface components {
                     }[];
                 }[];
             }[];
+        };
+        PracticeInfo: {
+            title: string;
+            /** @enum {string} */
+            subject: "math" | "english";
+            /** @description Empty for every skill of the subject */
+            skills: string[];
+            /** @enum {string} */
+            difficulty: "easy" | "medium" | "hard" | "mixed";
+            /** @description 0: untimed */
+            seconds_per_question: number;
+            /**
+             * @description own_pace: each question is checked as it is answered (POST /v1/me/assessments/{id}/check)
+             * @enum {string}
+             */
+            mode: "rush" | "own_pace";
+        };
+        Competition: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+            description: string;
+            /** @description As the editor wrote it; empty: none */
+            prize: string;
+            /** @enum {string} */
+            subject: "math" | "english" | "mixed";
+            /** @enum {string} */
+            source: "bank" | "reserved";
+            /** Format: date-time */
+            starts_at: string;
+            /** Format: date-time */
+            ends_at: string;
+            /** @description Each attempt's time limit */
+            minutes: number;
+            questions: number;
+            published: boolean;
+            /** @enum {string} */
+            status: "draft" | "upcoming" | "live" | "ended";
+            participants: number;
+            /** @description A student's attempt; null before they start (and for others) */
+            mine: null | {
+                /** Format: uuid */
+                assessment_id: string;
+                finished: boolean;
+                correct: number | null;
+                total: number | null;
+                /** Format: date-time */
+                deadline: string;
+                /** Format: date-time */
+                finished_at: string | null;
+            };
+            /** @description Editors only */
+            question_ids?: string[];
+        };
+        CompetitionInput: {
+            title: string;
+            description?: string;
+            prize?: string;
+            /** @enum {string} */
+            subject: "math" | "english" | "mixed";
+            /** @enum {string} */
+            source: "bank" | "reserved";
+            question_ids?: string[];
+            /** Format: date-time */
+            starts_at: string;
+            /** Format: date-time */
+            ends_at: string;
+            minutes: number;
+        };
+        CompetitionQuestion: {
+            /** Format: uuid */
+            id: string;
+            /** @enum {string} */
+            type: "mcq" | "grid_in";
+            domain: string;
+            skill: string;
+            /** @enum {string|null} */
+            difficulty: "easy" | "medium" | "hard" | null;
+            preview: string;
+            /** @enum {string} */
+            subject: "math" | "english";
+            status: string;
+        };
+        CompetitionBrief: {
+            /** Format: uuid */
+            id: string;
+            title: string;
+            /** Format: date-time */
+            ends_at: string;
+            /**
+             * Format: date-time
+             * @description When this attempt's time is up: its limit, or the competition's end
+             */
+            deadline: string;
+            /**
+             * Format: date-time
+             * @description The server's clock when this was sent
+             */
+            server_time: string;
+            /** @description Answers and explanations are open */
+            ended: boolean;
+        };
+        CompetitionBoard: {
+            entries: components["schemas"]["CompetitionBoardEntry"][];
+            me: null | components["schemas"]["CompetitionBoardEntry"];
+            /** @description Finished attempts */
+            participants: number;
+        };
+        CompetitionBoardEntry: {
+            rank: number;
+            /** @description "Madina K." */
+            name: string;
+            photo_url: string | null;
+            correct: number;
+            total: number;
+            seconds: number;
+            me: boolean;
+        };
+        PracticeStats: {
+            subjects: {
+                math: components["schemas"]["PracticeSubjectStats"];
+                english: components["schemas"]["PracticeSubjectStats"];
+            };
+            /** @description Questions answered at least once */
+            attempted: number;
+            /** @description Every answer */
+            answers: number;
+            /** @description Right answers */
+            correct: number;
+            saved: number;
+            /** @description School days in a row with an answer, to today or yesterday */
+            streak: number;
+            /** @description The last 8 weeks, oldest first, each from its Monday */
+            weeks: {
+                /** Format: date */
+                week: string;
+                /** @description By difficulty: easy, medium, hard, unrated */
+                correct: {
+                    [key: string]: number;
+                };
+                wrong: {
+                    [key: string]: number;
+                };
+            }[];
+        };
+        PracticeSubjectStats: {
+            /** @description Approved questions */
+            total: number;
+            attempted: number;
+            /** @description Answered right at least once */
+            solved: number;
+            /** @description Skill → questions solved */
+            skills: {
+                [key: string]: number;
+            };
+            domains: {
+                domain: string;
+                answers: number;
+                correct: number;
+            }[];
+            /** @description easy, medium, hard */
+            difficulty: {
+                /** @enum {string} */
+                difficulty: "easy" | "medium" | "hard";
+                answers: number;
+                correct: number;
+                avg_seconds: number | null;
+                /** @description 0–1 */
+                site_accuracy: number | null;
+                site_avg_seconds: number | null;
+            }[];
+        };
+        PracticeSet: {
+            /** Format: uuid */
+            id: string;
+            practice: components["schemas"]["PracticeInfo"];
+            questions: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            finished_at: string | null;
+            correct: number | null;
+            total: number | null;
+            percent: number | null;
         };
         TeacherTaxonomy: {
             /** @description math and english: the domains, each with its skills and approved counts */
@@ -4467,7 +5060,7 @@ export interface components {
                  * @description Stable machine-readable code.
                  * @enum {string}
                  */
-                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "invalid_email" | "email_taken" | "email_unavailable" | "telegram_unavailable" | "telegram_no_phone" | "phone_already_set" | "phone_required" | "photo_too_large" | "invalid_photo" | "google_unavailable" | "enrolled_only" | "invalid_onboarding" | "not_needed" | "lesson_locked" | "no_questions" | "finished" | "invalid_answers" | "invalid_assessment" | "invalid_assignment" | "assignment_closed" | "not_open" | "not_an_assessment" | "has_work" | "invalid_page";
+                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "invalid_email" | "email_taken" | "email_unavailable" | "telegram_unavailable" | "telegram_no_phone" | "phone_already_set" | "phone_required" | "photo_too_large" | "invalid_photo" | "google_unavailable" | "enrolled_only" | "invalid_onboarding" | "not_needed" | "lesson_locked" | "no_questions" | "finished" | "invalid_answers" | "invalid_assessment" | "invalid_assignment" | "assignment_closed" | "not_open" | "not_an_assessment" | "has_work" | "invalid_page" | "invalid_games" | "invalid_deck" | "too_many_decks" | "deck_too_small" | "own_deck" | "invalid_practice" | "practice_open" | "already_checked" | "not_mergeable" | "competition_locked" | "invalid_competition" | "time_up" | "already_attempted" | "not_live" | "not_checkable";
                 /** @description Human-readable explanation; may change. */
                 message: string;
                 /** @description For a rejected form (`invalid_question`): what is wrong, per field (e.g. `stem`, `choices.B`). */
@@ -7571,6 +8164,780 @@ export interface operations {
             };
         };
     };
+    practiceTopics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Per subject, the domains and their skills */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeacherTaxonomy"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    practiceQuestions: {
+        parameters: {
+            query: {
+                subject: "math" | "english";
+                skill?: string;
+                difficulty?: "easy" | "medium" | "hard";
+                q?: string;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Previews */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        questions: components["schemas"]["QuestionPreview"][];
+                        total: number;
+                        done: string[];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    practiceSets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The sets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        sets: components["schemas"]["PracticeSet"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    startPractice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    subject: "math" | "english";
+                    skills?: string[];
+                    /**
+                     * @default mixed
+                     * @enum {string}
+                     */
+                    difficulty?: "easy" | "medium" | "hard" | "mixed";
+                    /** @description Without question_ids: up to 50 for a rush, 200 at one's own pace */
+                    count?: number;
+                    /** @description 0 (untimed) or 15–600 */
+                    seconds_per_question?: number;
+                    question_ids?: string[];
+                    /**
+                     * @description own_pace: untimed, up to 200 questions, each checked as it is answered
+                     * @default rush
+                     * @enum {string}
+                     */
+                    mode?: "rush" | "own_pace";
+                    /** @description Leave out questions answered right before */
+                    unsolved?: boolean;
+                    /** @description Mix the order (otherwise easy to hard) */
+                    shuffle?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description The set */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Assessment"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            /** @description `practice_open`: an unfinished set, given as `open`, to continue or discard; `no_questions` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"] & {
+                        open?: components["schemas"]["Assessment"];
+                    };
+                };
+            };
+            /** @description `invalid_practice` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    discardPractice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discarded */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    competitions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The competitions and the server's clock */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        competitions: components["schemas"]["Competition"][];
+                        /** Format: date-time */
+                        server_time: string;
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    competition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The competition */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        competition: components["schemas"]["Competition"];
+                        /** Format: date-time */
+                        server_time: string;
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    competitionBoard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The board */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompetitionBoard"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    startCompetition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The attempt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Assessment"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `not_live`, `already_attempted` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    adminCompetitions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The competitions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        competitions: components["schemas"]["Competition"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    adminCreateCompetition: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompetitionInput"];
+            };
+        };
+        responses: {
+            /** @description Made */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        competition: components["schemas"]["Competition"];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            /** @description `invalid_competition` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    adminDrawCompetition: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    subject: "math" | "english";
+                    skills?: string[];
+                    easy?: number;
+                    medium?: number;
+                    hard?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description The drawn questions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        question_ids: string[];
+                        questions: components["schemas"]["CompetitionQuestion"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            /** @description `no_questions` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_competition` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    adminReservableQuestions: {
+        parameters: {
+            query?: {
+                /** @description The competition being edited */
+                competition?: string;
+                subject?: "math" | "english";
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The questions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        questions: components["schemas"]["CompetitionQuestion"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    adminCompetition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The competition */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        competition: components["schemas"]["Competition"];
+                        questions: components["schemas"]["CompetitionQuestion"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    adminUpdateCompetition: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CompetitionInput"];
+            };
+        };
+        responses: {
+            /** @description Saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        competition: components["schemas"]["Competition"];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `invalid_competition` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    adminDeleteCompetition: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `competition_locked` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    adminPublishCompetition: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `invalid_competition`: the message says what */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    adminUnpublishCompetition: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            /** @description `competition_locked`: it has started */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    adminCompetitionBoard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The board */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompetitionBoard"];
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    checkQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    question_id: string;
+                    answer: string;
+                    seconds?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description How it went */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        correct: boolean;
+                        answer: string;
+                        /** @description The letter (multiple choice) */
+                        correct_answer: string | null;
+                        /** @description The accepted forms (grid-in) */
+                        accepted: string[];
+                        explanation: string;
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `already_checked`, `not_checkable`, `finished` */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description `invalid_answers` */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    practiceStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The analytics */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PracticeStats"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    savedQuestions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Previews */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        questions: components["schemas"]["QuestionPreview"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    saveQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    unsaveQuestion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Done */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+        };
+    };
     myAssessment: {
         parameters: {
             query?: never;
@@ -9349,6 +10716,41 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+        };
+    };
+    adminMergeWebAccount: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Merged */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `not_mergeable`: the accounts changed since the page was loaded */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     adminAccessList: {
