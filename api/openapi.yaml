@@ -3959,6 +3959,33 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
 
+  /v1/admin/data-quality/issues/{id}/merge:
+    post:
+      summary: Merge the web account that holds a person's number into them (super admins)
+      description: |
+        For an open `self_account_conflict` issue: the person signed up on
+        the web with their number before HolliHop had it (or their HolliHop
+        number is now a web account's). The web account is merged into them
+        as when a number is proved (spec 21.4): its Google accounts, email,
+        Telegram account and photo move, and for a student everything it did;
+        for a teacher its student work is deleted. The web account is removed,
+        its sessions end, the number signs the person in at once, and the
+        issue is resolved.
+      operationId: adminMergeWebAccount
+      tags: [admin]
+      security: [{ adminCookie: [] }]
+      parameters:
+        - $ref: "#/components/parameters/AdminCSRF"
+        - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        "204": { description: Merged }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "`not_mergeable`: the accounts changed since the page was loaded"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /v1/admin/access:
     get:
       summary: Who can use the admin panel (super admins only)
@@ -6498,6 +6525,7 @@ components:
                 - invalid_practice
                 - practice_open
                 - already_checked
+                - not_mergeable
                 - competition_locked
                 - invalid_competition
                 - time_up

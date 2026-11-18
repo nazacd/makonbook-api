@@ -172,6 +172,20 @@ export function useRetryWrite() {
   });
 }
 
+/** Merges the web account holding a person's number into them (super admins). */
+export function useMergeWebAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (issueId: number) =>
+      call(
+        api.POST("/v1/admin/data-quality/issues/{id}/merge", {
+          params: { header: CSRF, path: { id: issueId } },
+        }),
+      ),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ["data-quality"] }),
+  });
+}
+
 export function useDataQuality(officeId: number | undefined) {
   return useQuery({
     queryKey: ["data-quality", officeId],

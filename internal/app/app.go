@@ -137,6 +137,7 @@ func Handler(d Deps) http.Handler {
 	panel := admin.Panel{
 		Lessons: lessonsSvc, Attendance: attendanceSvc, People: directory, Practice: practiceSvc, Parents: parentsSvc,
 		Location: d.Location, WriteEnabled: d.HolliHopWriteEnabled,
+		MergeWebAccount: authSvc.MergeWebAccount, ErrNotMergeable: auth.ErrNotMergeable,
 	}
 	adminHandler := admin.NewHandler(admin.NewService(d.Pool, d.HolliHop), panel, d.TrustProxy, d.SecureCookies)
 	adminHandler.Register(mux)

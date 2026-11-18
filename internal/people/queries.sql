@@ -411,3 +411,13 @@ WHERE c.student_client_id = @from_id::int
 UPDATE onboarding AS o SET student_client_id = @to_id::int
 WHERE o.student_client_id = @from_id::int
   AND NOT EXISTS (SELECT 1 FROM onboarding p WHERE p.student_client_id = @to_id::int);
+
+-- An admin settled a person's issue (merging a web account into them).
+-- name: ResolveIssue :exec
+UPDATE data_quality_issues SET resolved_at = now()
+WHERE person_kind = @person_kind AND person_id = @person_id AND kind = @kind AND resolved_at IS NULL;
+
+-- The self-registered account that logs in with this number, if any.
+-- name: SelfStudentByPhone :one
+SELECT client_id FROM students
+WHERE source = 'self' AND login_phone = @phone AND deactivated_at IS NULL;

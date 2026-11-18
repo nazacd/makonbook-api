@@ -834,8 +834,9 @@ Lesson days, sessions, QR, scanning, overrides, outbox write-back (dry-run until
 
 ## 20. Open items
 - **Merging** a HolliHop person already stored with a self-registered account that has their phone
-  (`self_account_conflict`, D23): there is no tool yet; for now admins correct the number in HolliHop, or a
-  developer merges the two by hand.
+  (`self_account_conflict`, D23): built as a super admin's button on HolliHop issues
+  (`POST /v1/admin/data-quality/issues/{id}/merge`): the web account is merged into the person as when a
+  number is proved (21.4), and the number signs them in at once.
 - **Registered students in the phone app** (D27): allowed for now; decide whether the app should offer them
   anything, or send them to the web.
 

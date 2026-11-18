@@ -2,8 +2,8 @@ import { CircleAlert } from 'lucide-react';
 import { Link } from 'react-router';
 
 import type { Schemas } from '../api/client';
-import { useDataQuality } from '../api/hooks';
-import { Empty, ErrorNotice, Loading, OfficeSelect, useOfficeParam, PageIcon } from '../components/ui';
+import { useDataQuality, useMe, useMergeWebAccount } from '../api/hooks';
+import { Empty, ErrorNotice, Loading, Notice, OfficeSelect, useOfficeParam, PageIcon } from '../components/ui';
 import { shortDate } from '../lib/dates';
 
 type GroupIssue = Schemas['GroupIssue'];
@@ -46,6 +46,22 @@ export function IssuesPage() {
   const data = useDataQuality(officeId);
   const groups = data.data?.groups ?? [];
   const people = data.data?.issues ?? [];
+  const isSuper = !!useMe().data?.super;
+  const merge = useMergeWebAccount();
+  type Issue = (typeof people)[number];
+  const confirmMerge = (i: Issue) => {
+    const who = `${i.last_name} ${i.first_name}`;
+    const what =
+      i.person_kind === 'teacher'
+        ? `Its Google, Telegram and email sign-ins and its photo move to the teacher ${who}. Its student work (practice, vocabulary, roadmap) is deleted: a teacher has none.`
+        : `Its sign-ins, photo and everything it did (practice, vocabulary, roadmap) move to the student ${who}.`;
+    if (
+      window.confirm(
+        `Merge the web account with ${i.phone} into ${who}?\n\nOnly if they are the same person. ${what} The web account is removed and ${i.phone} signs ${who} in from now on (with their own password, or the last 4 digits of the number if they never set one).`,
+      )
+    )
+      merge.mutate(i.id);
+  };
 
   return (
     <div className="stack">
@@ -61,6 +77,8 @@ export function IssuesPage() {
         </div>
       </div>
 
+      {merge.isError && <ErrorNotice error={merge.error} title="Not merged" />}
+      {merge.isSuccess && <Notice tone="success">Merged. The number signs them in now.</Notice>}
       {data.isPending ? (
         <Loading />
       ) : data.isError ? (
@@ -154,7 +172,16 @@ export function IssuesPage() {
                         <span className="chip warning">{PHONE[i.kind] ?? i.kind}</span>
                       </td>
                       <td className="tabular">{i.phone || <span className="faint">—</span>}</td>
-                      <td className="small muted">{i.detail}</td>
+                      <td className="small muted">
+                        {i.detail}
+                        {i.kind === 'self_account_conflict' && isSuper && (
+                          <div style={{ marginTop: 6 }}>
+                            <button className="btn small secondary" disabled={merge.isPending} onClick={() => confirmMerge(i)}>
+                              {merge.isPending && merge.variables === i.id ? 'Merging…' : 'Same person: merge accounts'}
+                            </button>
+                          </div>
+                        )}
+                      </td>
                       <td className="small muted nowrap">{shortDate(i.since.slice(0, 10))}</td>
                     </tr>
                   ))}

@@ -1,8 +1,10 @@
 package admin
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +29,12 @@ type Panel struct {
 	Location   *time.Location // school time zone, for "today"
 	// WriteEnabled: attendance is really written to HolliHop (not dry run).
 	WriteEnabled bool
+	// MergeWebAccount folds a self-made student account into the HolliHop
+	// person whose number it holds (auth.Service.MergeWebAccount); it
+	// answers auth.ErrNotMergeable when they aren't as the admin saw them.
+	MergeWebAccount func(ctx context.Context, from int32, toKind string, toID int32, phone string) error
+	// ErrNotMergeable is MergeWebAccount's refusal.
+	ErrNotMergeable error
 }
 
 // Error codes of the panel's pages (see api/openapi.yaml).
@@ -46,6 +54,7 @@ func (h *Handler) registerPanel(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/admin/hollihop/writes", h.Require(h.writes))
 	mux.HandleFunc("POST /v1/admin/hollihop/writes/{id}/retry", h.Require(h.retryWrite))
 	mux.HandleFunc("GET /v1/admin/data-quality", h.Require(h.dataQuality))
+	mux.HandleFunc("POST /v1/admin/data-quality/issues/{id}/merge", h.RequireSuper(h.mergeWebAccount))
 
 	mux.HandleFunc("GET /v1/admin/access", h.RequireSuper(h.accessList))
 	mux.HandleFunc("PUT /v1/admin/access/{member_type}/{member_id}", h.RequireSuper(h.grant))
@@ -255,6 +264,52 @@ func (h *Handler) dataQuality(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, r, http.StatusOK, dataQualityResponse{Groups: groups, Issues: issues})
+}
+
+// CodeNotMergeable: the accounts of a self_account_conflict issue changed
+// since the page was loaded (see api/openapi.yaml).
+const CodeNotMergeable = "not_mergeable"
+
+// mergeWebAccount settles an open self_account_conflict issue (super admins):
+// the self-made account holding the person's number is merged into them.
+func (h *Handler) mergeWebAccount(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, "no such issue")
+		return
+	}
+	issues, err := h.panel.People.OpenIssues(r.Context(), scope.Offices{All: true})
+	if err != nil {
+		h.internal(w, r, "merge: issues", err)
+		return
+	}
+	i := slices.IndexFunc(issues, func(x people.OpenIssue) bool { return x.ID == id && x.Kind == people.IssueSelfAccount })
+	if i < 0 {
+		httpx.WriteError(w, r, http.StatusNotFound, httpx.CodeNotFound, "no such open issue about a web account's number")
+		return
+	}
+	issue := issues[i]
+	phone, ok := people.NormalizePhone(issue.Phone)
+	var from int32
+	if ok {
+		from, err = h.panel.People.SelfStudentByPhone(r.Context(), phone)
+	}
+	if !ok || errors.Is(err, people.ErrNotFound) {
+		httpx.WriteError(w, r, http.StatusConflict, CodeNotMergeable, "no web account has this number any more: the next sync settles it")
+		return
+	} else if err != nil {
+		h.internal(w, r, "merge: web account", err)
+		return
+	}
+	err = h.panel.MergeWebAccount(r.Context(), from, issue.PersonKind, issue.PersonID, phone)
+	switch {
+	case h.panel.ErrNotMergeable != nil && errors.Is(err, h.panel.ErrNotMergeable):
+		httpx.WriteError(w, r, http.StatusConflict, CodeNotMergeable, "the accounts changed since this page was loaded: reload it")
+	case err != nil:
+		h.internal(w, r, "merge", err)
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 // Access is one entry of the access list.

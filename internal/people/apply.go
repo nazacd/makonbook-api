@@ -367,8 +367,8 @@ func applyLoginPhones(ctx context.Context, q *peopledb.Queries, plan loginPlan, 
 			}
 			delete(login, k)
 			issues = append(issues, Issue{Person: k, Kind: IssueSelfAccount, Detail: fmt.Sprintf(
-				"mobile %s is the number of a self-registered account (%s %s, id %d) that MakonBook doesn't merge with an existing person; "+
-					"if it is the same person, the accounts must be merged by hand, otherwise correct the number in HolliHop",
+				"mobile %s is the number of a web account (%s %s, id %d) made before HolliHop had it; "+
+					"if it is the same person, a super admin merges the accounts here, otherwise correct the number in HolliHop",
 				phone, r.LastName, r.FirstName, r.ClientID)})
 		}
 		sortIssues(issues)

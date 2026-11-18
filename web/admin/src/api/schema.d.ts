@@ -2784,6 +2784,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/admin/data-quality/issues/{id}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Merge the web account that holds a person's number into them (super admins)
+         * @description For an open `self_account_conflict` issue: the person signed up on
+         *     the web with their number before HolliHop had it (or their HolliHop
+         *     number is now a web account's). The web account is merged into them
+         *     as when a number is proved (spec 21.4): its Google accounts, email,
+         *     Telegram account and photo move, and for a student everything it did;
+         *     for a teacher its student work is deleted. The web account is removed,
+         *     its sessions end, the number signs the person in at once, and the
+         *     issue is resolved.
+         */
+        post: operations["adminMergeWebAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/admin/access": {
         parameters: {
             query?: never;
@@ -5033,7 +5060,7 @@ export interface components {
                  * @description Stable machine-readable code.
                  * @enum {string}
                  */
-                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "invalid_email" | "email_taken" | "email_unavailable" | "telegram_unavailable" | "telegram_no_phone" | "phone_already_set" | "phone_required" | "photo_too_large" | "invalid_photo" | "google_unavailable" | "enrolled_only" | "invalid_onboarding" | "not_needed" | "lesson_locked" | "no_questions" | "finished" | "invalid_answers" | "invalid_assessment" | "invalid_assignment" | "assignment_closed" | "not_open" | "not_an_assessment" | "has_work" | "invalid_page" | "invalid_games" | "invalid_deck" | "too_many_decks" | "deck_too_small" | "own_deck" | "invalid_practice" | "practice_open" | "already_checked" | "competition_locked" | "invalid_competition" | "time_up" | "already_attempted" | "not_live" | "not_checkable";
+                code: "not_found" | "internal" | "unavailable" | "bad_request" | "unauthorized" | "forbidden" | "rate_limited" | "invalid_credentials" | "account_locked" | "password_change_required" | "wrong_password" | "weak_password" | "invalid_username" | "username_taken" | "attendance_disabled" | "too_early" | "lesson_over" | "session_closed" | "invalid_code" | "code_expired" | "not_in_roster" | "device_already_used" | "marked_absent" | "edit_window_closed" | "not_admin" | "set_by_admin" | "super_admin_protected" | "fired" | "version_conflict" | "invalid_question" | "invalid_attempt" | "attempt_id_taken" | "invalid_reviews" | "invalid_parent_code" | "invalid_report" | "test_not_found" | "invalid_parked" | "report_id_taken" | "invalid_goals" | "sms_unavailable" | "invalid_phone" | "too_many_tries" | "invalid_ticket" | "invalid_profile" | "no_account" | "google_taken" | "invalid_email" | "email_taken" | "email_unavailable" | "telegram_unavailable" | "telegram_no_phone" | "phone_already_set" | "phone_required" | "photo_too_large" | "invalid_photo" | "google_unavailable" | "enrolled_only" | "invalid_onboarding" | "not_needed" | "lesson_locked" | "no_questions" | "finished" | "invalid_answers" | "invalid_assessment" | "invalid_assignment" | "assignment_closed" | "not_open" | "not_an_assessment" | "has_work" | "invalid_page" | "invalid_games" | "invalid_deck" | "too_many_decks" | "deck_too_small" | "own_deck" | "invalid_practice" | "practice_open" | "already_checked" | "not_mergeable" | "competition_locked" | "invalid_competition" | "time_up" | "already_attempted" | "not_live" | "not_checkable";
                 /** @description Human-readable explanation; may change. */
                 message: string;
                 /** @description For a rejected form (`invalid_question`): what is wrong, per field (e.g. `stem`, `choices.B`). */
@@ -10689,6 +10716,41 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+        };
+    };
+    adminMergeWebAccount: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Any value. Proves the request comes from the admin panel's own page. */
+                "X-MakonBook-Admin": components["parameters"]["AdminCSRF"];
+            };
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Merged */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description `not_mergeable`: the accounts changed since the page was loaded */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     adminAccessList: {
