@@ -36,15 +36,24 @@ export function useMe() {
   });
 }
 
+/**
+ * Who is signed in changed: the last person's data goes, and the new
+ * profile (null: signed out) takes the place of the old one. The "me" query
+ * itself is kept, not cleared: the shell is subscribed to it, and a cleared
+ * query would take the new profile without the shell ever seeing it (the
+ * page stayed on the sign-in form until a reload).
+ */
+function switchPerson(qc: ReturnType<typeof useQueryClient>, profile: Profile | null) {
+  qc.removeQueries({ predicate: (q) => q.queryKey[0] !== meKey[0] });
+  qc.setQueryData(meKey, profile);
+}
+
 export function useSignIn() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: { login: string; password: string }) =>
       call(api.POST("/v1/admin/login", { params: { header: CSRF }, body })),
-    onSuccess: (profile) => {
-      qc.clear();
-      qc.setQueryData(meKey, profile);
-    },
+    onSuccess: (profile) => switchPerson(qc, profile),
   });
 }
 
@@ -53,10 +62,7 @@ export function useSignOut() {
   return useMutation({
     mutationFn: () =>
       call(api.POST("/v1/admin/logout", { params: { header: CSRF } })),
-    onSettled: () => {
-      qc.clear();
-      qc.setQueryData(meKey, null);
-    },
+    onSettled: () => switchPerson(qc, null),
   });
 }
 
