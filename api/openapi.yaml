@@ -5946,11 +5946,13 @@ components:
           description: Every achievement, unlocked or not
           items:
             type: object
-            required: [code, title, description, unlocked_at, progress, target]
+            required: [code, title, description, tier, secret, unlocked_at, progress, target]
             properties:
               code: { type: string }
-              title: { type: string }
+              title: { type: string, description: "\"???\" for a secret not yet earned" }
               description: { type: string }
+              tier: { type: string, enum: [advancement, goal, challenge], description: "The frame's kind: ordinary, a milestone, a hard one" }
+              secret: { type: boolean, description: "Shows no name until earned" }
               unlocked_at: { type: [string, "null"], format: date-time }
               progress: { type: integer, description: "Towards the target; the target once unlocked" }
               target: { type: integer }

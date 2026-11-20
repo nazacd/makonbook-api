@@ -261,11 +261,15 @@ func (s *Service) SaveAttempt(ctx context.Context, student int32, in AttemptInpu
 		return Attempt{}, ErrAttemptTaken
 	}
 	if stored > 0 && s.xp != nil {
-		right := 0
+		right, questions, total := 0, 0, 0
 		for _, sc := range scores {
 			right += sc.Raw
+			questions += sc.Questions
 		}
-		s.xp(ctx, gamification.AttemptEvent(student, in.ID, a.Attempt.Title, right, in.FinishedAt))
+		if a.Attempt.Total != nil {
+			total = *a.Attempt.Total
+		}
+		s.xp(ctx, gamification.AttemptEvent(student, in.ID, a.Attempt.Title, right, questions, total, in.FinishedAt))
 	}
 	return a.Attempt, nil
 }

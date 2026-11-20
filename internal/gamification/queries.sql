@@ -5,17 +5,18 @@
 
 -- A thing done, once: the same key again changes nothing (0 rows).
 -- name: InsertEvent :execrows
-INSERT INTO xp_events (student_client_id, key, kind, title, amount, right_answers, happened_at)
-VALUES (@student_client_id, @key, @kind, @title, @amount, @right_answers, @happened_at)
+INSERT INTO xp_events (student_client_id, key, kind, title, amount, right_answers, happened_at, percent, questions, score, units)
+VALUES (@student_client_id, @key, @kind, @title, @amount, @right_answers, @happened_at, @percent, @questions, @score, @units)
 ON CONFLICT (student_client_id, key) DO NOTHING;
 
 -- A day's aggregate: the amount grows up to the cap; returns the day's amount.
 -- name: AccumulateEvent :one
-INSERT INTO xp_events AS e (student_client_id, key, kind, title, amount, right_answers, happened_at)
-VALUES (@student_client_id, @key, @kind, @title, LEAST(@amount::int, @cap::int), @right_answers, @happened_at)
+INSERT INTO xp_events AS e (student_client_id, key, kind, title, amount, right_answers, happened_at, units)
+VALUES (@student_client_id, @key, @kind, @title, LEAST(@amount::int, @cap::int), @right_answers, @happened_at, @units)
 ON CONFLICT (student_client_id, key) DO UPDATE
     SET amount = LEAST(@cap::int, e.amount + @amount::int),
         right_answers = e.right_answers + @right_answers::int,
+        units = e.units + @units::int,
         happened_at = GREATEST(e.happened_at, @happened_at::timestamptz)
 RETURNING e.amount;
 
@@ -36,6 +37,33 @@ SELECT COALESCE(sum(amount), 0)::bigint AS xp_total,
        COALESCE(sum(amount) FILTER (WHERE happened_at >= @today_start), 0)::bigint AS xp_today,
        COALESCE(sum(right_answers), 0)::bigint AS right_answers
 FROM xp_events WHERE student_client_id = @student_client_id;
+
+-- What the achievements look at beyond the totals (spec 27).
+-- name: Facts :one
+SELECT count(*) FILTER (WHERE kind = 'attempt')::int AS tests,
+       count(*) FILTER (WHERE kind = 'competition')::int AS competitions,
+       count(*) FILTER (WHERE kind = 'read')::int AS reading_days,
+       count(*) FILTER (WHERE kind = 'attendance')::int AS lessons,
+       count(*) FILTER (WHERE kind = 'vocab')::int AS review_days,
+       COALESCE(sum(units) FILTER (WHERE kind = 'vocab'), 0)::int AS reviews,
+       COALESCE(max(percent) FILTER (WHERE kind IN ('assessment', 'competition') AND questions >= 10), 0)::int AS best_percent,
+       COALESCE(max(score) FILTER (WHERE kind = 'attempt'), 0)::int AS best_score,
+       count(*) FILTER (WHERE kind <> 'quest' AND extract(hour FROM happened_at AT TIME ZONE @tz::text) < 4)::int AS night,
+       count(*) FILTER (WHERE kind <> 'quest' AND extract(hour FROM happened_at AT TIME ZONE @tz::text) BETWEEN 4 AND 6)::int AS early
+FROM xp_events WHERE student_client_id = @student_client_id;
+
+-- Days with all three daily quests done, and weeks with all six.
+-- name: FullDays :one
+SELECT count(*) FILTER (WHERE n = 3)::int AS full_days,
+       count(*) FILTER (WHERE n = 6)::int AS full_weeks
+FROM (SELECT period_start, count(*) AS n FROM quest_progress
+      WHERE student_client_id = @student_client_id AND done_at IS NOT NULL GROUP BY period_start) p;
+
+-- The student's goals, for the achievements about them (null when unset).
+-- name: GoalFacts :one
+SELECT (g.university_id IS NOT NULL)::bool AS has_dream,
+       COALESCE(g.target_math + g.target_rw, 0)::int AS target_total
+FROM student_goals g WHERE g.student_client_id = @student_client_id;
 
 -- name: RecentEvents :many
 SELECT title, amount, happened_at FROM xp_events
@@ -79,12 +107,15 @@ TRUNCATE xp_events, student_days, quest_progress, student_achievements;
 
 -- name: PastAttempts :many
 SELECT a.id, a.student_client_id, a.finished_at, t.title,
-       (SELECT COALESCE(sum((v.value->>'raw')::int), 0) FROM jsonb_each(a.scores) v)::int AS right_answers
+       (SELECT COALESCE(sum((v.value->>'raw')::int), 0) FROM jsonb_each(a.scores) v)::int AS right_answers,
+       (SELECT COALESCE(sum((v.value->>'questions')::int), 0) FROM jsonb_each(a.scores) v)::int AS questions,
+       (CASE WHEN jsonb_typeof(a.scores->'english') = 'object' AND jsonb_typeof(a.scores->'math') = 'object'
+             THEN (a.scores->'english'->>'score')::int + (a.scores->'math'->>'score')::int ELSE 0 END)::int AS score
 FROM practice_attempts a JOIN practice_tests t ON t.id = a.test_id
 ORDER BY a.finished_at;
 
 -- name: PastAssessments :many
-SELECT a.id, a.student_client_id, a.finished_at, a.kind, COALESCE(a.correct, 0)::int AS correct,
+SELECT a.id, a.student_client_id, a.finished_at, a.kind, COALESCE(a.correct, 0)::int AS correct, COALESCE(a.total, 0)::int AS total,
        COALESCE(a.percent, 0)::int AS percent, (a.assignment_id IS NOT NULL)::bool AS assigned,
        COALESCE(a.assignment_id IS NOT NULL AND a.finished_at <= s.due_at, false)::bool AS on_time, s.title AS assignment_title
 FROM roadmap_assessments a LEFT JOIN assignments s ON s.id = a.assignment_id

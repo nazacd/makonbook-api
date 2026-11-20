@@ -24,14 +24,14 @@ func (s *Service) Backfill(ctx context.Context, progress func(done, total int)) 
 		return 0, err
 	}
 	for _, a := range attempts {
-		events = append(events, Event{Student: a.StudentClientID, Key: "attempt:" + uuidString(a.ID), Title: a.Title, Amount: AttemptXP + a.RightAnswers, HappenedAt: a.FinishedAt.Time, Right: a.RightAnswers, Finished: true})
+		events = append(events, AttemptEvent(a.StudentClientID, uuidString(a.ID), a.Title, int(a.RightAnswers), int(a.Questions), int(a.Score), a.FinishedAt.Time))
 	}
 	assessments, err := q.PastAssessments(ctx)
 	if err != nil {
 		return 0, err
 	}
 	for _, a := range assessments {
-		events = append(events, AssessmentEvent(a.StudentClientID, uuidString(a.ID), a.Kind, a.AssignmentTitle.String, int(a.Correct), int(a.Percent), a.Assigned, a.OnTime, a.FinishedAt.Time))
+		events = append(events, AssessmentEvent(a.StudentClientID, uuidString(a.ID), a.Kind, a.AssignmentTitle.String, int(a.Correct), int(a.Total), int(a.Percent), a.Assigned, a.OnTime, a.FinishedAt.Time))
 	}
 	tz := s.loc.String()
 	reviews, err := q.PastReviewDays(ctx, tz)
@@ -89,7 +89,7 @@ func uuidString(u pgtype.UUID) string {
 // AssessmentEvent: kind is the assessment's (level_check, homework, practice,
 // competition); assigned says it was a teacher's assignment, onTime that it
 // was finished before the deadline.
-func AssessmentEvent(student int32, id, kind, assignmentTitle string, correct, percent int, assigned, onTime bool, finishedAt time.Time) Event {
+func AssessmentEvent(student int32, id, kind, assignmentTitle string, correct, total, percent int, assigned, onTime bool, finishedAt time.Time) Event {
 	title := map[string]string{"level_check": "Level check", "homework": "Homework set", "practice": "Practice set", "competition": "Competition"}[kind]
 	if title == "" {
 		title = "Assessment"
@@ -107,12 +107,16 @@ func AssessmentEvent(student int32, id, kind, assignmentTitle string, correct, p
 	if assigned && onTime {
 		amount += OnTimeXP
 	}
-	return Event{Student: student, Key: "assessment:" + id, Title: title, Amount: int32(amount), HappenedAt: finishedAt, Right: int32(correct), Finished: true} //nolint:gosec // small counts
+	ev := Event{Student: student, Key: "assessment:" + id, Kind: "assessment", Title: title, Amount: int32(amount), HappenedAt: finishedAt, Right: int32(correct), Finished: true, Percent: &percent, Questions: total} //nolint:gosec // small counts
+	if kind == "competition" {
+		ev.Kind = "competition"
+	}
+	return ev
 }
 
 // ReviewsEvent: n reviews on a day (1 XP each, capped per day).
 func ReviewsEvent(student int32, day time.Time, n int32, at time.Time) Event {
-	return Event{Student: student, Key: "vocab:" + day.Format("2006-01-02"), Title: "Word reviews", Amount: n * ReviewXP, Cap: ReviewsDayCap, HappenedAt: at, Reviews: n}
+	return Event{Student: student, Key: "vocab:" + day.Format("2006-01-02"), Title: "Word reviews", Amount: n * ReviewXP, Cap: ReviewsDayCap, HappenedAt: at, Reviews: n, Units: int(n)}
 }
 
 // GamesEvent: right answers in games on a day (2 XP each, capped per day).
@@ -122,7 +126,7 @@ func GamesEvent(student int32, day time.Time, right int32, at time.Time) Event {
 
 // ReadingEvent: a page read on a day.
 func ReadingEvent(student int32, day time.Time, at time.Time) Event {
-	return Event{Student: student, Key: "read:" + day.Format("2006-01-02"), Title: "Reading in the Library", Amount: ReadingXP, HappenedAt: at}
+	return Event{Student: student, Key: "read:" + day.Format("2006-01-02"), Title: "Reading in the Library", Amount: ReadingXP, HappenedAt: at, Units: 1}
 }
 
 // AttendanceEvent: marked present or late at a lesson.
@@ -130,9 +134,14 @@ func AttendanceEvent(student int32, sessionID string, at time.Time) Event {
 	return Event{Student: student, Key: "attendance:" + sessionID, Title: "At the lesson", Amount: AttendanceXP, HappenedAt: at}
 }
 
-// AttemptEvent: a mock test attempt.
-func AttemptEvent(student int32, id, title string, right int, finishedAt time.Time) Event {
-	return Event{Student: student, Key: "attempt:" + id, Title: title, Amount: AttemptXP + int32(right), HappenedAt: finishedAt, Right: int32(right), Finished: true} //nolint:gosec // small counts
+// AttemptEvent: a mock test attempt; score is the total when both sections were taken, else 0.
+func AttemptEvent(student int32, id, title string, right, questions, score int, finishedAt time.Time) Event {
+	ev := Event{Student: student, Key: "attempt:" + id, Title: title, Amount: AttemptXP + int32(right), HappenedAt: finishedAt, Right: int32(right), Finished: true, Questions: questions, Score: score} //nolint:gosec // small counts
+	if questions > 0 {
+		p := right * 100 / questions
+		ev.Percent = &p
+	}
+	return ev
 }
 
 // DayOf is the school date of an instant, for the day-keyed events.

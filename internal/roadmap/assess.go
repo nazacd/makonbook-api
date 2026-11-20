@@ -514,7 +514,7 @@ func (s *Service) awardSubmit(ctx context.Context, row roadmapdb.RoadmapAssessme
 			assigned, onTime, title = true, !row.FinishedAt.Time.After(a.DueAt.Time), a.Title
 		}
 	}
-	s.xp(ctx, gamification.AssessmentEvent(row.StudentClientID, uuidString(row.ID), row.Kind, title, int(row.Correct.Int16), int(row.Percent.Int16), assigned, onTime, row.FinishedAt.Time))
+	s.xp(ctx, gamification.AssessmentEvent(row.StudentClientID, uuidString(row.ID), row.Kind, title, int(row.Correct.Int16), int(row.Total.Int16), int(row.Percent.Int16), assigned, onTime, row.FinishedAt.Time))
 }
 
 // mergeAnswers checks answers against the assessment's questions and lays
