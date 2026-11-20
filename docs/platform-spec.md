@@ -67,6 +67,7 @@ enrol).
 | D37 | **Assignments** (section 23): teachers give their groups **homework, level checks and exams with deadlines**. Every student of the group gets the **same questions**; work after the deadline is taken and **marked late**; an exam is a mock test whose **first finished attempt** counts (retakes allowed); an assigned curriculum level check or homework **counts for the roadmap**. **Every current teacher of a group** may assign to it; content creation stays with the editors (9.4). | 2026-11-08, the product owner. |
 | D38 | A group whose discipline names the subject but **no level** takes the level from **HolliHop's group level**; without a subject, no roadmap. | 2026-11-08. |
 | D39 | **In-app notifications** (a table, the web's drawer): a new assignment notifies the group's students. Nothing outside the app yet; Telegram later. | 2026-11-08. |
+| D45 | **Gamification** (section 27): XP is awarded by the server, once per thing done, for everything it already records (answers, tests, assessments, reviews, games, reading, competitions, attendance); levels with titles, a streak of active days, three daily and three weekly quests, thirteen achievements; for every student with a phone, free accounts included; **no XP leaderboard** (ranking stays the teachers' rating, 11.5's board and competitions'). | 2026-11-20. |
 | D44 | **Competitions** (section 26): editors make them in the admin panel from bank topics or reserved questions; strict (one attempt, the server's clock, answers hidden until the end); open to free accounts; prizes only as a line of text for now. | 2026-11-14. |
 | D43 | **The question bank** (section 22.8): every answer to a bank question is kept (`question_answers`) for solved counts and analytics; practice sets as a timed rush or at one's own pace with each question checked; analytics and the bank open to every student with a phone, no paid tier. | 2026-11-13. |
 | D42 | **Vocabulary, social** (section 11.4–11.6): word games (Pairs, Unscramble, Fill the gap) whose results are kept on the server and shown to teachers; a monthly **leaderboard** of everyone (names shortened) for all students, and of their own groups for enrolled students only; **students make decks**, private or shared with everyone, moderated by teachers and by students' reports. | 2026-11-11. |
@@ -1358,3 +1359,46 @@ admin panel. Prizes are a line of text the editor writes (`prize`); nothing else
   /v1/competitions/{id}/start`; editors: `/v1/admin/competitions` (list, make, change, delete untaken, publish,
   draw, reservable questions, board).
 
+## 27. Gamification (built, for the web; D45)
+
+Progress a student can feel between tests: XP, a level, a streak, quests and achievements. It changes no
+score and no grade, and it is **computed by the server**, never by the app: phones upload work done offline,
+other tabs finish tests, and every device must agree. Every student with a phone takes part, free accounts
+included. There is no XP leaderboard: XP is each student's own progress; competing stays with the vocabulary
+board (11.5), competitions (26) and the teachers’ rating (a later section).
+- **The ledger** (`xp_events`): one row per thing done, keyed by `source_key` and unique per student, so a
+  retried upload or a second submit awards nothing twice. `happened_at` is when the work was done (an
+  attempt's `finished_at`, a review's `reviewed_at`), not when the server heard of it, so a day studied
+  offline counts for that day. Sources and amounts:
+
+  | Done | XP | Key |
+  |---|---|---|
+  | A mock test attempt uploaded (9.5) | 30, plus 1 per right answer | `attempt:<id>` |
+  | An assessment submitted: a level check, a homework set, an assignment, a practice set | 15, plus 1 per right answer; a level check passed +20; an assignment finished before its deadline +10 | `assessment:<id>` |
+  | A competition attempt submitted | 50, plus 1 per right answer | `assessment:<id>` |
+  | Word reviews (11.4) | 1 per review, at most 40 a day | `vocab:<day>` (the day's row is updated) |
+  | Game rounds (11.4) | 2 per right answer, at most 100 a day | `games:<day>` |
+  | A page read in the Library (25) | 5, once a day | `read:<day>` |
+  | Marked present at a lesson (8) | 10 | `attendance:<record id>` |
+  | A quest finished | its reward | `quest:<code>:<period start>` |
+
+- **Levels:** the XP a level starts at is `25 × (L − 1) × (L + 2)` (level 2 at 100, 5 at 700, 10 at 2,700, 25 at
+  16,200); titles Starter (1), Learner (3), Scholar (5), Strategist (8), Specialist (12), Expert (18), Master (25).
+- **The streak:** a day in Tashkent with any XP is active (`student_days`). The current streak counts back from
+  today, or from yesterday when today has nothing yet (then it is "at risk", and Mako says so); the best is kept.
+- **Quests**, legible and few, in Tashkent days and Monday weeks (`quest_progress`): daily, *10 right answers*
+  (30 XP), *10 words reviewed* (30), *one test or assessment finished* (40); weekly, *60 right answers* (90), *60
+  words reviewed* (90), *5 active days* (120). Progress comes from the same events; finishing one awards its
+  reward at once. A day's or week's quests are made when first touched or read.
+- **Achievements** (`achievements`, once each): First Step (1 XP), Momentum (500), Four Digits (1,000), Scholar
+  (level 5), Double Digits (level 10), Three-Day Spark, Week Warrior, Month of Momentum (best streak 3, 7, 30),
+  Century, Five Hundred, Two Thousand (right answers), Quest Habit (5 quests), Quest Regular (25).
+- **API:** `GET /v1/me/gamification`: `xp_total`, `xp_today`, `level`, `level_title`, `level_floor`,
+  `next_level_xp`, `streak` (`current`, `best`, `active_today`, `at_risk`, the last 14 days), `quests` (daily and
+  weekly, each with progress, target, reward and `done_at`; `resets_at`), `achievements` (every one, with
+  `unlocked_at` or progress towards it), `recent` (the last 12 events), `leveled_up_today`. Students only.
+- **Backfill:** `makonbook gamification backfill` writes the ledger from what already happened (attempts,
+  assessments, reviews, games, reading, attendance), with the same keys, so students don't start at zero at
+  launch and running it twice changes nothing.
+- Not built: a leaderboard by XP, buying anything with XP, teachers' or parents' views (the parents' app may show
+  the streak later).
