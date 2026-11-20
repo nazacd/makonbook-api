@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nazacd/makonbook-api/internal/demo"
+	"github.com/nazacd/makonbook-api/internal/gamification"
 	"github.com/nazacd/makonbook-api/internal/parents"
 	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/platform/alert"
@@ -31,7 +32,9 @@ func validDemoArgs(args []string) bool {
 
 func demoService(cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) *demo.Service {
 	codes := parents.NewService(pool, people.NewDirectory(pool), nil, alert.Log{Logger: log}, "")
-	return demo.NewService(pool, practice.NewService(pool, nil), codes, cfg.Location)
+	// The demo accounts' results earn XP like anyone's (spec 27), so the reviewers see the achievements.
+	xp := gamification.NewService(pool, cfg.Location, log).Hook()
+	return demo.NewService(pool, practice.NewService(pool, nil).WithXP(xp), codes, cfg.Location)
 }
 
 func runDemo(ctx context.Context, cfg config.Config, args []string, log *slog.Logger, stdout io.Writer) error {
