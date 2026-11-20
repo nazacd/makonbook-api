@@ -42,14 +42,19 @@ const (
 type Event struct {
 	Student    int32
 	Key        string // "<kind>:<id>" (attempt:…, assessment:…, vocab:<day>, games:<day>, read:<day>, attendance:<session>)
+	Kind       string // the key's prefix unless said otherwise ("competition" for a competition's assessment)
 	Title      string
 	Amount     int32
 	Cap        int32 // > 0: a day's aggregate; the amount accumulates up to it
 	HappenedAt time.Time
 	// For the quests and achievements.
-	Right    int32 // right answers
-	Reviews  int32 // word reviews
-	Finished bool  // a test or assessment finished
+	Right     int32 // right answers
+	Reviews   int32 // word reviews
+	Finished  bool  // a test or assessment finished
+	Percent   *int  // the share right, for assessments and attempts
+	Questions int   // how many questions
+	Score     int   // a mock test's total, when both sections were taken
+	Units     int   // what a day's aggregate counts: reviews, pages
 }
 
 // Quest definitions: three a day, three a week.
@@ -75,34 +80,92 @@ var Quests = []QuestDef{
 	{Code: "weekly_days_5", Title: "5 active days", Metric: metricDays, Target: 5, Reward: 120, Weekly: true},
 }
 
-// AchievementDef: unlocked once a figure reaches the target.
+// AchievementDef: unlocked once a figure reaches the target. Tier is the
+// frame's kind (advancement, goal, challenge); a secret one shows no name
+// until it is earned.
 type AchievementDef struct {
 	Code, Title, Description, Key string
-	Target                        int32
+	Target                        int64
+	Tier                          string
+	Secret                        bool
 }
 
 const (
-	keyXP     = "xp_total"
-	keyLevel  = "level"
-	keyStreak = "best_streak"
-	keyRight  = "right_answers"
-	keyQuests = "quests"
+	TierAdvancement = "advancement"
+	TierGoal        = "goal"
+	TierChallenge   = "challenge"
+)
+
+// The figures achievements compare with.
+const (
+	keyXP        = "xp_total"
+	keyLevel     = "level"
+	keyStreak    = "best_streak"
+	keyRight     = "right_answers"
+	keyQuests    = "quests"
+	keyTests     = "tests"
+	keyCompete   = "competitions"
+	keyReadDays  = "reading_days"
+	keyLessons   = "lessons"
+	keyReviews   = "reviews"
+	keyPercent   = "best_percent"
+	keyScore     = "best_score"
+	keyNight     = "night"
+	keyEarly     = "early"
+	keyFullDays  = "full_days"
+	keyFullWeeks = "full_weeks"
+	keyDream     = "dream"
+	keyOnTarget  = "on_target"
+	keyWeekend   = "weekend"
+	keyComeback  = "comeback"
 )
 
 var Achievements = []AchievementDef{
-	{"first_xp", "First Step", "Earn your first XP.", keyXP, 1},
-	{"xp_500", "Momentum", "Earn 500 XP.", keyXP, 500},
-	{"xp_1000", "Four Digits", "Earn 1,000 XP.", keyXP, 1000},
-	{"level_5", "Scholar", "Reach level 5.", keyLevel, 5},
-	{"level_10", "Double Digits", "Reach level 10.", keyLevel, 10},
-	{"streak_3", "Three-Day Spark", "Three days in a row.", keyStreak, 3},
-	{"streak_7", "Week Warrior", "Seven days in a row.", keyStreak, 7},
-	{"streak_30", "Month of Momentum", "Thirty days in a row.", keyStreak, 30},
-	{"answers_100", "Century", "100 right answers.", keyRight, 100},
-	{"answers_500", "Five Hundred", "500 right answers.", keyRight, 500},
-	{"answers_2000", "Two Thousand", "2,000 right answers.", keyRight, 2000},
-	{"quests_5", "Quest Habit", "Five quests finished.", keyQuests, 5},
-	{"quests_25", "Quest Regular", "Twenty-five quests finished.", keyQuests, 25},
+	// getting started
+	{"first_xp", "First Step", "Earn your first XP.", keyXP, 1, TierAdvancement, false},
+	{"pencil_age", "Pencil Age", "Finish your first mock test.", keyTests, 1, TierAdvancement, false},
+	{"getting_words", "Getting Words", "Review your first word.", keyReviews, 1, TierAdvancement, false},
+	{"open_book", "Open Book", "Read a page in the Library.", keyReadDays, 1, TierAdvancement, false},
+	{"front_row", "Front Row", "Be at a lesson, scanned in.", keyLessons, 1, TierAdvancement, false},
+	{"dream_set", "Dream Set", "Choose your dream university.", keyDream, 1, TierAdvancement, false},
+	// XP and levels
+	{"xp_500", "Momentum", "Earn 500 XP.", keyXP, 500, TierAdvancement, false},
+	{"xp_1000", "Four Digits", "Earn 1,000 XP.", keyXP, 1000, TierAdvancement, false},
+	{"level_5", "Scholar", "Reach level 5.", keyLevel, 5, TierGoal, false},
+	{"level_10", "Double Digits", "Reach level 10.", keyLevel, 10, TierChallenge, false},
+	// the streak
+	{"streak_3", "Three-Day Spark", "Three days in a row.", keyStreak, 3, TierAdvancement, false},
+	{"streak_7", "Week Warrior", "Seven days in a row.", keyStreak, 7, TierGoal, false},
+	{"streak_30", "Month of Momentum", "Thirty days in a row.", keyStreak, 30, TierChallenge, false},
+	{"streak_100", "Unbreakable", "A hundred days in a row.", keyStreak, 100, TierChallenge, false},
+	{"weekend_scholar", "Weekend Scholar", "Both days of a weekend.", keyWeekend, 1, TierAdvancement, false},
+	{"comeback", "Comeback", "Back after two weeks away.", keyComeback, 1, TierAdvancement, true},
+	// answers
+	{"answers_100", "Century", "100 right answers.", keyRight, 100, TierAdvancement, false},
+	{"answers_500", "Five Hundred", "500 right answers.", keyRight, 500, TierAdvancement, false},
+	{"answers_2000", "Two Thousand", "2,000 right answers.", keyRight, 2000, TierChallenge, false},
+	{"answers_10000", "Ten Thousand", "10,000 right answers.", keyRight, 10000, TierChallenge, false},
+	// tests and scores
+	{"tests_10", "Marathon", "Ten mock tests finished.", keyTests, 10, TierGoal, false},
+	{"perfect_set", "Perfect Set", "Every question right in a set of ten or more.", keyPercent, 100, TierGoal, false},
+	{"on_target", "On Target", "A mock test at or above your target.", keyOnTarget, 1, TierGoal, false},
+	{"club_1500", "1500 Club", "A mock test of 1500 or more.", keyScore, 1500, TierChallenge, false},
+	{"full_marks", "Full Marks", "A perfect 1600.", keyScore, 1600, TierChallenge, true},
+	// words
+	{"reviews_500", "Wordsmith", "500 word reviews.", keyReviews, 500, TierAdvancement, false},
+	{"reviews_2000", "Lexicon", "2,000 word reviews.", keyReviews, 2000, TierGoal, false},
+	// the clock
+	{"night_owl", "Night Owl", "Studying after midnight.", keyNight, 1, TierAdvancement, true},
+	{"early_bird", "Early Bird", "Studying before seven in the morning.", keyEarly, 1, TierAdvancement, true},
+	// quests
+	{"quests_5", "Quest Habit", "Five quests finished.", keyQuests, 5, TierAdvancement, false},
+	{"quests_25", "Quest Regular", "Twenty-five quests finished.", keyQuests, 25, TierChallenge, false},
+	{"full_house", "Full House", "All three daily quests in one day.", keyFullDays, 1, TierGoal, false},
+	{"clean_sweep", "Clean Sweep", "All six quests in one week.", keyFullWeeks, 1, TierChallenge, false},
+	// out in the world
+	{"bookworm", "Bookworm", "Reading on ten days.", keyReadDays, 10, TierGoal, false},
+	{"regular", "Regular", "Twenty lessons, scanned in.", keyLessons, 20, TierGoal, false},
+	{"contender", "Contender", "Take part in a competition.", keyCompete, 1, TierAdvancement, false},
 }
 
 var titles = []struct {
@@ -190,15 +253,28 @@ func (s *Service) Award(ctx context.Context, e Event) error {
 	}
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		q := gamificationdb.New(tx)
+		kind := e.Kind
+		if kind == "" {
+			kind = kindOf(e.Key)
+		}
 		if e.Cap > 0 {
 			if _, err := q.AccumulateEvent(ctx, gamificationdb.AccumulateEventParams{
-				StudentClientID: e.Student, Key: e.Key, Kind: kindOf(e.Key), Title: e.Title, Amount: e.Amount, Cap: e.Cap, RightAnswers: e.Right, HappenedAt: ts(e.HappenedAt),
+				StudentClientID: e.Student, Key: e.Key, Kind: kind, Title: e.Title, Amount: e.Amount, Cap: e.Cap, RightAnswers: e.Right, HappenedAt: ts(e.HappenedAt), Units: int32(e.Units), //nolint:gosec // small
 			}); err != nil {
 				return err
 			}
 		} else {
+			var percent pgtype.Int2
+			if e.Percent != nil {
+				percent = pgtype.Int2{Int16: int16(min(100, max(0, *e.Percent))), Valid: true} //nolint:gosec // clamped
+			}
+			var score pgtype.Int2
+			if e.Score >= 400 && e.Score <= 1600 {
+				score = pgtype.Int2{Int16: int16(e.Score), Valid: true} //nolint:gosec // checked
+			}
 			n, err := q.InsertEvent(ctx, gamificationdb.InsertEventParams{
-				StudentClientID: e.Student, Key: e.Key, Kind: kindOf(e.Key), Title: e.Title, Amount: e.Amount, RightAnswers: e.Right, HappenedAt: ts(e.HappenedAt),
+				StudentClientID: e.Student, Key: e.Key, Kind: kind, Title: e.Title, Amount: e.Amount, RightAnswers: e.Right, HappenedAt: ts(e.HappenedAt),
+				Percent: percent, Questions: pgtype.Int4{Int32: int32(e.Questions), Valid: e.Questions > 0}, Score: score, Units: int32(e.Units), //nolint:gosec // small
 			})
 			if err != nil {
 				return err
@@ -269,43 +345,69 @@ func (s *Service) advanceQuests(ctx context.Context, q *gamificationdb.Queries, 
 	return nil
 }
 
-// figures are what achievements compare with.
-type figures struct {
-	xp, right, quests int64
-	level, best       int32
-}
+// figures are what achievements compare with, by key.
+type figures map[string]int64
+
+func (f figures) of(key string) int64 { return f[key] }
 
 func (s *Service) figuresOf(ctx context.Context, q *gamificationdb.Queries, student int32, now time.Time) (figures, []pgtype.Date, error) {
 	t, err := q.Totals(ctx, gamificationdb.TotalsParams{TodayStart: ts(s.dayStart(now)), StudentClientID: student})
 	if err != nil {
-		return figures{}, nil, err
+		return nil, nil, err
 	}
 	days, err := q.Days(ctx, student)
 	if err != nil {
-		return figures{}, nil, err
+		return nil, nil, err
 	}
 	quests, err := q.QuestsDone(ctx, student)
 	if err != nil {
-		return figures{}, nil, err
+		return nil, nil, err
+	}
+	facts, err := q.Facts(ctx, gamificationdb.FactsParams{Tz: s.loc.String(), StudentClientID: student})
+	if err != nil {
+		return nil, nil, err
+	}
+	full, err := q.FullDays(ctx, student)
+	if err != nil {
+		return nil, nil, err
+	}
+	goals, err := q.GoalFacts(ctx, student)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, err
 	}
 	_, best := streaks(days, s.day(now))
-	return figures{xp: t.XpTotal, right: t.RightAnswers, quests: quests, level: Level(t.XpTotal), best: best}, days, nil
+	weekend, comeback := dayFacts(days)
+	f := figures{
+		keyXP: t.XpTotal, keyLevel: int64(Level(t.XpTotal)), keyStreak: int64(best), keyRight: t.RightAnswers, keyQuests: quests,
+		keyTests: int64(facts.Tests), keyCompete: int64(facts.Competitions), keyReadDays: int64(facts.ReadingDays), keyLessons: int64(facts.Lessons),
+		keyReviews: int64(facts.Reviews), keyPercent: int64(facts.BestPercent), keyScore: int64(facts.BestScore), keyNight: int64(facts.Night), keyEarly: int64(facts.Early),
+		keyFullDays: int64(full.FullDays), keyFullWeeks: int64(full.FullWeeks), keyWeekend: weekend, keyComeback: comeback,
+	}
+	if goals.HasDream {
+		f[keyDream] = 1
+	}
+	if goals.TargetTotal > 0 && facts.BestScore >= goals.TargetTotal {
+		f[keyOnTarget] = 1
+	}
+	return f, days, nil
 }
 
-func (f figures) of(key string) int64 {
-	switch key {
-	case keyXP:
-		return f.xp
-	case keyLevel:
-		return int64(f.level)
-	case keyStreak:
-		return int64(f.best)
-	case keyRight:
-		return f.right
-	case keyQuests:
-		return f.quests
+// dayFacts: both days of a weekend active (1), and a return after two weeks
+// away (1). days are newest first.
+func dayFacts(days []pgtype.Date) (weekend, comeback int64) {
+	set := make(map[time.Time]bool, len(days))
+	for _, d := range days {
+		set[d.Time] = true
 	}
-	return 0
+	for i, d := range days {
+		if d.Time.Weekday() == time.Sunday && set[d.Time.AddDate(0, 0, -1)] {
+			weekend = 1
+		}
+		if i+1 < len(days) && d.Time.Sub(days[i+1].Time) >= 15*24*time.Hour {
+			comeback = 1
+		}
+	}
+	return weekend, comeback
 }
 
 func (s *Service) unlock(ctx context.Context, q *gamificationdb.Queries, student int32, at time.Time) error {
@@ -314,7 +416,7 @@ func (s *Service) unlock(ctx context.Context, q *gamificationdb.Queries, student
 		return err
 	}
 	for _, a := range Achievements {
-		if f.of(a.Key) < int64(a.Target) {
+		if f.of(a.Key) < a.Target {
 			continue
 		}
 		if _, err := q.UnlockAchievement(ctx, gamificationdb.UnlockAchievementParams{StudentClientID: student, Code: a.Code, UnlockedAt: ts(at)}); err != nil {
@@ -398,9 +500,11 @@ type Achievement struct {
 	Code        string     `json:"code"`
 	Title       string     `json:"title"`
 	Description string     `json:"description"`
+	Tier        string     `json:"tier"`
+	Secret      bool       `json:"secret"`
 	UnlockedAt  *time.Time `json:"unlocked_at"`
 	Progress    int64      `json:"progress"`
-	Target      int32      `json:"target"`
+	Target      int64      `json:"target"`
 }
 
 type Recent struct {
@@ -465,10 +569,13 @@ func (s *Service) State(ctx context.Context, student int32, now time.Time) (Stat
 	}
 	achievements := make([]Achievement, 0, len(Achievements))
 	for _, a := range Achievements {
-		av := Achievement{Code: a.Code, Title: a.Title, Description: a.Description, Progress: min(f.of(a.Key), int64(a.Target)), Target: a.Target}
+		av := Achievement{Code: a.Code, Title: a.Title, Description: a.Description, Tier: a.Tier, Secret: a.Secret, Progress: min(f.of(a.Key), a.Target), Target: a.Target}
 		if t, ok := at[a.Code]; ok {
 			av.UnlockedAt = &t
-			av.Progress = int64(a.Target)
+			av.Progress = a.Target
+		} else if a.Secret {
+			// A secret stays one until it is earned.
+			av.Title, av.Description, av.Progress = "???", "A secret. Keep going.", 0
 		}
 		achievements = append(achievements, av)
 	}

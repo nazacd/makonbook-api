@@ -59,7 +59,7 @@ func TestAwardAndState(t *testing.T) {
 	yesterday := now.AddDate(0, 0, -1)
 
 	// A test yesterday, twice: counted once.
-	ev := AttemptEvent(11, "7b3b5b0e-0000-4000-8000-000000000001", "Day 1", 12, yesterday)
+	ev := AttemptEvent(11, "7b3b5b0e-0000-4000-8000-000000000001", "Day 1", 12, 20, 0, yesterday)
 	for range 2 {
 		if err := svc.Award(ctx, ev); err != nil {
 			t.Fatal(err)
@@ -89,8 +89,17 @@ func TestAwardAndState(t *testing.T) {
 			unlocked[a.Code] = true
 		}
 	}
-	if !unlocked["first_xp"] || unlocked["xp_500"] || len(unlocked) != 1 {
+	// First XP and the first mock test; nothing else yet.
+	if !unlocked["first_xp"] || !unlocked["pencil_age"] || unlocked["xp_500"] || len(unlocked) != 2 {
 		t.Fatalf("achievements %v", unlocked)
+	}
+	for _, a := range st.Achievements {
+		if a.Code == "night_owl" && (a.Title != "???" || a.UnlockedAt != nil) {
+			t.Fatalf("a secret shows itself: %+v", a)
+		}
+		if a.Code == "level_10" && a.Tier != TierChallenge {
+			t.Fatalf("tier %+v", a)
+		}
 	}
 
 	// Reviews today, in two batches: the day's row accumulates, capped at 40.
@@ -114,6 +123,11 @@ func TestAwardAndState(t *testing.T) {
 	}
 	if len(st.Recent) == 0 || st.Recent[0].Amount == 0 {
 		t.Fatalf("recent %+v", st.Recent)
+	}
+	for _, a := range st.Achievements {
+		if a.Code == "getting_words" && a.UnlockedAt == nil {
+			t.Fatal("60 reviews should have unlocked Getting Words")
+		}
 	}
 
 	// The backfill from an empty history wipes it all.

@@ -1392,9 +1392,19 @@ board (11.5), competitions (26) and the teachers’ rating (a later section).
   (30 XP), *10 words reviewed* (30), *one test or assessment finished* (40); weekly, *60 right answers* (90), *60
   words reviewed* (90), *5 active days* (120). Progress comes from the same events; finishing one awards its
   reward at once. A day's or week's quests are made when first touched or read.
-- **Achievements** (`achievements`, once each): First Step (1 XP), Momentum (500), Four Digits (1,000), Scholar
-  (level 5), Double Digits (level 10), Three-Day Spark, Week Warrior, Month of Momentum (best streak 3, 7, 30),
-  Century, Five Hundred, Two Thousand (right answers), Quest Habit (5 quests), Quest Regular (25).
+- **Achievements** (`student_achievements`, once each), in three tiers that the web frames differently
+  (advancement, goal, challenge), a few secret until earned. Getting started: First Step (1 XP), Pencil Age
+  (first mock test), Getting Words (first review), Open Book (first page read), Front Row (first lesson scanned
+  in), Dream Set (a dream university). XP: Momentum (500), Four Digits (1,000), Scholar (level 5), Double Digits
+  (level 10). Streak: Three-Day Spark, Week Warrior, Month of Momentum, Unbreakable (3, 7, 30, 100 days),
+  Weekend Scholar (both weekend days), Comeback (back after two weeks away; secret). Answers: Century, Five
+  Hundred, Two Thousand, Ten Thousand. Tests: Marathon (10 mocks), Perfect Set (100 % on 10+ questions), On
+  Target (a mock at or above the target), 1500 Club, Full Marks (1600; secret). Words: Wordsmith (500 reviews),
+  Lexicon (2,000). The clock: Night Owl (after midnight), Early Bird (before 7; both secret). Quests: Quest Habit
+  (5), Quest Regular (25), Full House (all three dailies in a day), Clean Sweep (all six in a week). The world:
+  Bookworm (reading on 10 days), Regular (20 lessons), Contender (a competition). For these the ledger keeps a
+  little about each event: the share right and the number of questions, a mock's total, the units behind a day's
+  aggregate.
 - **API:** `GET /v1/me/gamification`: `xp_total`, `xp_today`, `level`, `level_title`, `level_floor`,
   `next_level_xp`, `streak` (`current`, `best`, `active_today`, `at_risk`, the last 14 days), `quests` (daily and
   weekly, each with progress, target, reward and `done_at`; `resets_at`), `achievements` (every one, with

@@ -887,4 +887,8 @@ type XpEvent struct {
 	RightAnswers    int32
 	HappenedAt      pgtype.Timestamptz
 	CreatedAt       pgtype.Timestamptz
+	Percent         pgtype.Int2
+	Questions       pgtype.Int4
+	Score           pgtype.Int2
+	Units           int32
 }

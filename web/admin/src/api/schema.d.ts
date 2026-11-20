@@ -4578,8 +4578,16 @@ export interface components {
             /** @description Every achievement, unlocked or not */
             achievements: {
                 code: string;
+                /** @description "???" for a secret not yet earned */
                 title: string;
                 description: string;
+                /**
+                 * @description The frame's kind: ordinary, a milestone, a hard one
+                 * @enum {string}
+                 */
+                tier: "advancement" | "goal" | "challenge";
+                /** @description Shows no name until earned */
+                secret: boolean;
                 /** Format: date-time */
                 unlocked_at: string | null;
                 /** @description Towards the target; the target once unlocked */

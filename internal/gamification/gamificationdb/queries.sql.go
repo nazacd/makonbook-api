@@ -12,11 +12,12 @@ import (
 )
 
 const accumulateEvent = `-- name: AccumulateEvent :one
-INSERT INTO xp_events AS e (student_client_id, key, kind, title, amount, right_answers, happened_at)
-VALUES ($1, $2, $3, $4, LEAST($5::int, $6::int), $7, $8)
+INSERT INTO xp_events AS e (student_client_id, key, kind, title, amount, right_answers, happened_at, units)
+VALUES ($1, $2, $3, $4, LEAST($5::int, $6::int), $7, $8, $9)
 ON CONFLICT (student_client_id, key) DO UPDATE
     SET amount = LEAST($6::int, e.amount + $5::int),
         right_answers = e.right_answers + $7::int,
+        units = e.units + $9::int,
         happened_at = GREATEST(e.happened_at, $8::timestamptz)
 RETURNING e.amount
 `
@@ -30,6 +31,7 @@ type AccumulateEventParams struct {
 	Cap             int32
 	RightAnswers    int32
 	HappenedAt      pgtype.Timestamptz
+	Units           int32
 }
 
 // A day's aggregate: the amount grows up to the cap; returns the day's amount.
@@ -43,6 +45,7 @@ func (q *Queries) AccumulateEvent(ctx context.Context, arg AccumulateEventParams
 		arg.Cap,
 		arg.RightAnswers,
 		arg.HappenedAt,
+		arg.Units,
 	)
 	var amount int32
 	err := row.Scan(&amount)
@@ -181,6 +184,57 @@ func (q *Queries) EnsureQuest(ctx context.Context, arg EnsureQuestParams) error 
 	return err
 }
 
+const facts = `-- name: Facts :one
+SELECT count(*) FILTER (WHERE kind = 'attempt')::int AS tests,
+       count(*) FILTER (WHERE kind = 'competition')::int AS competitions,
+       count(*) FILTER (WHERE kind = 'read')::int AS reading_days,
+       count(*) FILTER (WHERE kind = 'attendance')::int AS lessons,
+       count(*) FILTER (WHERE kind = 'vocab')::int AS review_days,
+       COALESCE(sum(units) FILTER (WHERE kind = 'vocab'), 0)::int AS reviews,
+       COALESCE(max(percent) FILTER (WHERE kind IN ('assessment', 'competition') AND questions >= 10), 0)::int AS best_percent,
+       COALESCE(max(score) FILTER (WHERE kind = 'attempt'), 0)::int AS best_score,
+       count(*) FILTER (WHERE kind <> 'quest' AND extract(hour FROM happened_at AT TIME ZONE $1::text) < 4)::int AS night,
+       count(*) FILTER (WHERE kind <> 'quest' AND extract(hour FROM happened_at AT TIME ZONE $1::text) BETWEEN 4 AND 6)::int AS early
+FROM xp_events WHERE student_client_id = $2
+`
+
+type FactsParams struct {
+	Tz              string
+	StudentClientID int32
+}
+
+type FactsRow struct {
+	Tests        int32
+	Competitions int32
+	ReadingDays  int32
+	Lessons      int32
+	ReviewDays   int32
+	Reviews      int32
+	BestPercent  int32
+	BestScore    int32
+	Night        int32
+	Early        int32
+}
+
+// What the achievements look at beyond the totals (spec 27).
+func (q *Queries) Facts(ctx context.Context, arg FactsParams) (FactsRow, error) {
+	row := q.db.QueryRow(ctx, facts, arg.Tz, arg.StudentClientID)
+	var i FactsRow
+	err := row.Scan(
+		&i.Tests,
+		&i.Competitions,
+		&i.ReadingDays,
+		&i.Lessons,
+		&i.ReviewDays,
+		&i.Reviews,
+		&i.BestPercent,
+		&i.BestScore,
+		&i.Night,
+		&i.Early,
+	)
+	return i, err
+}
+
 const finishQuest = `-- name: FinishQuest :execrows
 UPDATE quest_progress SET done_at = $1
 WHERE student_client_id = $2 AND code = $3 AND period_start = $4 AND done_at IS NULL
@@ -206,10 +260,49 @@ func (q *Queries) FinishQuest(ctx context.Context, arg FinishQuestParams) (int64
 	return result.RowsAffected(), nil
 }
 
+const fullDays = `-- name: FullDays :one
+SELECT count(*) FILTER (WHERE n = 3)::int AS full_days,
+       count(*) FILTER (WHERE n = 6)::int AS full_weeks
+FROM (SELECT period_start, count(*) AS n FROM quest_progress
+      WHERE student_client_id = $1 AND done_at IS NOT NULL GROUP BY period_start) p
+`
+
+type FullDaysRow struct {
+	FullDays  int32
+	FullWeeks int32
+}
+
+// Days with all three daily quests done, and weeks with all six.
+func (q *Queries) FullDays(ctx context.Context, studentClientID int32) (FullDaysRow, error) {
+	row := q.db.QueryRow(ctx, fullDays, studentClientID)
+	var i FullDaysRow
+	err := row.Scan(&i.FullDays, &i.FullWeeks)
+	return i, err
+}
+
+const goalFacts = `-- name: GoalFacts :one
+SELECT (g.university_id IS NOT NULL)::bool AS has_dream,
+       COALESCE(g.target_math + g.target_rw, 0)::int AS target_total
+FROM student_goals g WHERE g.student_client_id = $1
+`
+
+type GoalFactsRow struct {
+	HasDream    bool
+	TargetTotal int32
+}
+
+// The student's goals, for the achievements about them (null when unset).
+func (q *Queries) GoalFacts(ctx context.Context, studentClientID int32) (GoalFactsRow, error) {
+	row := q.db.QueryRow(ctx, goalFacts, studentClientID)
+	var i GoalFactsRow
+	err := row.Scan(&i.HasDream, &i.TargetTotal)
+	return i, err
+}
+
 const insertEvent = `-- name: InsertEvent :execrows
 
-INSERT INTO xp_events (student_client_id, key, kind, title, amount, right_answers, happened_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO xp_events (student_client_id, key, kind, title, amount, right_answers, happened_at, percent, questions, score, units)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (student_client_id, key) DO NOTHING
 `
 
@@ -221,6 +314,10 @@ type InsertEventParams struct {
 	Amount          int32
 	RightAnswers    int32
 	HappenedAt      pgtype.Timestamptz
+	Percent         pgtype.Int2
+	Questions       pgtype.Int4
+	Score           pgtype.Int2
+	Units           int32
 }
 
 // Gamification (spec 27): the XP ledger, the streak's days, the quests and
@@ -237,6 +334,10 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) (int64
 		arg.Amount,
 		arg.RightAnswers,
 		arg.HappenedAt,
+		arg.Percent,
+		arg.Questions,
+		arg.Score,
+		arg.Units,
 	)
 	if err != nil {
 		return 0, err
@@ -260,7 +361,7 @@ func (q *Queries) MarkDay(ctx context.Context, arg MarkDayParams) error {
 }
 
 const pastAssessments = `-- name: PastAssessments :many
-SELECT a.id, a.student_client_id, a.finished_at, a.kind, COALESCE(a.correct, 0)::int AS correct,
+SELECT a.id, a.student_client_id, a.finished_at, a.kind, COALESCE(a.correct, 0)::int AS correct, COALESCE(a.total, 0)::int AS total,
        COALESCE(a.percent, 0)::int AS percent, (a.assignment_id IS NOT NULL)::bool AS assigned,
        COALESCE(a.assignment_id IS NOT NULL AND a.finished_at <= s.due_at, false)::bool AS on_time, s.title AS assignment_title
 FROM roadmap_assessments a LEFT JOIN assignments s ON s.id = a.assignment_id
@@ -274,6 +375,7 @@ type PastAssessmentsRow struct {
 	FinishedAt      pgtype.Timestamptz
 	Kind            string
 	Correct         int32
+	Total           int32
 	Percent         int32
 	Assigned        bool
 	OnTime          bool
@@ -295,6 +397,7 @@ func (q *Queries) PastAssessments(ctx context.Context) ([]PastAssessmentsRow, er
 			&i.FinishedAt,
 			&i.Kind,
 			&i.Correct,
+			&i.Total,
 			&i.Percent,
 			&i.Assigned,
 			&i.OnTime,
@@ -312,7 +415,10 @@ func (q *Queries) PastAssessments(ctx context.Context) ([]PastAssessmentsRow, er
 
 const pastAttempts = `-- name: PastAttempts :many
 SELECT a.id, a.student_client_id, a.finished_at, t.title,
-       (SELECT COALESCE(sum((v.value->>'raw')::int), 0) FROM jsonb_each(a.scores) v)::int AS right_answers
+       (SELECT COALESCE(sum((v.value->>'raw')::int), 0) FROM jsonb_each(a.scores) v)::int AS right_answers,
+       (SELECT COALESCE(sum((v.value->>'questions')::int), 0) FROM jsonb_each(a.scores) v)::int AS questions,
+       (CASE WHEN jsonb_typeof(a.scores->'english') = 'object' AND jsonb_typeof(a.scores->'math') = 'object'
+             THEN (a.scores->'english'->>'score')::int + (a.scores->'math'->>'score')::int ELSE 0 END)::int AS score
 FROM practice_attempts a JOIN practice_tests t ON t.id = a.test_id
 ORDER BY a.finished_at
 `
@@ -323,6 +429,8 @@ type PastAttemptsRow struct {
 	FinishedAt      pgtype.Timestamptz
 	Title           string
 	RightAnswers    int32
+	Questions       int32
+	Score           int32
 }
 
 func (q *Queries) PastAttempts(ctx context.Context) ([]PastAttemptsRow, error) {
@@ -340,6 +448,8 @@ func (q *Queries) PastAttempts(ctx context.Context) ([]PastAttemptsRow, error) {
 			&i.FinishedAt,
 			&i.Title,
 			&i.RightAnswers,
+			&i.Questions,
+			&i.Score,
 		); err != nil {
 			return nil, err
 		}
