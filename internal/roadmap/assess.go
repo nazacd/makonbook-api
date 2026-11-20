@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/nazacd/makonbook-api/internal/gamification"
 	"github.com/nazacd/makonbook-api/internal/practice"
 	"github.com/nazacd/makonbook-api/internal/roadmap/roadmapdb"
 )
@@ -492,11 +493,28 @@ func (s *Service) Submit(ctx context.Context, who Who, id string, in Answers) (A
 	if err != nil {
 		return Assessment{}, err
 	}
+	s.awardSubmit(ctx, finished)
 	p, err := s.progress(ctx, who.ID)
 	if err != nil {
 		return Assessment{}, err
 	}
 	return s.viewRow(ctx, finished, p)
+}
+
+// awardSubmit gives the XP for a finished assessment (spec 27), after its
+// transaction: a failure here loses nothing but the XP, which the backfill
+// repairs.
+func (s *Service) awardSubmit(ctx context.Context, row roadmapdb.RoadmapAssessment) {
+	if s.xp == nil || !row.FinishedAt.Valid {
+		return
+	}
+	assigned, onTime, title := false, false, ""
+	if row.AssignmentID.Valid {
+		if a, err := roadmapdb.New(s.pool).AssessmentAssignment(ctx, row.AssignmentID); err == nil {
+			assigned, onTime, title = true, !row.FinishedAt.Time.After(a.DueAt.Time), a.Title
+		}
+	}
+	s.xp(ctx, gamification.AssessmentEvent(row.StudentClientID, uuidString(row.ID), row.Kind, title, int(row.Correct.Int16), int(row.Percent.Int16), assigned, onTime, row.FinishedAt.Time))
 }
 
 // mergeAnswers checks answers against the assessment's questions and lays

@@ -185,6 +185,18 @@ func MergeSelfStudent(ctx context.Context, db peopledb.DBTX, from, toStudent int
 			func(ctx context.Context) error {
 				return q.CopyStudentLibrary(ctx, peopledb.CopyStudentLibraryParams{ToID: toStudent, FromID: from})
 			},
+			func(ctx context.Context) error {
+				return q.MoveStudentXP(ctx, peopledb.MoveStudentXPParams{ToID: toStudent, FromID: from})
+			},
+			func(ctx context.Context) error {
+				return q.MoveStudentDays(ctx, peopledb.MoveStudentDaysParams{ToID: toStudent, FromID: from})
+			},
+			func(ctx context.Context) error {
+				return q.MoveStudentQuests(ctx, peopledb.MoveStudentQuestsParams{ToID: toStudent, FromID: from})
+			},
+			func(ctx context.Context) error {
+				return q.MoveStudentAchievements(ctx, peopledb.MoveStudentAchievementsParams{ToID: toStudent, FromID: from})
+			},
 		} {
 			if err := move(ctx); err != nil {
 				return fmt.Errorf("merge %d into %d: %w", from, toStudent, err)

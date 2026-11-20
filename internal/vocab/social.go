@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/nazacd/makonbook-api/internal/gamification"
 	"github.com/nazacd/makonbook-api/internal/vocab/vocabdb"
 )
 
@@ -91,6 +92,7 @@ func (s *Service) SaveGames(ctx context.Context, student int32, results []GameRe
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := vocabdb.New(tx)
 	added := 0
+	rightByDay, lastAt := map[time.Time]int32{}, map[time.Time]time.Time{}
 	for _, r := range rows {
 		day := r.g.PlayedAt.In(loc)
 		start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
@@ -108,8 +110,21 @@ func (s *Service) SaveGames(ctx context.Context, student int32, results []GameRe
 			return 0, err
 		}
 		added += int(n)
+		if n > 0 && s.xp != nil {
+			day := s.dayOf(r.g.PlayedAt)
+			rightByDay[day] += r.g.Score
+			if r.g.PlayedAt.After(lastAt[day]) {
+				lastAt[day] = r.g.PlayedAt
+			}
+		}
 	}
-	return added, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	for day, right := range rightByDay {
+		s.xp(ctx, gamification.GamesEvent(student, day, right, lastAt[day]))
+	}
+	return added, nil
 }
 
 // GameStat is how a student has done at one game: rounds played, and the

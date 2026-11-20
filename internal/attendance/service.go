@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/nazacd/makonbook-api/internal/attendance/attendancedb"
+	"github.com/nazacd/makonbook-api/internal/gamification"
 	"github.com/nazacd/makonbook-api/internal/lessons"
 )
 
@@ -116,6 +117,13 @@ type Service struct {
 	pool    *pgxpool.Pool
 	lessons *lessons.Service
 	now     func() time.Time
+	xp      func(context.Context, gamification.Event) // nil: no XP (spec 27)
+}
+
+// WithXP awards XP for being at the lesson (spec 27).
+func (s *Service) WithXP(award func(context.Context, gamification.Event)) *Service {
+	s.xp = award
+	return s
 }
 
 func NewService(pool *pgxpool.Pool, lessonsSvc *lessons.Service) *Service {
@@ -254,7 +262,7 @@ func validState(state string) bool {
 // queues the change for HolliHop.
 func (s *Service) setMark(ctx context.Context, id pgtype.UUID, clientID int32, state string, actor Actor) error {
 	now := s.now()
-	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		q := attendancedb.New(tx)
 		finished, err := q.IsFinished(ctx, id)
 		if err != nil {
@@ -297,6 +305,10 @@ func (s *Service) setMark(ctx context.Context, id pgtype.UUID, clientID int32, s
 		}
 		return q.EnqueueMark(ctx, attendancedb.EnqueueMarkParams{StudentClientID: clientID, Pass: state == StateAbsent, At: ts(now), SessionID: id})
 	})
+	if err == nil && s.xp != nil && (state == StatePresent || state == StateLate) {
+		s.xp(ctx, gamification.AttendanceEvent(clientID, uuidString(id), now))
+	}
+	return err
 }
 
 // Scan records a student's scan of the teacher's QR (spec 8.3).
@@ -366,6 +378,9 @@ func (s *Service) Scan(ctx context.Context, clientID int32, sessionID string, wi
 	})
 	if err != nil {
 		return ScanResult{}, err
+	}
+	if !res.Already && s.xp != nil {
+		s.xp(ctx, gamification.AttendanceEvent(clientID, sessionID, now))
 	}
 	return res, nil
 }

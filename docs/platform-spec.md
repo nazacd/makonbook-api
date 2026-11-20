@@ -1379,9 +1379,11 @@ board (11.5), competitions (26) and the teachers’ rating (a later section).
   | Word reviews (11.4) | 1 per review, at most 40 a day | `vocab:<day>` (the day's row is updated) |
   | Game rounds (11.4) | 2 per right answer, at most 100 a day | `games:<day>` |
   | A page read in the Library (25) | 5, once a day | `read:<day>` |
-  | Marked present at a lesson (8) | 10 | `attendance:<record id>` |
+  | Marked present or late at a lesson in the app (8) | 10 | `attendance:<session id>` |
   | A quest finished | its reward | `quest:<code>:<period start>` |
 
+- **When it is written:** right after the feature's own transaction commits (a retry or a crash in between
+  loses only the XP, and the backfill writes it from history); never inside it, so XP can't fail a submit.
 - **Levels:** the XP a level starts at is `25 × (L − 1) × (L + 2)` (level 2 at 100, 5 at 700, 10 at 2,700, 25 at
   16,200); titles Starter (1), Learner (3), Scholar (5), Strategist (8), Specialist (12), Expert (18), Master (25).
 - **The streak:** a day in Tashkent with any XP is active (`student_days`). The current streak counts back from

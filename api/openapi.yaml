@@ -2727,6 +2727,22 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
 
+  /v1/me/gamification:
+    get:
+      summary: The student's XP, level, streak, quests and achievements
+      description: |
+        Spec 27. Computed by the server from the XP ledger, which every
+        feature writes to once per thing done. School time for days and
+        weeks. Students with a phone only.
+      operationId: gamification
+      tags: [gamification]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The student's progress
+          content: { application/json: { schema: { $ref: "#/components/schemas/Gamification" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
   /v1/me/practice/saved:
     get:
       summary: The questions the student saved, newest first
@@ -5890,6 +5906,74 @@ components:
         seconds: { type: integer }
         me: { type: boolean }
 
+    Gamification:
+      type: object
+      required: [xp_total, xp_today, level, level_title, level_floor, next_level_xp, leveled_up_today, streak, quests, achievements, recent]
+      properties:
+        xp_total: { type: integer }
+        xp_today: { type: integer, description: "XP for things done today (school time)" }
+        level: { type: integer, minimum: 1 }
+        level_title: { type: string, description: "Starter, Learner, Scholar, Strategist, Specialist, Expert, Master" }
+        level_floor: { type: integer, description: "The XP this level started at: 25 × (L − 1) × (L + 2)" }
+        next_level_xp: { type: integer, description: "The XP the next level starts at" }
+        leveled_up_today: { type: boolean, description: "Today's XP crossed a level" }
+        streak:
+          type: object
+          required: [current, best, active_today, at_risk, days]
+          properties:
+            current: { type: integer, description: "Days in a row with XP, to today or yesterday" }
+            best: { type: integer }
+            active_today: { type: boolean }
+            at_risk: { type: boolean, description: "A streak that today hasn't continued yet" }
+            days:
+              type: array
+              description: The last 14 days, oldest first
+              items:
+                type: object
+                required: [day, active]
+                properties:
+                  day: { type: string, format: date }
+                  active: { type: boolean }
+        quests:
+          type: object
+          required: [daily, weekly, resets_at]
+          properties:
+            daily: { type: array, items: { $ref: "#/components/schemas/Quest" } }
+            weekly: { type: array, items: { $ref: "#/components/schemas/Quest" } }
+            resets_at: { type: string, format: date-time, description: "When today's quests end (midnight, school time)" }
+        achievements:
+          type: array
+          description: Every achievement, unlocked or not
+          items:
+            type: object
+            required: [code, title, description, unlocked_at, progress, target]
+            properties:
+              code: { type: string }
+              title: { type: string }
+              description: { type: string }
+              unlocked_at: { type: [string, "null"], format: date-time }
+              progress: { type: integer, description: "Towards the target; the target once unlocked" }
+              target: { type: integer }
+        recent:
+          type: array
+          description: The last 12 things that earned XP, newest first
+          items:
+            type: object
+            required: [title, amount, happened_at]
+            properties:
+              title: { type: string }
+              amount: { type: integer }
+              happened_at: { type: string, format: date-time }
+    Quest:
+      type: object
+      required: [code, title, progress, target, reward_xp, done_at]
+      properties:
+        code: { type: string }
+        title: { type: string }
+        progress: { type: integer }
+        target: { type: integer }
+        reward_xp: { type: integer }
+        done_at: { type: [string, "null"], format: date-time }
     PracticeStats:
       type: object
       required: [subjects, attempted, answers, correct, saved, streak, weeks]

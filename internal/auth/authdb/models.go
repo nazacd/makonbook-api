@@ -511,6 +511,16 @@ type PracticeTestVersion struct {
 	PublishedAt pgtype.Timestamptz
 }
 
+type QuestProgress struct {
+	StudentClientID int32
+	Code            string
+	PeriodStart     pgtype.Date
+	Progress        int32
+	Target          int32
+	RewardXp        int32
+	DoneAt          pgtype.Timestamptz
+}
+
 type Question struct {
 	ID           pgtype.UUID
 	Subject      string
@@ -641,6 +651,17 @@ type Student struct {
 	Source          string
 	FirstNameCustom pgtype.Text
 	LastNameCustom  pgtype.Text
+}
+
+type StudentAchievement struct {
+	StudentClientID int32
+	Code            string
+	UnlockedAt      pgtype.Timestamptz
+}
+
+type StudentDay struct {
+	StudentClientID int32
+	Day             pgtype.Date
 }
 
 type StudentGoal struct {
@@ -854,4 +875,16 @@ type VocabWord struct {
 	RemovedAt    pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+}
+
+type XpEvent struct {
+	ID              int64
+	StudentClientID int32
+	Key             string
+	Kind            string
+	Title           string
+	Amount          int32
+	RightAnswers    int32
+	HappenedAt      pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
 }

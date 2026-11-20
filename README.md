@@ -40,6 +40,7 @@ The project builds one binary, `makonbook`:
 | `makonbook sync full\|incremental` | Run one sync now and print a summary. Add `--allow-mass-change` to apply a run the guard blocked, after checking the change is real. |
 | `makonbook reset-password student\|teacher <id>` | Back to the default password, unlock, log out everywhere — for someone who forgot their password. `<id>` is the HolliHop client id (students) or teacher id. |
 | `makonbook curriculum import <file or folder>…` | Load SAT MAKON's curriculum for the roadmaps (never committed), then print the coverage report. `curriculum coverage` prints the report alone; `curriculum logos` lists the universities' logo file names (logos load from `logos/` beside the files, never committed). |
+| `makonbook gamification backfill` | Write the XP ledger (spec 27) from everything already recorded: attempts, assessments, reviews, games, reading, attendance. Wipes it first, so running it again gives the same result; run it when the API is quiet. |
 | `makonbook migrate up` | Apply pending migrations. Run this before `serve` on every deploy. |
 | `makonbook migrate down` | Roll back the last migration. |
 | `makonbook migrate status` | List migrations and whether each is applied. |

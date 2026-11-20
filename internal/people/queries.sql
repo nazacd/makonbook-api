@@ -281,6 +281,29 @@ UPDATE student_goals AS s SET student_client_id = @to_id::int
 WHERE s.student_client_id = @from_id::int
   AND NOT EXISTS (SELECT 1 FROM student_goals g WHERE g.student_client_id = @to_id::int);
 
+-- Gamification (spec 27): the ledger moves where the other has no row with the
+-- key (a thing done counts once), days and achievements merge, quests move
+-- where the period is free; the rest goes with the student.
+-- name: MoveStudentXP :exec
+UPDATE xp_events AS e SET student_client_id = @to_id::int
+WHERE e.student_client_id = @from_id::int
+  AND NOT EXISTS (SELECT 1 FROM xp_events t WHERE t.student_client_id = @to_id::int AND t.key = e.key);
+
+-- name: MoveStudentDays :exec
+INSERT INTO student_days (student_client_id, day)
+SELECT @to_id::int, day FROM student_days WHERE student_client_id = @from_id::int
+ON CONFLICT DO NOTHING;
+
+-- name: MoveStudentQuests :exec
+UPDATE quest_progress AS p SET student_client_id = @to_id::int
+WHERE p.student_client_id = @from_id::int
+  AND NOT EXISTS (SELECT 1 FROM quest_progress t WHERE t.student_client_id = @to_id::int AND t.code = p.code AND t.period_start = p.period_start);
+
+-- name: MoveStudentAchievements :exec
+INSERT INTO student_achievements (student_client_id, code, unlocked_at)
+SELECT @to_id::int, code, unlocked_at FROM student_achievements WHERE student_client_id = @from_id::int
+ON CONFLICT DO NOTHING;
+
 -- Rows a teacher can't take: removed with the student.
 -- name: DeleteStudentAttempts :exec
 DELETE FROM practice_attempts WHERE student_client_id = @client_id;
