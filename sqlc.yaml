@@ -130,3 +130,11 @@ sql:
         package: librarydb
         out: internal/library/librarydb
         sql_package: pgx/v5
+  - engine: postgresql
+    schema: db/migrations
+    queries: internal/gamification/queries.sql
+    gen:
+      go:
+        package: gamificationdb
+        out: internal/gamification/gamificationdb
+        sql_package: pgx/v5

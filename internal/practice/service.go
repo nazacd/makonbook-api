@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/nazacd/makonbook-api/internal/gamification"
 	"github.com/nazacd/makonbook-api/internal/practice/practicedb"
 	"github.com/nazacd/makonbook-api/internal/universities"
 )
@@ -35,11 +36,12 @@ func (e *InvalidError) Error() string {
 // Service is what the admin panel reads and changes in the question bank.
 type Service struct {
 	pool     *pgxpool.Pool
-	uploads  Store    // nil: uploads not configured
-	signer   Signer   // links to the uploads bucket; nil: not configured
-	bank     Bank     // nil: the bank's images not configured
-	pictures Pictures // nil: question pictures not configured
-	page     string   // the question picture page (web/admin's CardPage)
+	xp       func(context.Context, gamification.Event) // nil: no XP (spec 27)
+	uploads  Store                                     // nil: uploads not configured
+	signer   Signer                                    // links to the uploads bucket; nil: not configured
+	bank     Bank                                      // nil: the bank's images not configured
+	pictures Pictures                                  // nil: question pictures not configured
+	page     string                                    // the question picture page (web/admin's CardPage)
 	stats    statsCache
 	// universities describes a goal's dream university; nil: only its id.
 	universities func(ctx context.Context, id string) (universities.Summary, error)
@@ -48,6 +50,12 @@ type Service struct {
 // WithUniversities lets the goals describe the dream university.
 func (s *Service) WithUniversities(summary func(ctx context.Context, id string) (universities.Summary, error)) *Service {
 	s.universities = summary
+	return s
+}
+
+// WithXP awards XP for attempts (spec 27).
+func (s *Service) WithXP(award func(context.Context, gamification.Event)) *Service {
+	s.xp = award
 	return s
 }
 

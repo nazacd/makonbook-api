@@ -623,6 +623,22 @@ func (q *Queries) MarkStudentsMissing(ctx context.Context, presentIds []int32) (
 	return result.RowsAffected(), nil
 }
 
+const moveStudentAchievements = `-- name: MoveStudentAchievements :exec
+INSERT INTO student_achievements (student_client_id, code, unlocked_at)
+SELECT $1::int, code, unlocked_at FROM student_achievements WHERE student_client_id = $2::int
+ON CONFLICT DO NOTHING
+`
+
+type MoveStudentAchievementsParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentAchievements(ctx context.Context, arg MoveStudentAchievementsParams) error {
+	_, err := q.db.Exec(ctx, moveStudentAchievements, arg.ToID, arg.FromID)
+	return err
+}
+
 const moveStudentAnswers = `-- name: MoveStudentAnswers :exec
 UPDATE question_answers SET student_client_id = $1 WHERE student_client_id = $2
 `
@@ -682,6 +698,22 @@ type MoveStudentChoicesParams struct {
 
 func (q *Queries) MoveStudentChoices(ctx context.Context, arg MoveStudentChoicesParams) error {
 	_, err := q.db.Exec(ctx, moveStudentChoices, arg.ToID, arg.FromID)
+	return err
+}
+
+const moveStudentDays = `-- name: MoveStudentDays :exec
+INSERT INTO student_days (student_client_id, day)
+SELECT $1::int, day FROM student_days WHERE student_client_id = $2::int
+ON CONFLICT DO NOTHING
+`
+
+type MoveStudentDaysParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentDays(ctx context.Context, arg MoveStudentDaysParams) error {
+	_, err := q.db.Exec(ctx, moveStudentDays, arg.ToID, arg.FromID)
 	return err
 }
 
@@ -791,6 +823,22 @@ func (q *Queries) MoveStudentParked(ctx context.Context, arg MoveStudentParkedPa
 	return err
 }
 
+const moveStudentQuests = `-- name: MoveStudentQuests :exec
+UPDATE quest_progress AS p SET student_client_id = $1::int
+WHERE p.student_client_id = $2::int
+  AND NOT EXISTS (SELECT 1 FROM quest_progress t WHERE t.student_client_id = $1::int AND t.code = p.code AND t.period_start = p.period_start)
+`
+
+type MoveStudentQuestsParams struct {
+	ToID   int32
+	FromID int32
+}
+
+func (q *Queries) MoveStudentQuests(ctx context.Context, arg MoveStudentQuestsParams) error {
+	_, err := q.db.Exec(ctx, moveStudentQuests, arg.ToID, arg.FromID)
+	return err
+}
+
 const moveStudentReports = `-- name: MoveStudentReports :exec
 UPDATE practice_reports SET student_client_id = $1 WHERE student_client_id = $2
 `
@@ -848,6 +896,25 @@ type MoveStudentSavedUniversitiesParams struct {
 
 func (q *Queries) MoveStudentSavedUniversities(ctx context.Context, arg MoveStudentSavedUniversitiesParams) error {
 	_, err := q.db.Exec(ctx, moveStudentSavedUniversities, arg.ToID, arg.FromID)
+	return err
+}
+
+const moveStudentXP = `-- name: MoveStudentXP :exec
+UPDATE xp_events AS e SET student_client_id = $1::int
+WHERE e.student_client_id = $2::int
+  AND NOT EXISTS (SELECT 1 FROM xp_events t WHERE t.student_client_id = $1::int AND t.key = e.key)
+`
+
+type MoveStudentXPParams struct {
+	ToID   int32
+	FromID int32
+}
+
+// Gamification (spec 27): the ledger moves where the other has no row with the
+// key (a thing done counts once), days and achievements merge, quests move
+// where the period is free; the rest goes with the student.
+func (q *Queries) MoveStudentXP(ctx context.Context, arg MoveStudentXPParams) error {
+	_, err := q.db.Exec(ctx, moveStudentXP, arg.ToID, arg.FromID)
 	return err
 }
 

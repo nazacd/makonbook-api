@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/nazacd/makonbook-api/internal/gamification"
 	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/practice"
 	"github.com/nazacd/makonbook-api/internal/roadmap/roadmapdb"
@@ -55,6 +56,7 @@ type Service struct {
 	pool   *pgxpool.Pool
 	bank   Bank
 	groups Groups
+	xp     func(context.Context, gamification.Event) // nil: no XP (spec 27)
 	mu     sync.Mutex
 	cache  map[string]cachedCourse
 	site   *siteCache // the question bank's site-wide averages
@@ -66,6 +68,12 @@ type cachedCourse struct {
 }
 
 // NewService builds the service.
+// WithXP awards XP for submitted assessments (spec 27).
+func (s *Service) WithXP(award func(context.Context, gamification.Event)) *Service {
+	s.xp = award
+	return s
+}
+
 func NewService(pool *pgxpool.Pool, bank Bank, groups Groups) *Service {
 	return &Service{pool: pool, bank: bank, groups: groups, cache: map[string]cachedCourse{}}
 }

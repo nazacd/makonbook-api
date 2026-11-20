@@ -15,6 +15,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/attendance"
 	"github.com/nazacd/makonbook-api/internal/auth"
 	"github.com/nazacd/makonbook-api/internal/competitions"
+	"github.com/nazacd/makonbook-api/internal/gamification"
 	"github.com/nazacd/makonbook-api/internal/lessons"
 	"github.com/nazacd/makonbook-api/internal/library"
 	"github.com/nazacd/makonbook-api/internal/parents"
@@ -102,7 +103,9 @@ func Handler(d Deps) http.Handler {
 	authHandler.Register(mux)
 	lessonsSvc := lessons.NewService(d.Pool, d.Location)
 	lessons.NewHandler(lessonsSvc, d.Location, authHandler.Require).Register(mux)
-	attendanceSvc := attendance.NewService(d.Pool, lessonsSvc)
+	xpSvc := gamification.NewService(d.Pool, d.Location, d.Log)
+	gamification.NewHandler(xpSvc, authHandler.RequireContent).Register(mux)
+	attendanceSvc := attendance.NewService(d.Pool, lessonsSvc).WithXP(xpSvc.Hook())
 	attendance.NewHandler(attendanceSvc, d.Location, authHandler.Require).Register(mux)
 	notifier := d.Notifier
 	if notifier == nil {
@@ -122,14 +125,14 @@ func Handler(d Deps) http.Handler {
 	if d.Uploads != nil {
 		books = d.Uploads
 	}
-	library.NewHandler(library.NewService(d.Pool, books), authHandler.RequireContent).Register(mux)
+	library.NewHandler(library.NewService(d.Pool, books).WithXP(xpSvc.Hook(), d.Location), authHandler.RequireContent).Register(mux)
 	universitiesSvc := universities.NewService(d.Pool, logos)
 	universities.NewHandler(universitiesSvc, authHandler.Require).Register(mux)
-	practiceSvc := practiceService(d).WithUniversities(universitiesSvc.SummaryOf)
+	practiceSvc := practiceService(d).WithUniversities(universitiesSvc.SummaryOf).WithXP(xpSvc.Hook())
 	// The content is locked for registered students until they add a phone.
 	practice.NewHandler(practiceSvc, d.Location, authHandler.RequireContent).Register(mux)
-	vocab.NewHandler(vocab.NewService(d.Pool, signer(d.Uploads)), d.Location, authHandler.RequireContent).Register(mux)
-	roadmapSvc := roadmap.NewService(d.Pool, practiceSvc, directory)
+	vocab.NewHandler(vocab.NewService(d.Pool, signer(d.Uploads)).WithXP(xpSvc.Hook(), d.Location), d.Location, authHandler.RequireContent).Register(mux)
+	roadmapSvc := roadmap.NewService(d.Pool, practiceSvc, directory).WithXP(xpSvc.Hook())
 	authSvc.WithOnboarded(roadmapSvc.Onboarded)
 	roadmap.NewHandler(roadmapSvc, d.Location, authSvc.Profile, authHandler.Require, authHandler.RequireContent).Register(mux)
 	assignments.NewHandler(assignments.NewService(d.Pool, roadmapSvc, practiceSvc, d.Location), d.Location,

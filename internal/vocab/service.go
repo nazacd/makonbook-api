@@ -12,7 +12,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/nazacd/makonbook-api/internal/gamification"
 
 	"github.com/nazacd/makonbook-api/internal/vocab/vocabdb"
 )
@@ -43,7 +45,20 @@ type Signer interface {
 // Service is what the apps read and send.
 type Service struct {
 	pool   *pgxpool.Pool
-	signer Signer // nil: images not configured
+	signer Signer                                    // nil: images not configured
+	xp     func(context.Context, gamification.Event) // nil: no XP (spec 27)
+	loc    *time.Location
+}
+
+// WithXP awards XP for reviews and game rounds (spec 27); loc is school time, for the day they count for.
+func (s *Service) WithXP(award func(context.Context, gamification.Event), loc *time.Location) *Service {
+	s.xp, s.loc = award, loc
+	return s
+}
+
+func (s *Service) dayOf(t time.Time) time.Time {
+	y, m, d := t.In(s.loc).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
 func NewService(pool *pgxpool.Pool, signer Signer) *Service {
@@ -216,6 +231,7 @@ func (s *Service) SaveReviews(ctx context.Context, student int32, reviews []Revi
 	defer func() { _ = tx.Rollback(ctx) }()
 	qt := q.WithTx(tx)
 	added := 0
+	perDay, lastAt := map[time.Time]int{}, map[time.Time]time.Time{}
 	for i, r := range rows {
 		if !have[r.word.Bytes] {
 			return 0, &ReviewsError{fmt.Sprintf("review %d: no such word", i+1)}
@@ -229,8 +245,21 @@ func (s *Service) SaveReviews(ctx context.Context, student int32, reviews []Revi
 			return 0, err
 		}
 		added += int(n)
+		if n > 0 && s.xp != nil {
+			day := s.dayOf(r.r.ReviewedAt)
+			perDay[day] = perDay[day] + 1
+			if r.r.ReviewedAt.After(lastAt[day]) {
+				lastAt[day] = r.r.ReviewedAt
+			}
+		}
 	}
-	return added, tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	for day, n := range perDay {
+		s.xp(ctx, gamification.ReviewsEvent(student, day, int32(n), lastAt[day])) //nolint:gosec // a batch
+	}
+	return added, nil
 }
 
 // Reviews returns a student's reviews the server received after seq, oldest

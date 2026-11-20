@@ -1803,6 +1803,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/gamification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The student's XP, level, streak, quests and achievements
+         * @description Spec 27. Computed by the server from the XP ledger, which every
+         *     feature writes to once per thing done. School time for days and
+         *     weeks. Students with a phone only.
+         */
+        get: operations["gamification"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/practice/saved": {
         parameters: {
             query?: never;
@@ -4516,6 +4538,70 @@ export interface components {
             total: number;
             seconds: number;
             me: boolean;
+        };
+        Gamification: {
+            xp_total: number;
+            /** @description XP for things done today (school time) */
+            xp_today: number;
+            level: number;
+            /** @description Starter, Learner, Scholar, Strategist, Specialist, Expert, Master */
+            level_title: string;
+            /** @description The XP this level started at: 25 × (L − 1) × (L + 2) */
+            level_floor: number;
+            /** @description The XP the next level starts at */
+            next_level_xp: number;
+            /** @description Today's XP crossed a level */
+            leveled_up_today: boolean;
+            streak: {
+                /** @description Days in a row with XP, to today or yesterday */
+                current: number;
+                best: number;
+                active_today: boolean;
+                /** @description A streak that today hasn't continued yet */
+                at_risk: boolean;
+                /** @description The last 14 days, oldest first */
+                days: {
+                    /** Format: date */
+                    day: string;
+                    active: boolean;
+                }[];
+            };
+            quests: {
+                daily: components["schemas"]["Quest"][];
+                weekly: components["schemas"]["Quest"][];
+                /**
+                 * Format: date-time
+                 * @description When today's quests end (midnight, school time)
+                 */
+                resets_at: string;
+            };
+            /** @description Every achievement, unlocked or not */
+            achievements: {
+                code: string;
+                title: string;
+                description: string;
+                /** Format: date-time */
+                unlocked_at: string | null;
+                /** @description Towards the target; the target once unlocked */
+                progress: number;
+                target: number;
+            }[];
+            /** @description The last 12 things that earned XP, newest first */
+            recent: {
+                title: string;
+                amount: number;
+                /** Format: date-time */
+                happened_at: string;
+            }[];
+        };
+        Quest: {
+            code: string;
+            title: string;
+            progress: number;
+            target: number;
+            reward_xp: number;
+            /** Format: date-time */
+            done_at: string | null;
         };
         PracticeStats: {
             subjects: {
@@ -8865,6 +8951,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PracticeStats"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    gamification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The student's progress */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Gamification"];
                 };
             };
             401: components["responses"]["Error"];

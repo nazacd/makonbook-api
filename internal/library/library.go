@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/nazacd/makonbook-api/internal/gamification"
 	"github.com/nazacd/makonbook-api/internal/library/librarydb"
 	"github.com/nazacd/makonbook-api/internal/platform/r2"
 )
@@ -79,6 +80,14 @@ type File struct {
 type Service struct {
 	pool  *pgxpool.Pool
 	store Store
+	xp    func(context.Context, gamification.Event) // nil: no XP (spec 27)
+	loc   *time.Location
+}
+
+// WithXP awards XP for a day's reading (spec 27); loc is school time.
+func (s *Service) WithXP(award func(context.Context, gamification.Event), loc *time.Location) *Service {
+	s.xp, s.loc = award, loc
+	return s
 }
 
 // NewService: store may be nil (the list works; files answer ErrNotFound).
@@ -172,6 +181,10 @@ func (s *Service) SetProgress(ctx context.Context, who Who, id string, page int)
 	r, err := q.SetProgress(ctx, librarydb.SetProgressParams{PersonKind: who.Kind, PersonID: who.ID, BookID: id, Page: int32(page)}) //nolint:gosec // 1..pages, checked above
 	if err != nil {
 		return Progress{}, err
+	}
+	if s.xp != nil && who.Kind == "student" {
+		y, m, d := r.UpdatedAt.Time.In(s.loc).Date()
+		s.xp(ctx, gamification.ReadingEvent(who.ID, time.Date(y, m, d, 0, 0, 0, 0, time.UTC), r.UpdatedAt.Time))
 	}
 	return Progress{Page: int(r.Page), UpdatedAt: r.UpdatedAt.Time.UTC()}, nil
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/nazacd/makonbook-api/internal/gamification"
 	"github.com/nazacd/makonbook-api/internal/practice/practicedb"
 )
 
@@ -243,7 +244,7 @@ func (s *Service) SaveAttempt(ctx context.Context, student int32, in AttemptInpu
 	}
 	answers, _ := json.Marshal(in.Answers)
 	scoresJSON, _ := json.Marshal(scores)
-	_, err = q.InsertAttempt(ctx, practicedb.InsertAttemptParams{
+	stored, err := q.InsertAttempt(ctx, practicedb.InsertAttemptParams{
 		ID: id, StudentClientID: student, TestID: row.ID, TestVersion: row.Version, Sections: in.Sections,
 		StartedAt:  pgtype.Timestamptz{Time: in.StartedAt, Valid: true},
 		FinishedAt: pgtype.Timestamptz{Time: in.FinishedAt, Valid: true},
@@ -258,6 +259,13 @@ func (s *Service) SaveAttempt(ctx context.Context, student int32, in AttemptInpu
 	}
 	if a.student != student {
 		return Attempt{}, ErrAttemptTaken
+	}
+	if stored > 0 && s.xp != nil {
+		right := 0
+		for _, sc := range scores {
+			right += sc.Raw
+		}
+		s.xp(ctx, gamification.AttemptEvent(student, in.ID, a.Attempt.Title, right, in.FinishedAt))
 	}
 	return a.Attempt, nil
 }
