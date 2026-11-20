@@ -16,7 +16,8 @@ import (
 // the live hooks use, oldest first, so quests and achievements fall where
 // they would have. It starts by wiping the four tables, so running it again
 // gives the same result; run it when the API is quiet.
-func (s *Service) Backfill(ctx context.Context, progress func(done, total int)) (int, error) {
+// `extra` add events another feature works out (graduations).
+func (s *Service) Backfill(ctx context.Context, progress func(done, total int), extra ...func(context.Context) ([]Event, error)) (int, error) {
 	q := gamificationdb.New(s.pool)
 	var events []Event
 	attempts, err := q.PastAttempts(ctx)
@@ -24,14 +25,14 @@ func (s *Service) Backfill(ctx context.Context, progress func(done, total int)) 
 		return 0, err
 	}
 	for _, a := range attempts {
-		events = append(events, AttemptEvent(a.StudentClientID, uuidString(a.ID), a.Title, int(a.RightAnswers), int(a.Questions), int(a.Score), a.FinishedAt.Time))
+		events = append(events, AttemptEvent(a.StudentClientID, uuidString(a.ID), a.Title, int(a.RightAnswers), int(a.Questions), int(a.Score), 0, a.FinishedAt.Time))
 	}
 	assessments, err := q.PastAssessments(ctx)
 	if err != nil {
 		return 0, err
 	}
 	for _, a := range assessments {
-		events = append(events, AssessmentEvent(a.StudentClientID, uuidString(a.ID), a.Kind, a.AssignmentTitle.String, int(a.Correct), int(a.Total), int(a.Percent), a.Assigned, a.OnTime, a.FinishedAt.Time))
+		events = append(events, AssessmentEvent(a.StudentClientID, uuidString(a.ID), a.Kind, a.AssignmentTitle.String, int(a.Correct), int(a.Total), int(a.Percent), 0, a.Assigned, a.OnTime, a.FinishedAt.Time))
 	}
 	tz := s.loc.String()
 	reviews, err := q.PastReviewDays(ctx, tz)
@@ -62,6 +63,13 @@ func (s *Service) Backfill(ctx context.Context, progress func(done, total int)) 
 	for _, m := range marks {
 		events = append(events, AttendanceEvent(m.StudentClientID, uuidString(m.SessionID), m.At.Time))
 	}
+	for _, more := range extra {
+		list, err := more(ctx)
+		if err != nil {
+			return 0, err
+		}
+		events = append(events, list...)
+	}
 	sort.SliceStable(events, func(i, j int) bool { return events[i].HappenedAt.Before(events[j].HappenedAt) })
 	if err := q.Wipe(ctx); err != nil {
 		return 0, err
@@ -89,7 +97,8 @@ func uuidString(u pgtype.UUID) string {
 // AssessmentEvent: kind is the assessment's (level_check, homework, practice,
 // competition); assigned says it was a teacher's assignment, onTime that it
 // was finished before the deadline.
-func AssessmentEvent(student int32, id, kind, assignmentTitle string, correct, total, percent int, assigned, onTime bool, finishedAt time.Time) Event {
+// run is the longest run of right answers in it (0 when unknown, as in the backfill).
+func AssessmentEvent(student int32, id, kind, assignmentTitle string, correct, total, percent, run int, assigned, onTime bool, finishedAt time.Time) Event {
 	title := map[string]string{"level_check": "Level check", "homework": "Homework set", "practice": "Practice set", "competition": "Competition"}[kind]
 	if title == "" {
 		title = "Assessment"
@@ -107,7 +116,7 @@ func AssessmentEvent(student int32, id, kind, assignmentTitle string, correct, t
 	if assigned && onTime {
 		amount += OnTimeXP
 	}
-	ev := Event{Student: student, Key: "assessment:" + id, Kind: "assessment", Title: title, Amount: int32(amount), HappenedAt: finishedAt, Right: int32(correct), Finished: true, Percent: &percent, Questions: total} //nolint:gosec // small counts
+	ev := Event{Student: student, Key: "assessment:" + id, Kind: "assessment", Title: title, Amount: int32(amount), HappenedAt: finishedAt, Right: int32(correct), Finished: true, Percent: &percent, Questions: total, Run: run} //nolint:gosec // small counts
 	if kind == "competition" {
 		ev.Kind = "competition"
 	}
@@ -135,13 +144,24 @@ func AttendanceEvent(student int32, sessionID string, at time.Time) Event {
 }
 
 // AttemptEvent: a mock test attempt; score is the total when both sections were taken, else 0.
-func AttemptEvent(student int32, id, title string, right, questions, score int, finishedAt time.Time) Event {
-	ev := Event{Student: student, Key: "attempt:" + id, Title: title, Amount: AttemptXP + int32(right), HappenedAt: finishedAt, Right: int32(right), Finished: true, Questions: questions, Score: score} //nolint:gosec // small counts
+func AttemptEvent(student int32, id, title string, right, questions, score, run int, finishedAt time.Time) Event {
+	ev := Event{Student: student, Key: "attempt:" + id, Title: title, Amount: AttemptXP + int32(right), HappenedAt: finishedAt, Right: int32(right), Finished: true, Questions: questions, Score: score, Run: run} //nolint:gosec // small counts
 	if questions > 0 {
 		p := right * 100 / questions
 		ev.Percent = &p
 	}
 	return ev
+}
+
+// GraduationEvent: a roadmap course finished, once per course.
+func GraduationEvent(student int32, roadmapID, title string, at time.Time) Event {
+	return Event{Student: student, Key: "graduation:" + roadmapID, Kind: "graduation", Title: "Graduated: " + title, Amount: GraduationXP, HappenedAt: at}
+}
+
+// PodiumEvent: a place (1–3) in a competition's final board.
+func PodiumEvent(student int32, competitionID, title string, place int, at time.Time) Event {
+	place = min(max(place, 1), len(PodiumXP))
+	return Event{Student: student, Key: "podium:" + competitionID, Kind: "podium", Title: fmt.Sprintf("%s: place %d", title, place), Amount: PodiumXP[place-1], HappenedAt: at, Units: place}
 }
 
 // DayOf is the school date of an instant, for the day-keyed events.

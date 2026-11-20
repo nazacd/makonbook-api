@@ -37,6 +37,7 @@ import (
 	"github.com/nazacd/makonbook-api/internal/app"
 	"github.com/nazacd/makonbook-api/internal/attendance"
 	"github.com/nazacd/makonbook-api/internal/auth"
+	"github.com/nazacd/makonbook-api/internal/gamification"
 	"github.com/nazacd/makonbook-api/internal/hollihop"
 	"github.com/nazacd/makonbook-api/internal/lessons"
 	"github.com/nazacd/makonbook-api/internal/parents"
@@ -51,6 +52,8 @@ import (
 	"github.com/nazacd/makonbook-api/internal/platform/r2"
 	"github.com/nazacd/makonbook-api/internal/platform/render"
 	"github.com/nazacd/makonbook-api/internal/platform/sms"
+	"github.com/nazacd/makonbook-api/internal/practice"
+	"github.com/nazacd/makonbook-api/internal/roadmap"
 	hhsync "github.com/nazacd/makonbook-api/internal/sync"
 )
 
@@ -321,6 +324,23 @@ func worker(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 			case <-ctx.Done():
 				return
 			case <-time.After(time.Hour):
+			}
+		}
+	}()
+	// Ended competitions get their podium XP (spec 27), once.
+	go func() {
+		xp := gamification.NewService(pool, cfg.Location, log).Hook()
+		svc := roadmap.NewService(pool, practice.NewService(pool, nil), nil).WithXP(xp)
+		for {
+			if n, err := svc.SettleCompetitions(ctx, time.Now()); err != nil && ctx.Err() == nil {
+				log.Error("competitions: settle", "err", err)
+			} else if n > 0 {
+				log.Info("competitions: settled", "competitions", n)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Minute):
 			}
 		}
 	}()

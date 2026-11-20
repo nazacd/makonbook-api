@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/nazacd/makonbook-api/internal/gamification"
+	"github.com/nazacd/makonbook-api/internal/people"
 	"github.com/nazacd/makonbook-api/internal/practice"
 	"github.com/nazacd/makonbook-api/internal/roadmap/roadmapdb"
 )
@@ -428,6 +429,7 @@ func (s *Service) Submit(ctx context.Context, who Who, id string, in Answers) (A
 		return Assessment{}, err
 	}
 	var finished roadmapdb.RoadmapAssessment
+	run := 0
 	err := s.inTx(ctx, func(q *roadmapdb.Queries) error {
 		row, err := q.LockAssessment(ctx, mustUUID(id))
 		if err != nil {
@@ -460,16 +462,21 @@ func (s *Service) Submit(ctx context.Context, who Who, id string, in Answers) (A
 			return err
 		}
 		correct, total := 0, 0
+		var rights []bool
 		for _, qid := range idStrings(row.QuestionIds) {
 			pq, ok := questions[qid]
 			if !ok {
 				continue // gone from the bank: not counted
 			}
 			total++
-			if a := merged[qid]; a != nil && pq.Correct(*a) {
+			a := merged[qid]
+			ok = a != nil && pq.Correct(*a)
+			rights = append(rights, ok)
+			if ok {
 				correct++
 			}
 		}
+		run = gamification.LongestRun(rights)
 		percent := 0
 		if total > 0 {
 			percent = correct * 100 / total
@@ -493,7 +500,7 @@ func (s *Service) Submit(ctx context.Context, who Who, id string, in Answers) (A
 	if err != nil {
 		return Assessment{}, err
 	}
-	s.awardSubmit(ctx, finished)
+	s.awardSubmit(ctx, who, finished, run)
 	p, err := s.progress(ctx, who.ID)
 	if err != nil {
 		return Assessment{}, err
@@ -504,7 +511,7 @@ func (s *Service) Submit(ctx context.Context, who Who, id string, in Answers) (A
 // awardSubmit gives the XP for a finished assessment (spec 27), after its
 // transaction: a failure here loses nothing but the XP, which the backfill
 // repairs.
-func (s *Service) awardSubmit(ctx context.Context, row roadmapdb.RoadmapAssessment) {
+func (s *Service) awardSubmit(ctx context.Context, who Who, row roadmapdb.RoadmapAssessment, run int) {
 	if s.xp == nil || !row.FinishedAt.Valid {
 		return
 	}
@@ -514,7 +521,50 @@ func (s *Service) awardSubmit(ctx context.Context, row roadmapdb.RoadmapAssessme
 			assigned, onTime, title = true, !row.FinishedAt.Time.After(a.DueAt.Time), a.Title
 		}
 	}
-	s.xp(ctx, gamification.AssessmentEvent(row.StudentClientID, uuidString(row.ID), row.Kind, title, int(row.Correct.Int16), int(row.Total.Int16), int(row.Percent.Int16), assigned, onTime, row.FinishedAt.Time))
+	s.xp(ctx, gamification.AssessmentEvent(row.StudentClientID, uuidString(row.ID), row.Kind, title, int(row.Correct.Int16), int(row.Total.Int16), int(row.Percent.Int16), run, assigned, onTime, row.FinishedAt.Time))
+	// A lesson's work may have finished the whole course: Graduation, once.
+	if row.AssignmentID.Valid || !row.RoadmapID.Valid || (row.Kind != kindLevelCheck && row.Kind != kindHomework) {
+		return
+	}
+	y, m, d := time.Now().UTC().Date()
+	if g, ok := s.graduated(ctx, who, row.RoadmapID.String, time.Date(y, m, d, 0, 0, 0, 0, time.UTC)); ok {
+		s.xp(ctx, gamification.GraduationEvent(row.StudentClientID, row.RoadmapID.String, g, row.FinishedAt.Time))
+	}
+}
+
+// graduated says whether the student's roadmap is done, and its title.
+func (s *Service) graduated(ctx context.Context, who Who, roadmapID string, today time.Time) (string, bool) {
+	list, err := s.Roadmaps(ctx, who, today)
+	if err != nil {
+		return "", false
+	}
+	for _, r := range list {
+		if r.ID == roadmapID && r.LessonsTotal > 0 && r.LessonsDone == r.LessonsTotal {
+			return r.Title, true
+		}
+	}
+	return "", false
+}
+
+// Graduations works out, for the backfill (spec 27), every course a student
+// has finished, dated by their last finished lesson work in it.
+func (s *Service) Graduations(ctx context.Context) ([]gamification.Event, error) {
+	rows, err := roadmapdb.New(s.pool).FinishedByRoadmap(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []gamification.Event
+	for _, r := range rows {
+		who := Who{Kind: people.KindStudent, ID: r.StudentClientID, Registered: r.Registered}
+		y, m, d := r.LastAt.Time.UTC().Date()
+		if !r.RoadmapID.Valid {
+			continue
+		}
+		if title, ok := s.graduated(ctx, who, r.RoadmapID.String, time.Date(y, m, d, 0, 0, 0, 0, time.UTC)); ok {
+			out = append(out, gamification.GraduationEvent(r.StudentClientID, r.RoadmapID.String, title, r.LastAt.Time))
+		}
+	}
+	return out, nil
 }
 
 // mergeAnswers checks answers against the assessment's questions and lays

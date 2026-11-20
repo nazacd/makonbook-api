@@ -269,9 +269,40 @@ func (s *Service) SaveAttempt(ctx context.Context, student int32, in AttemptInpu
 		if a.Attempt.Total != nil {
 			total = *a.Attempt.Total
 		}
-		s.xp(ctx, gamification.AttemptEvent(student, in.ID, a.Attempt.Title, right, questions, total, in.FinishedAt))
+		s.xp(ctx, gamification.AttemptEvent(student, in.ID, a.Attempt.Title, right, questions, total, longestRun(pkg, in), in.FinishedAt))
 	}
 	return a.Attempt, nil
+}
+
+// longestRun: the most right answers in a row, in the test's own order
+// (the sections taken, their modules, their questions); a skipped question
+// breaks the run.
+func longestRun(pkg Package, in AttemptInput) int {
+	type slot struct {
+		subject          string
+		module, position int16
+	}
+	given := map[slot]*string{}
+	for _, a := range in.Answers {
+		given[slot{a.Subject, a.Module, a.Position}] = a.Answer
+	}
+	taken := map[string]bool{}
+	for _, sub := range in.Sections {
+		taken[sub] = true
+	}
+	var rights []bool
+	for _, sec := range pkg.Sections {
+		if !taken[sec.Subject] {
+			continue
+		}
+		for _, m := range sec.Modules {
+			for _, pq := range m.Questions {
+				a := given[slot{sec.Subject, m.Module, pq.Position}]
+				rights = append(rights, a != nil && pq.Correct(*a))
+			}
+		}
+	}
+	return gamification.LongestRun(rights)
 }
 
 // grade checks an attempt against its package and scores each section taken.

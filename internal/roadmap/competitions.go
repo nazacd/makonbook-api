@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/nazacd/makonbook-api/internal/gamification"
 	"github.com/nazacd/makonbook-api/internal/practice"
 	"github.com/nazacd/makonbook-api/internal/roadmap/roadmapdb"
 )
@@ -379,6 +380,44 @@ func (s *Service) CompetitionBoard(ctx context.Context, id string, viewer int32,
 		}
 	}
 	return b, nil
+}
+
+// SettleCompetitions awards the podium (spec 27) for every published
+// competition that has ended and wasn't settled yet: the expired attempts
+// are graded, the board ranked as CompetitionBoard ranks it, and the top
+// three get their XP, dated at the end. Returns how many were settled.
+func (s *Service) SettleCompetitions(ctx context.Context, now time.Time) (int, error) {
+	if s.xp == nil {
+		return 0, nil
+	}
+	q := roadmapdb.New(s.pool)
+	list, err := q.EndedUnsettledCompetitions(ctx, ts(now))
+	if err != nil {
+		return 0, err
+	}
+	for _, c := range list {
+		if err := s.FinishExpired(ctx, c.ID); err != nil {
+			return 0, err
+		}
+		rows, err := q.CompetitionBoard(ctx, c.ID)
+		if err != nil {
+			return 0, err
+		}
+		rank := 0
+		for i, r := range rows {
+			if i == 0 || r.Correct != rows[i-1].Correct || r.Seconds != rows[i-1].Seconds {
+				rank = i + 1
+			}
+			if rank > len(gamification.PodiumXP) {
+				break
+			}
+			s.xp(ctx, gamification.PodiumEvent(r.StudentClientID, uuidString(c.ID), c.Title, rank, c.EndsAt.Time))
+		}
+		if err := q.SetCompetitionSettled(ctx, c.ID); err != nil {
+			return 0, err
+		}
+	}
+	return len(list), nil
 }
 
 // shortName is "Madina K.".
