@@ -195,14 +195,27 @@ CROSS JOIN LATERAL (
 ) r
 WHERE q.auto_approved AND q.version = 1;
 
--- The AI review's fix, as a new version; the question stays approved.
+-- The AI review's fix, as a new version; the question's status stays as it is.
 -- name: ApplyAIFix :one
 UPDATE questions
 SET passage = sqlc.narg('passage'), stem = @stem, choices = sqlc.narg('choices'),
-    correct = sqlc.narg('correct'), accepted = sqlc.narg('accepted')::text[],
+    correct = sqlc.narg('correct'), accepted = sqlc.narg('accepted')::text[], explanation = @explanation,
     version = version + 1, updated_at = now()
 WHERE id = @id
 RETURNING version;
+
+-- Yellow questions nobody has touched (in review, version 1), optionally only
+-- those some of these tests use, with where they first appear.
+-- name: YellowQuestions :many
+SELECT q.id,
+       (SELECT t.code || ' ' || r.qid FROM question_ai_reviews r JOIN practice_tests t ON t.id = r.test_id
+        WHERE r.question_id = q.id ORDER BY length(t.code), t.code, r.qid LIMIT 1)::text AS place
+FROM questions q
+WHERE q.ai_risk = 'yellow' AND q.status = 'review' AND q.version = 1
+  AND (cardinality(@tests::text[]) = 0 OR EXISTS (
+      SELECT 1 FROM question_ai_reviews r JOIN practice_tests t ON t.id = r.test_id
+      WHERE r.question_id = q.id AND t.code = ANY (@tests::text[])))
+ORDER BY place;
 
 -- A question by its place in a reviewed test, as the questionbank names it.
 -- name: QuestionByQID :one

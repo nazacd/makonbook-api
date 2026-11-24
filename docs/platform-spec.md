@@ -288,6 +288,13 @@ question is red until a teacher confirms. New tests are written later in the adm
 - **In the editor:** the AI summary shows the fixed version with the changed words marked and **Apply fix**,
   which fills the form; the editor checks the student view, saves and approves. (Before the fix step, only the
   adjudicator's `proposed_fix`, when it had one.)
+- **Bulk approval of yellow fixes** (`makonbook practice approve-yellow [--apply] [tests]`): for yellow
+  questions still at version 1 in review, what the group's approval does (apply the fix step's fix, approve),
+  but only when the fix is safe unseen: the same fix in every review (a green review of a repeat needs none),
+  no `needs_person`, no `invented` or `redrawn` kind and no drawn figures, the key or accepted answers
+  unchanged, and the editor's checks passed. The fix is an `ai_fix` version by the AI review; `approved_by` is
+  "the bulk approval of yellow fixes". The rest stay in review with the reason; red questions are never
+  touched. Without `--apply` it only reports.
 - **Approving in the editor** (beside the Telegram group vote): an editor approves the version they see
   (`POST …/questions/{id}/approval`, `409` if it changed meanwhile); it must pass the checks a save does, so
   a question without a key can't be approved. `approved_by` keeps who. An approval can be taken back.

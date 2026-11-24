@@ -82,7 +82,7 @@ func TestImport(t *testing.T) {
 			rec["stem"] = "Shared question, curly ‘quotes’?"
 			rec["risk"] = "yellow"
 		case subject == "math" && module == 1 && n == 7:
-			rec["proposed_fix"] = map[string]string{"choices.A": "fixed a", "stem": "Fixed stem?"}
+			rec["proposed_fix"] = map[string]string{"choices.A": "fixed a", "stem": "Fixed stem?", "explanation": "Fixed because."}
 		case subject == "math" && module == 1 && n == 8:
 			rec["proposed_fix"] = map[string]string{"question": "?"} // nothing it can apply
 		case subject == "english" && module == 1 && n == 6:
@@ -117,7 +117,7 @@ func TestImport(t *testing.T) {
 		t.Fatalf("fixes: %+v %v", fixed, err)
 	}
 	if n := count(`SELECT count(*) FROM questions q JOIN question_versions v ON v.question_id = q.id AND v.version = 2
-		WHERE q.stem = 'Fixed stem?' AND q.choices->>'A' = 'fixed a' AND q.auto_approved AND v.source = 'ai_fix' AND v.created_by = 'AI review'`); n != 1 {
+		WHERE q.stem = 'Fixed stem?' AND q.choices->>'A' = 'fixed a' AND q.explanation = 'Fixed because.' AND q.auto_approved AND v.source = 'ai_fix' AND v.created_by = 'AI review'`); n != 1 {
 		t.Error("the fix wasn't applied as an AI version")
 	}
 	if n := count(`SELECT count(*) FROM questions WHERE stem LIKE 'Question math-m1-08%' AND status = 'review' AND NOT auto_approved`); n != 1 {

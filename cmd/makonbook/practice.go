@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -31,6 +33,13 @@ const practiceUsage = `
   practice backfill-answers fill the question bank's answers (question_answers) from level
                             checks, homework and practice sets finished before migration 00045;
                             safe to run again (an answer already there stays)
+  practice approve-yellow [--apply] [<test>...]
+                            do what the teachers' group does for the yellow questions nobody has
+                            touched, in these tests (all when none): apply the fix step's fix and
+                            approve. Only fixes safe to take unseen: the same in every review, no
+                            person asked for, nothing invented or redrawn, the answer kept, the
+                            editor's checks passed. The rest stay in review; red ones are never
+                            touched. Without --apply it only lists what it would do
   practice list             tests and how far their review has come
   practice publish          publish every test whose questions are all approved and that changed
                             since its last version (the worker does this every few minutes)
@@ -48,6 +57,8 @@ func validPracticeArgs(args []string) bool {
 		return args[4] == "original" || args[4] == "fix" || args[4] == "question"
 	case len(args) == 3 && args[1] == "add":
 		return true
+	case len(args) >= 2 && args[1] == "approve-yellow":
+		return !slices.ContainsFunc(args[2:], func(a string) bool { return strings.HasPrefix(a, "-") && a != "--apply" })
 	case len(args) >= 3 && args[1] == "import":
 		return args[2] != "--replace" || len(args) >= 4
 	}
@@ -64,6 +75,9 @@ func runPractice(ctx context.Context, cfg config.Config, args []string, stdout i
 
 	if args[1] == "add" {
 		return practiceAdd(ctx, cfg, pool, args[2], stdout)
+	}
+	if args[1] == "approve-yellow" {
+		return practiceApproveYellow(ctx, cfg, im, args[2:], stdout)
 	}
 	if args[1] == "backfill-answers" {
 		n, err := roadmap.NewService(pool, practice.NewService(pool, nil), nil).BackfillAnswers(ctx)
@@ -190,6 +204,51 @@ func practiceAdd(ctx context.Context, cfg config.Config, pool *pgxpool.Pool, pat
 		fmt.Fprintln(stdout, "  "+base+id)
 	}
 	return nil
+}
+
+// practiceApproveYellow approves the yellow questions whose fix qualifies, or
+// with no --apply lists what it would do, and links the ones left for editors.
+func practiceApproveYellow(ctx context.Context, cfg config.Config, im practice.Importer, args []string, stdout io.Writer) error {
+	apply := slices.Contains(args, "--apply")
+	tests := slices.DeleteFunc(slices.Clone(args), func(a string) bool { return a == "--apply" })
+	results, err := im.ApproveYellow(ctx, tests, apply)
+	if len(results) == 0 && err == nil {
+		fmt.Fprintln(stdout, "No yellow questions waiting for review.")
+		return nil
+	}
+	base := "/practice/questions/"
+	if cfg.AdminHost != "" {
+		base = "https://" + cfg.AdminHost + base
+	}
+	approved, left := 0, map[string]int{}
+	for _, r := range results {
+		if r.Approved() {
+			approved++
+			fmt.Fprintf(stdout, "%-24s %s\n", r.Place, r.Result)
+		}
+	}
+	for _, r := range results {
+		if !r.Approved() {
+			why, _, _ := strings.Cut(r.Result, ":") // "… fails the checks: stem" counts as "… fails the checks"
+			left[why]++
+			fmt.Fprintf(stdout, "%-24s left for an editor: %s  %s%s\n", r.Place, r.Result, base, r.ID)
+		}
+	}
+	verb := "approved"
+	if !apply {
+		verb = "would be approved (run again with --apply)"
+	}
+	fmt.Fprintf(stdout, "\n%d yellow questions: %d %s.\n", len(results), approved, verb)
+	for _, why := range []string{practice.YellowNoFix, practice.YellowPerson, practice.YellowMadeUp, practice.YellowAnswer,
+		practice.YellowDisagree, practice.YellowCantApply} {
+		if left[why] > 0 {
+			fmt.Fprintf(stdout, "  %d left for an editor: %s\n", left[why], why)
+		}
+	}
+	if apply && approved > 0 {
+		fmt.Fprintln(stdout, "Tests now fully approved are published by the worker within 5 minutes (or: practice publish).")
+	}
+	return err
 }
 
 // practicePicture draws one question picture into a file.
