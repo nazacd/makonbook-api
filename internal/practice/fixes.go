@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/nazacd/makonbook-api/internal/practice/practicedb"
 )
@@ -55,27 +56,36 @@ func (im Importer) ApplyAIFixes(ctx context.Context) (FixSummary, error) {
 				sum.Review++
 				return q.UnapproveQuestion(ctx, p.ID)
 			}
-			ap := practicedb.ApplyAIFixParams{ID: p.ID, Passage: optText(deref(e.Passage)), Stem: e.Stem}
-			if cur.Type == "mcq" {
-				ap.Choices, _ = json.Marshal(e.Choices)
-				ap.Correct = optText(e.Correct)
-			} else {
-				ap.Accepted = e.Accepted
-			}
-			version, err := q.ApplyAIFix(ctx, ap)
-			if err != nil {
+			if err := saveAIFix(ctx, q, p.ID, cur.Type, e); err != nil {
 				return err
 			}
 			sum.Applied++
-			return q.InsertVersion(ctx, practicedb.InsertVersionParams{
-				QuestionID: p.ID, Version: version, Content: e.snapshot(cur.Type), Source: "ai_fix", CreatedBy: optText(AIFixer),
-			})
+			return nil
 		})
 		if err != nil {
 			return sum, fmt.Errorf("fix %s: %w", uuidString(p.ID), err)
 		}
 	}
 	return sum, nil
+}
+
+// saveAIFix stores the fixed content as the question's next version, made by
+// the AI review.
+func saveAIFix(ctx context.Context, q *practicedb.Queries, id pgtype.UUID, qtype string, e Edit) error {
+	ap := practicedb.ApplyAIFixParams{ID: id, Passage: optText(deref(e.Passage)), Stem: e.Stem, Explanation: e.Explanation}
+	if qtype == "mcq" {
+		ap.Choices, _ = json.Marshal(e.Choices)
+		ap.Correct = optText(e.Correct)
+	} else {
+		ap.Accepted = e.Accepted
+	}
+	version, err := q.ApplyAIFix(ctx, ap)
+	if err != nil {
+		return err
+	}
+	return q.InsertVersion(ctx, practicedb.InsertVersionParams{
+		QuestionID: id, Version: version, Content: e.snapshot(qtype), Source: "ai_fix", CreatedBy: optText(AIFixer),
+	})
 }
 
 // applyFix patches the content with a proposed fix: {"stem": "…"},

@@ -328,6 +328,30 @@ upload button answers "image uploads aren't set up on the server".
 A test in the pilot's old format (DAY1) is refused until its review is re-run.
 Every test stays locked until a teacher has approved all its questions.
 
+**Approving the yellow questions in bulk.** Yellow questions normally wait
+for an editor or the teachers' group. Once the fix step has run on a test,
+`practice approve-yellow` does what the group does for the yellow questions
+nobody has touched yet: it applies the fix step's fix and approves. It takes
+only fixes that are safe unseen: the same in every review of the question, no
+person asked for, nothing invented and no figure redrawn, the answer kept,
+and the editor's checks passed. Everything else stays in review, and red
+questions are never touched. Each fix is a version of its own ("Fixed by the
+AI review"; approved by "the bulk approval of yellow fixes"), so an editor
+can see and undo it. First see what it would do (all tests, or name some):
+
+```bash
+docker compose run --rm api practice approve-yellow DAY3 DAY4
+```
+
+then do it:
+
+```bash
+docker compose run --rm api practice approve-yellow --apply DAY3 DAY4
+```
+
+It lists each question left for an editor with the reason and its admin link.
+Tests whose questions are now all approved are published within 5 minutes.
+
 **Questions written outside the AI review** (a teacher's, or drafts written
 for teachers to check, e.g. for a skill the roadmaps need and the bank lacks)
 are added from a file with one JSON object per line: `subject`, `type` (`mcq`

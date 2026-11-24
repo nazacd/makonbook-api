@@ -140,22 +140,23 @@ func (q *Queries) AdminReports(ctx context.Context, status string) ([]AdminRepor
 const applyAIFix = `-- name: ApplyAIFix :one
 UPDATE questions
 SET passage = $1, stem = $2, choices = $3,
-    correct = $4, accepted = $5::text[],
+    correct = $4, accepted = $5::text[], explanation = $6,
     version = version + 1, updated_at = now()
-WHERE id = $6
+WHERE id = $7
 RETURNING version
 `
 
 type ApplyAIFixParams struct {
-	Passage  pgtype.Text
-	Stem     string
-	Choices  []byte
-	Correct  pgtype.Text
-	Accepted []string
-	ID       pgtype.UUID
+	Passage     pgtype.Text
+	Stem        string
+	Choices     []byte
+	Correct     pgtype.Text
+	Accepted    []string
+	Explanation string
+	ID          pgtype.UUID
 }
 
-// The AI review's fix, as a new version; the question stays approved.
+// The AI review's fix, as a new version; the question's status stays as it is.
 func (q *Queries) ApplyAIFix(ctx context.Context, arg ApplyAIFixParams) (int32, error) {
 	row := q.db.QueryRow(ctx, applyAIFix,
 		arg.Passage,
@@ -163,6 +164,7 @@ func (q *Queries) ApplyAIFix(ctx context.Context, arg ApplyAIFixParams) (int32, 
 		arg.Choices,
 		arg.Correct,
 		arg.Accepted,
+		arg.Explanation,
 		arg.ID,
 	)
 	var version int32
@@ -2334,4 +2336,43 @@ func (q *Queries) VersionSlot(ctx context.Context, arg VersionSlotParams) (strin
 	var question_id string
 	err := row.Scan(&question_id)
 	return question_id, err
+}
+
+const yellowQuestions = `-- name: YellowQuestions :many
+SELECT q.id,
+       (SELECT t.code || ' ' || r.qid FROM question_ai_reviews r JOIN practice_tests t ON t.id = r.test_id
+        WHERE r.question_id = q.id ORDER BY length(t.code), t.code, r.qid LIMIT 1)::text AS place
+FROM questions q
+WHERE q.ai_risk = 'yellow' AND q.status = 'review' AND q.version = 1
+  AND (cardinality($1::text[]) = 0 OR EXISTS (
+      SELECT 1 FROM question_ai_reviews r JOIN practice_tests t ON t.id = r.test_id
+      WHERE r.question_id = q.id AND t.code = ANY ($1::text[])))
+ORDER BY place
+`
+
+type YellowQuestionsRow struct {
+	ID    pgtype.UUID
+	Place string
+}
+
+// Yellow questions nobody has touched (in review, version 1), optionally only
+// those some of these tests use, with where they first appear.
+func (q *Queries) YellowQuestions(ctx context.Context, tests []string) ([]YellowQuestionsRow, error) {
+	rows, err := q.db.Query(ctx, yellowQuestions, tests)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []YellowQuestionsRow
+	for rows.Next() {
+		var i YellowQuestionsRow
+		if err := rows.Scan(&i.ID, &i.Place); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
