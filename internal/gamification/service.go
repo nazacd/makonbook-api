@@ -33,8 +33,12 @@ const (
 	GamesDayCap    = 100
 	ReadingXP      = 5 // a page read in the Library, once a day
 	AttendanceXP   = 10
+	GraduationXP   = 200 // a roadmap course finished
 	RecentCount    = 12
 )
+
+// PodiumXP by place in a competition's final board.
+var PodiumXP = [...]int32{100, 60, 40}
 
 // Event is a thing done, for Award. Key is unique per student (the same
 // key again awards nothing); for a day's aggregates (Cap > 0) the amounts
@@ -55,6 +59,7 @@ type Event struct {
 	Questions int   // how many questions
 	Score     int   // a mock test's total, when both sections were taken
 	Units     int   // what a day's aggregate counts: reviews, pages
+	Run       int   // the longest run of right answers inside the thing
 }
 
 // Quest definitions: three a day, three a week.
@@ -98,26 +103,30 @@ const (
 
 // The figures achievements compare with.
 const (
-	keyXP        = "xp_total"
-	keyLevel     = "level"
-	keyStreak    = "best_streak"
-	keyRight     = "right_answers"
-	keyQuests    = "quests"
-	keyTests     = "tests"
-	keyCompete   = "competitions"
-	keyReadDays  = "reading_days"
-	keyLessons   = "lessons"
-	keyReviews   = "reviews"
-	keyPercent   = "best_percent"
-	keyScore     = "best_score"
-	keyNight     = "night"
-	keyEarly     = "early"
-	keyFullDays  = "full_days"
-	keyFullWeeks = "full_weeks"
-	keyDream     = "dream"
-	keyOnTarget  = "on_target"
-	keyWeekend   = "weekend"
-	keyComeback  = "comeback"
+	keyXP         = "xp_total"
+	keyLevel      = "level"
+	keyStreak     = "best_streak"
+	keyRight      = "right_answers"
+	keyQuests     = "quests"
+	keyTests      = "tests"
+	keyCompete    = "competitions"
+	keyReadDays   = "reading_days"
+	keyLessons    = "lessons"
+	keyReviews    = "reviews"
+	keyPercent    = "best_percent"
+	keyScore      = "best_score"
+	keyNight      = "night"
+	keyEarly      = "early"
+	keyFullDays   = "full_days"
+	keyFullWeeks  = "full_weeks"
+	keyDream      = "dream"
+	keyOnTarget   = "on_target"
+	keyWeekend    = "weekend"
+	keyComeback   = "comeback"
+	keyRun        = "best_run"
+	keyGraduation = "graduations"
+	keyPodium     = "podiums"
+	keyPairs      = "perfect_pairs"
 )
 
 var Achievements = []AchievementDef{
@@ -166,6 +175,10 @@ var Achievements = []AchievementDef{
 	{"bookworm", "Bookworm", "Reading on ten days.", keyReadDays, 10, TierGoal, false},
 	{"regular", "Regular", "Twenty lessons, scanned in.", keyLessons, 20, TierGoal, false},
 	{"contender", "Contender", "Take part in a competition.", keyCompete, 1, TierAdvancement, false},
+	{"podium", "Podium", "Top three in a competition.", keyPodium, 1, TierChallenge, false},
+	{"graduation", "Graduation", "A whole roadmap course finished.", keyGraduation, 1, TierChallenge, false},
+	{"sniper", "Sniper", "Twenty right in a row in one test or assessment.", keyRun, 20, TierChallenge, false},
+	{"pair_of_aces", "Pair of Aces", "A round of Pairs with no mistakes.", keyPairs, 1, TierAdvancement, false},
 }
 
 var titles = []struct {
@@ -275,6 +288,7 @@ func (s *Service) Award(ctx context.Context, e Event) error {
 			n, err := q.InsertEvent(ctx, gamificationdb.InsertEventParams{
 				StudentClientID: e.Student, Key: e.Key, Kind: kind, Title: e.Title, Amount: e.Amount, RightAnswers: e.Right, HappenedAt: ts(e.HappenedAt),
 				Percent: percent, Questions: pgtype.Int4{Int32: int32(e.Questions), Valid: e.Questions > 0}, Score: score, Units: int32(e.Units), //nolint:gosec // small
+				Run: pgtype.Int2{Int16: int16(min(e.Run, 32767)), Valid: e.Run > 0}, //nolint:gosec // clamped
 			})
 			if err != nil {
 				return err
@@ -382,6 +396,10 @@ func (s *Service) figuresOf(ctx context.Context, q *gamificationdb.Queries, stud
 		keyTests: int64(facts.Tests), keyCompete: int64(facts.Competitions), keyReadDays: int64(facts.ReadingDays), keyLessons: int64(facts.Lessons),
 		keyReviews: int64(facts.Reviews), keyPercent: int64(facts.BestPercent), keyScore: int64(facts.BestScore), keyNight: int64(facts.Night), keyEarly: int64(facts.Early),
 		keyFullDays: int64(full.FullDays), keyFullWeeks: int64(full.FullWeeks), keyWeekend: weekend, keyComeback: comeback,
+		keyRun: int64(facts.BestRun), keyGraduation: int64(facts.Graduations), keyPodium: int64(facts.Podiums),
+	}
+	if facts.PerfectPairs {
+		f[keyPairs] = 1
 	}
 	if goals.HasDream {
 		f[keyDream] = 1
@@ -424,6 +442,21 @@ func (s *Service) unlock(ctx context.Context, q *gamificationdb.Queries, student
 		}
 	}
 	return nil
+}
+
+// LongestRun is the most right answers in a row, in the order given;
+// a question not answered breaks the run.
+func LongestRun(right []bool) int {
+	best, run := 0, 0
+	for _, ok := range right {
+		if ok {
+			run++
+			best = max(best, run)
+		} else {
+			run = 0
+		}
+	}
+	return best
 }
 
 // streaks: the days in a row ending today or yesterday, and the longest

@@ -151,6 +151,7 @@ type Competition struct {
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 	DeletedAt   pgtype.Timestamptz
+	SettledAt   pgtype.Timestamptz
 }
 
 type Credential struct {
@@ -891,4 +892,5 @@ type XpEvent struct {
 	Questions       pgtype.Int4
 	Score           pgtype.Int2
 	Units           int32
+	Run             pgtype.Int2
 }

@@ -7,6 +7,8 @@ import (
 
 	"github.com/nazacd/makonbook-api/internal/gamification"
 	"github.com/nazacd/makonbook-api/internal/platform/config"
+	"github.com/nazacd/makonbook-api/internal/practice"
+	"github.com/nazacd/makonbook-api/internal/roadmap"
 )
 
 const gamificationUsage = `
@@ -26,7 +28,8 @@ func runGamification(ctx context.Context, cfg config.Config, args []string, stdo
 	}
 	defer pool.Close()
 	svc := gamification.NewService(pool, cfg.Location, nil)
-	n, err := svc.Backfill(ctx, func(done, total int) { fmt.Fprintf(stdout, "events written: %d of %d\n", done, total) })
+	roadmaps := roadmap.NewService(pool, practice.NewService(pool, nil), nil)
+	n, err := svc.Backfill(ctx, func(done, total int) { fmt.Fprintf(stdout, "events written: %d of %d\n", done, total) }, roadmaps.Graduations)
 	if err != nil {
 		return err
 	}

@@ -194,7 +194,11 @@ SELECT count(*) FILTER (WHERE kind = 'attempt')::int AS tests,
        COALESCE(max(percent) FILTER (WHERE kind IN ('assessment', 'competition') AND questions >= 10), 0)::int AS best_percent,
        COALESCE(max(score) FILTER (WHERE kind = 'attempt'), 0)::int AS best_score,
        count(*) FILTER (WHERE kind <> 'quest' AND extract(hour FROM happened_at AT TIME ZONE $1::text) < 4)::int AS night,
-       count(*) FILTER (WHERE kind <> 'quest' AND extract(hour FROM happened_at AT TIME ZONE $1::text) BETWEEN 4 AND 6)::int AS early
+       count(*) FILTER (WHERE kind <> 'quest' AND extract(hour FROM happened_at AT TIME ZONE $1::text) BETWEEN 4 AND 6)::int AS early,
+       COALESCE(max(run), 0)::int AS best_run,
+       count(*) FILTER (WHERE kind = 'graduation')::int AS graduations,
+       count(*) FILTER (WHERE kind = 'podium')::int AS podiums,
+       EXISTS (SELECT 1 FROM vocab_game_results r WHERE r.student_client_id = $2 AND r.game = 'pairs' AND r.mistakes = 0)::bool AS perfect_pairs
 FROM xp_events WHERE student_client_id = $2
 `
 
@@ -214,6 +218,10 @@ type FactsRow struct {
 	BestScore    int32
 	Night        int32
 	Early        int32
+	BestRun      int32
+	Graduations  int32
+	Podiums      int32
+	PerfectPairs bool
 }
 
 // What the achievements look at beyond the totals (spec 27).
@@ -231,6 +239,10 @@ func (q *Queries) Facts(ctx context.Context, arg FactsParams) (FactsRow, error) 
 		&i.BestScore,
 		&i.Night,
 		&i.Early,
+		&i.BestRun,
+		&i.Graduations,
+		&i.Podiums,
+		&i.PerfectPairs,
 	)
 	return i, err
 }
@@ -301,8 +313,8 @@ func (q *Queries) GoalFacts(ctx context.Context, studentClientID int32) (GoalFac
 
 const insertEvent = `-- name: InsertEvent :execrows
 
-INSERT INTO xp_events (student_client_id, key, kind, title, amount, right_answers, happened_at, percent, questions, score, units)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+INSERT INTO xp_events (student_client_id, key, kind, title, amount, right_answers, happened_at, percent, questions, score, units, run)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 ON CONFLICT (student_client_id, key) DO NOTHING
 `
 
@@ -318,6 +330,7 @@ type InsertEventParams struct {
 	Questions       pgtype.Int4
 	Score           pgtype.Int2
 	Units           int32
+	Run             pgtype.Int2
 }
 
 // Gamification (spec 27): the XP ledger, the streak's days, the quests and
@@ -338,6 +351,7 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) (int64
 		arg.Questions,
 		arg.Score,
 		arg.Units,
+		arg.Run,
 	)
 	if err != nil {
 		return 0, err

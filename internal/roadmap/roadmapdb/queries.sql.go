@@ -425,6 +425,39 @@ func (q *Queries) DomainAccuracy(ctx context.Context, student int32) ([]DomainAc
 	return items, nil
 }
 
+const endedUnsettledCompetitions = `-- name: EndedUnsettledCompetitions :many
+SELECT id, title, ends_at FROM competitions
+WHERE published_at IS NOT NULL AND ends_at <= $1 AND settled_at IS NULL ORDER BY ends_at
+`
+
+type EndedUnsettledCompetitionsRow struct {
+	ID     pgtype.UUID
+	Title  string
+	EndsAt pgtype.Timestamptz
+}
+
+// Settling (spec 27): competitions that have ended and whose podium hasn't
+// been awarded; then marked settled.
+func (q *Queries) EndedUnsettledCompetitions(ctx context.Context, now pgtype.Timestamptz) ([]EndedUnsettledCompetitionsRow, error) {
+	rows, err := q.db.Query(ctx, endedUnsettledCompetitions, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EndedUnsettledCompetitionsRow
+	for rows.Next() {
+		var i EndedUnsettledCompetitionsRow
+		if err := rows.Scan(&i.ID, &i.Title, &i.EndsAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const expiredAttempts = `-- name: ExpiredAttempts :many
 SELECT a.id, a.student_client_id FROM roadmap_assessments a JOIN competitions c ON c.id = a.competition_id
 WHERE a.competition_id = $1 AND a.finished_at IS NULL
@@ -526,6 +559,47 @@ func (q *Queries) FinishedAssessments(ctx context.Context) ([]FinishedAssessment
 	return items, nil
 }
 
+const finishedByRoadmap = `-- name: FinishedByRoadmap :many
+SELECT a.student_client_id, a.roadmap_id, max(a.finished_at)::timestamptz AS last_at, (st.source = 'self')::bool AS registered
+FROM roadmap_assessments a JOIN students st ON st.client_id = a.student_client_id
+WHERE a.finished_at IS NOT NULL AND a.kind IN ('level_check', 'homework') AND a.assignment_id IS NULL
+GROUP BY a.student_client_id, a.roadmap_id, st.source
+`
+
+type FinishedByRoadmapRow struct {
+	StudentClientID int32
+	RoadmapID       pgtype.Text
+	LastAt          pgtype.Timestamptz
+	Registered      bool
+}
+
+// Students with finished lesson work, per roadmap, for the graduation
+// backfill (spec 27): the last finish is when a course can have been done.
+func (q *Queries) FinishedByRoadmap(ctx context.Context) ([]FinishedByRoadmapRow, error) {
+	rows, err := q.db.Query(ctx, finishedByRoadmap)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FinishedByRoadmapRow
+	for rows.Next() {
+		var i FinishedByRoadmapRow
+		if err := rows.Scan(
+			&i.StudentClientID,
+			&i.RoadmapID,
+			&i.LastAt,
+			&i.Registered,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const finishedQuestions = `-- name: FinishedQuestions :many
 SELECT DISTINCT unnest(question_ids)::uuid AS id FROM roadmap_assessments
 WHERE student_client_id = $1 AND finished_at IS NOT NULL
@@ -583,7 +657,7 @@ func (q *Queries) GetAssessment(ctx context.Context, id pgtype.UUID) (RoadmapAss
 }
 
 const getCompetition = `-- name: GetCompetition :one
-SELECT id, title, description, prize, subject, source, question_ids, starts_at, ends_at, minutes, published_at, created_by, created_at, updated_at, deleted_at FROM competitions WHERE id = $1 AND deleted_at IS NULL
+SELECT id, title, description, prize, subject, source, question_ids, starts_at, ends_at, minutes, published_at, created_by, created_at, updated_at, deleted_at, settled_at FROM competitions WHERE id = $1 AND deleted_at IS NULL
 `
 
 func (q *Queries) GetCompetition(ctx context.Context, id pgtype.UUID) (Competition, error) {
@@ -605,6 +679,7 @@ func (q *Queries) GetCompetition(ctx context.Context, id pgtype.UUID) (Competiti
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.SettledAt,
 	)
 	return i, err
 }
@@ -757,7 +832,7 @@ const insertCompetition = `-- name: InsertCompetition :one
 
 INSERT INTO competitions (title, description, prize, subject, source, question_ids, starts_at, ends_at, minutes, created_by)
 VALUES ($1, $2, $3, $4, $5, $6::uuid[], $7, $8, $9, $10)
-RETURNING id, title, description, prize, subject, source, question_ids, starts_at, ends_at, minutes, published_at, created_by, created_at, updated_at, deleted_at
+RETURNING id, title, description, prize, subject, source, question_ids, starts_at, ends_at, minutes, published_at, created_by, created_at, updated_at, deleted_at, settled_at
 `
 
 type InsertCompetitionParams struct {
@@ -804,6 +879,7 @@ func (q *Queries) InsertCompetition(ctx context.Context, arg InsertCompetitionPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.SettledAt,
 	)
 	return i, err
 }
@@ -1033,7 +1109,7 @@ func (q *Queries) LessonAssessments(ctx context.Context, arg LessonAssessmentsPa
 }
 
 const listCompetitions = `-- name: ListCompetitions :many
-SELECT c.id, c.title, c.description, c.prize, c.subject, c.source, c.question_ids, c.starts_at, c.ends_at, c.minutes, c.published_at, c.created_by, c.created_at, c.updated_at, c.deleted_at, (SELECT count(*) FROM roadmap_assessments a WHERE a.competition_id = c.id)::int AS participants
+SELECT c.id, c.title, c.description, c.prize, c.subject, c.source, c.question_ids, c.starts_at, c.ends_at, c.minutes, c.published_at, c.created_by, c.created_at, c.updated_at, c.deleted_at, c.settled_at, (SELECT count(*) FROM roadmap_assessments a WHERE a.competition_id = c.id)::int AS participants
 FROM competitions c
 WHERE c.deleted_at IS NULL AND (c.published_at IS NOT NULL OR $1::bool)
 ORDER BY c.starts_at DESC
@@ -1056,6 +1132,7 @@ type ListCompetitionsRow struct {
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
 	DeletedAt    pgtype.Timestamptz
+	SettledAt    pgtype.Timestamptz
 	Participants int32
 }
 
@@ -1084,6 +1161,7 @@ func (q *Queries) ListCompetitions(ctx context.Context, withDrafts bool) ([]List
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.SettledAt,
 			&i.Participants,
 		); err != nil {
 			return nil, err
@@ -1738,6 +1816,15 @@ func (q *Queries) SetCompetitionPublished(ctx context.Context, arg SetCompetitio
 	return err
 }
 
+const setCompetitionSettled = `-- name: SetCompetitionSettled :exec
+UPDATE competitions SET settled_at = now() WHERE id = $1
+`
+
+func (q *Queries) SetCompetitionSettled(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, setCompetitionSettled, id)
+	return err
+}
+
 const skillSolved = `-- name: SkillSolved :many
 SELECT q.subject, q.skill, count(*)::int AS solved
 FROM questions q
@@ -1859,7 +1946,7 @@ const updateCompetition = `-- name: UpdateCompetition :one
 UPDATE competitions SET title = $1, description = $2, prize = $3, subject = $4, source = $5,
     question_ids = $6::uuid[], starts_at = $7, ends_at = $8, minutes = $9, updated_at = now()
 WHERE id = $10 AND deleted_at IS NULL
-RETURNING id, title, description, prize, subject, source, question_ids, starts_at, ends_at, minutes, published_at, created_by, created_at, updated_at, deleted_at
+RETURNING id, title, description, prize, subject, source, question_ids, starts_at, ends_at, minutes, published_at, created_by, created_at, updated_at, deleted_at, settled_at
 `
 
 type UpdateCompetitionParams struct {
@@ -1905,6 +1992,7 @@ func (q *Queries) UpdateCompetition(ctx context.Context, arg UpdateCompetitionPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.SettledAt,
 	)
 	return i, err
 }

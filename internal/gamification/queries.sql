@@ -5,8 +5,8 @@
 
 -- A thing done, once: the same key again changes nothing (0 rows).
 -- name: InsertEvent :execrows
-INSERT INTO xp_events (student_client_id, key, kind, title, amount, right_answers, happened_at, percent, questions, score, units)
-VALUES (@student_client_id, @key, @kind, @title, @amount, @right_answers, @happened_at, @percent, @questions, @score, @units)
+INSERT INTO xp_events (student_client_id, key, kind, title, amount, right_answers, happened_at, percent, questions, score, units, run)
+VALUES (@student_client_id, @key, @kind, @title, @amount, @right_answers, @happened_at, @percent, @questions, @score, @units, @run)
 ON CONFLICT (student_client_id, key) DO NOTHING;
 
 -- A day's aggregate: the amount grows up to the cap; returns the day's amount.
@@ -49,7 +49,11 @@ SELECT count(*) FILTER (WHERE kind = 'attempt')::int AS tests,
        COALESCE(max(percent) FILTER (WHERE kind IN ('assessment', 'competition') AND questions >= 10), 0)::int AS best_percent,
        COALESCE(max(score) FILTER (WHERE kind = 'attempt'), 0)::int AS best_score,
        count(*) FILTER (WHERE kind <> 'quest' AND extract(hour FROM happened_at AT TIME ZONE @tz::text) < 4)::int AS night,
-       count(*) FILTER (WHERE kind <> 'quest' AND extract(hour FROM happened_at AT TIME ZONE @tz::text) BETWEEN 4 AND 6)::int AS early
+       count(*) FILTER (WHERE kind <> 'quest' AND extract(hour FROM happened_at AT TIME ZONE @tz::text) BETWEEN 4 AND 6)::int AS early,
+       COALESCE(max(run), 0)::int AS best_run,
+       count(*) FILTER (WHERE kind = 'graduation')::int AS graduations,
+       count(*) FILTER (WHERE kind = 'podium')::int AS podiums,
+       EXISTS (SELECT 1 FROM vocab_game_results r WHERE r.student_client_id = @student_client_id AND r.game = 'pairs' AND r.mistakes = 0)::bool AS perfect_pairs
 FROM xp_events WHERE student_client_id = @student_client_id;
 
 -- Days with all three daily quests done, and weeks with all six.

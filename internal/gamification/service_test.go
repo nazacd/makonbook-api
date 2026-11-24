@@ -23,6 +23,12 @@ func TestLevels(t *testing.T) {
 	}
 }
 
+func TestLongestRun(t *testing.T) {
+	if LongestRun(nil) != 0 || LongestRun([]bool{false}) != 0 || LongestRun([]bool{true, true, false, true, true, true}) != 3 || LongestRun([]bool{true, true}) != 2 {
+		t.Fatal("runs")
+	}
+}
+
 func TestStreaks(t *testing.T) {
 	day := func(s string) pgtype.Date {
 		d, _ := time.Parse("2006-01-02", s)
@@ -59,7 +65,7 @@ func TestAwardAndState(t *testing.T) {
 	yesterday := now.AddDate(0, 0, -1)
 
 	// A test yesterday, twice: counted once.
-	ev := AttemptEvent(11, "7b3b5b0e-0000-4000-8000-000000000001", "Day 1", 12, 20, 0, yesterday)
+	ev := AttemptEvent(11, "7b3b5b0e-0000-4000-8000-000000000001", "Day 1", 12, 20, 0, 7, yesterday)
 	for range 2 {
 		if err := svc.Award(ctx, ev); err != nil {
 			t.Fatal(err)

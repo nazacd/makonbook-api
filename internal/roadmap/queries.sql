@@ -295,6 +295,23 @@ LEFT JOIN credentials cr ON cr.person_kind = 'student' AND cr.person_id = a.stud
 WHERE a.competition_id = @competition_id AND a.finished_at IS NOT NULL
 ORDER BY a.correct DESC, seconds ASC, a.finished_at ASC;
 
+-- Settling (spec 27): competitions that have ended and whose podium hasn't
+-- been awarded; then marked settled.
+-- name: EndedUnsettledCompetitions :many
+SELECT id, title, ends_at FROM competitions
+WHERE published_at IS NOT NULL AND ends_at <= @now AND settled_at IS NULL ORDER BY ends_at;
+
+-- name: SetCompetitionSettled :exec
+UPDATE competitions SET settled_at = now() WHERE id = @id;
+
+-- Students with finished lesson work, per roadmap, for the graduation
+-- backfill (spec 27): the last finish is when a course can have been done.
+-- name: FinishedByRoadmap :many
+SELECT a.student_client_id, a.roadmap_id, max(a.finished_at)::timestamptz AS last_at, (st.source = 'self')::bool AS registered
+FROM roadmap_assessments a JOIN students st ON st.client_id = a.student_client_id
+WHERE a.finished_at IS NOT NULL AND a.kind IN ('level_check', 'homework') AND a.assignment_id IS NULL
+GROUP BY a.student_client_id, a.roadmap_id, st.source;
+
 -- Questions a reserved competition may use: in no mock test and held by no
 -- other competition.
 -- name: ReservableQuestions :many

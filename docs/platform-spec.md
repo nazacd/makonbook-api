@@ -1380,6 +1380,8 @@ board (11.5), competitions (26) and the teachers’ rating (a later section).
   | Game rounds (11.4) | 2 per right answer, at most 100 a day | `games:<day>` |
   | A page read in the Library (25) | 5, once a day | `read:<day>` |
   | Marked present or late at a lesson in the app (8) | 10 | `attendance:<session id>` |
+  | A roadmap course finished (every lesson done) | 200 | `graduation:<roadmap id>` |
+  | Top three in a competition's final board (settled by the worker once it ends, `competitions.settled_at`) | 100, 60, 40 | `podium:<competition id>` |
   | A quest finished | its reward | `quest:<code>:<period start>` |
 
 - **When it is written:** right after the feature's own transaction commits (a retry or a crash in between
@@ -1402,9 +1404,10 @@ board (11.5), competitions (26) and the teachers’ rating (a later section).
   Target (a mock at or above the target), 1500 Club, Full Marks (1600; secret). Words: Wordsmith (500 reviews),
   Lexicon (2,000). The clock: Night Owl (after midnight), Early Bird (before 7; both secret). Quests: Quest Habit
   (5), Quest Regular (25), Full House (all three dailies in a day), Clean Sweep (all six in a week). The world:
-  Bookworm (reading on 10 days), Regular (20 lessons), Contender (a competition). For these the ledger keeps a
-  little about each event: the share right and the number of questions, a mock's total, the units behind a day's
-  aggregate.
+  Bookworm (reading on 10 days), Regular (20 lessons), Contender (a competition), Podium (top three in one),
+  Graduation (a roadmap course finished), Sniper (20 right in a row inside one test or assessment), Pair of Aces (a
+  Pairs round with no mistakes). For these the ledger keeps a little about each event: the share right and the
+  number of questions, a mock's total, the units behind a day's aggregate, the longest run of right answers.
 - **API:** `GET /v1/me/gamification`: `xp_total`, `xp_today`, `level`, `level_title`, `level_floor`,
   `next_level_xp`, `streak` (`current`, `best`, `active_today`, `at_risk`, the last 14 days), `quests` (daily and
   weekly, each with progress, target, reward and `done_at`; `resets_at`), `achievements` (every one, with
