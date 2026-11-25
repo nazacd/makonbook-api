@@ -867,6 +867,23 @@ func (q *Queries) MoveStudentReviews(ctx context.Context, arg MoveStudentReviews
 	return err
 }
 
+const moveStudentRoom = `-- name: MoveStudentRoom :exec
+INSERT INTO room_layouts (student_client_id, slots, seen, updated_at)
+SELECT $1::int, slots, seen, updated_at FROM room_layouts WHERE student_client_id = $2::int
+ON CONFLICT (student_client_id) DO NOTHING
+`
+
+type MoveStudentRoomParams struct {
+	ToID   int32
+	FromID int32
+}
+
+// Mako's room (spec 28): the layout comes along unless the other has one.
+func (q *Queries) MoveStudentRoom(ctx context.Context, arg MoveStudentRoomParams) error {
+	_, err := q.db.Exec(ctx, moveStudentRoom, arg.ToID, arg.FromID)
+	return err
+}
+
 const moveStudentSavedQuestions = `-- name: MoveStudentSavedQuestions :exec
 INSERT INTO saved_questions (student_client_id, question_id, saved_at)
 SELECT $1::int, question_id, saved_at FROM saved_questions WHERE student_client_id = $2::int

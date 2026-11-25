@@ -68,6 +68,7 @@ enrol).
 | D38 | A group whose discipline names the subject but **no level** takes the level from **HolliHop's group level**; without a subject, no roadmap. | 2026-11-08. |
 | D39 | **In-app notifications** (a table, the web's drawer): a new assignment notifies the group's students. Nothing outside the app yet; Telegram later. | 2026-11-08. |
 | D45 | **Gamification** (section 27): XP is awarded by the server, once per thing done, for everything it already records (answers, tests, assessments, reviews, games, reading, competitions, attendance); levels with titles, a streak of active days, three daily and three weekly quests, thirteen achievements; for every student with a phone, free accounts included; **no XP leaderboard** (ranking stays the teachers' rating, 11.5's board and competitions'). | 2026-11-20. |
+| D46 | **Mako's room** (section 28): the old MakonRoom comes over as the mascot's room. Six slots, one item each, twenty items; a default per slot and the rest unlocked by the figures gamification already has (level, XP, best streak, word reviews, quests done). **Cosmetic only, and nothing is bought**: XP is never spent. The server keeps the layout and accepts only unlocked items; the web draws the room. Earned achievements stand on the room's shelves. No visiting each other's rooms yet (the old friends feature didn't come over). | 2026-11-25. |
 | D44 | **Competitions** (section 26): editors make them in the admin panel from bank topics or reserved questions; strict (one attempt, the server's clock, answers hidden until the end); open to free accounts; prizes only as a line of text for now. | 2026-11-14. |
 | D43 | **The question bank** (section 22.8): every answer to a bank question is kept (`question_answers`) for solved counts and analytics; practice sets as a timed rush or at one's own pace with each question checked; analytics and the bank open to every student with a phone, no paid tier. | 2026-11-13. |
 | D42 | **Vocabulary, social** (section 11.4–11.6): word games (Pairs, Unscramble, Fill the gap) whose results are kept on the server and shown to teachers; a monthly **leaderboard** of everyone (names shortened) for all students, and of their own groups for enrolled students only; **students make decks**, private or shared with everyone, moderated by teachers and by students' reports. | 2026-11-11. |
@@ -1417,3 +1418,38 @@ board (11.5), competitions (26) and the teachers’ rating (a later section).
   launch and running it twice changes nothing.
 - Not built: a leaderboard by XP, buying anything with XP, teachers' or parents' views (the parents' app may show
   the streak later).
+
+## 28. Mako's room (built, for the web; D46)
+
+The mascot's study room (the old MakonBook's MakonRoom), which fills with what the student earns: a place to
+see progress as things, not only as numbers. **Cosmetic and nothing else:** it changes no score, no grade and
+no XP, and nothing is bought with XP; an item is open or it isn't. Every student with a phone has one, free
+accounts included. Teachers have none.
+- **Slots and items** (in code, `internal/gamification/room.go`; the web draws each by its `code`). Six slots,
+  one item in each at a time. Every slot has a default that is there from the start; the others unlock when
+  a figure of section 27 reaches a target, and stay open while it does:
+
+  | Slot | Default | Unlocks |
+  |---|---|---|
+  | Wallpaper | Lavender wall | Atlas ikat (level 3), Girih tiles (a 7-day streak), Starry night (level 8) |
+  | Wall art | Study board | Suzani (100 word reviews), Registan print (level 5), World map (1,000 XP) |
+  | Rug | Round mat | Bukhara gilam (a 3-day streak), Atlas runner (5 quests) |
+  | Furniture | Study desk | Tapchan and choynak (15 quests), Scholar's desk (level 10) |
+  | Light | Floor lamp | Chiroq lantern (25 quests), Globe (500 word reviews) |
+  | Plant | Cactus | Tulips (250 word reviews), Pomegranate tree (level 12) |
+
+  The streak is the best ever kept, so an item doesn't lock again when a streak breaks.
+- **The layout** (`room_layouts`: the chosen item per slot, and the items already shown as new). The server
+  accepts only an item that exists, belongs to the slot and is unlocked; a stored item that is unknown or locked
+  (a backfill that lowered the figures, an item removed from the catalogue) reads as the slot's default. An
+  account merged into another (21) brings its layout unless the other has one.
+- **New items:** an item unlocked since the room was last marked seen is `is_new` (never a default). The web
+  says so once, in a toast and in the room, then marks the room seen.
+- **Trophies:** the achievements earned (27) stand on the room's shelves. The room has no data of its own for
+  them: the web reads `GET /v1/me/gamification`.
+- **API** (students only): `GET /v1/me/room` (`level`, `items_unlocked`, `items_total`, `slots`, each with its
+  items: `code`, `name`, `blurb`, `unlocked`, `equipped`, `is_new`, and `requirement` with `key`, `target`,
+  `progress`, `label`, null for a default); `PUT /v1/me/room/slots/{slot}` with `{ item }` places one (422
+  `invalid_room_item`, 403 `room_item_locked`); `POST /v1/me/room/seen`. Each answers the room.
+- Not built: visiting another student's room (the old friends list and friend codes didn't come over), items
+  for Mako himself, items given by staff, seasonal items.

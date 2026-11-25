@@ -304,6 +304,12 @@ INSERT INTO student_achievements (student_client_id, code, unlocked_at)
 SELECT @to_id::int, code, unlocked_at FROM student_achievements WHERE student_client_id = @from_id::int
 ON CONFLICT DO NOTHING;
 
+-- Mako's room (spec 28): the layout comes along unless the other has one.
+-- name: MoveStudentRoom :exec
+INSERT INTO room_layouts (student_client_id, slots, seen, updated_at)
+SELECT @to_id::int, slots, seen, updated_at FROM room_layouts WHERE student_client_id = @from_id::int
+ON CONFLICT (student_client_id) DO NOTHING;
+
 -- Rows a teacher can't take: removed with the student.
 -- name: DeleteStudentAttempts :exec
 DELETE FROM practice_attempts WHERE student_client_id = @client_id;

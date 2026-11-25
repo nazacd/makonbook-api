@@ -81,6 +81,24 @@ func (q *Queries) Achievements(ctx context.Context, studentClientID int32) ([]Ac
 	return items, nil
 }
 
+const addRoomSeen = `-- name: AddRoomSeen :exec
+INSERT INTO room_layouts (student_client_id, seen)
+VALUES ($1, $2::text[])
+ON CONFLICT (student_client_id) DO UPDATE
+    SET seen = ARRAY(SELECT DISTINCT unnest(room_layouts.seen || $2::text[]) ORDER BY 1), updated_at = now()
+`
+
+type AddRoomSeenParams struct {
+	StudentClientID int32
+	Seen            []string
+}
+
+// Adds to the items already shown as new.
+func (q *Queries) AddRoomSeen(ctx context.Context, arg AddRoomSeenParams) error {
+	_, err := q.db.Exec(ctx, addRoomSeen, arg.StudentClientID, arg.Seen)
+	return err
+}
+
 const advanceQuest = `-- name: AdvanceQuest :one
 UPDATE quest_progress
 SET progress = LEAST(target, CASE WHEN $1::bool THEN $2::int ELSE progress + $2::int END)
@@ -702,6 +720,42 @@ func (q *Queries) RecentEvents(ctx context.Context, arg RecentEventsParams) ([]R
 		return nil, err
 	}
 	return items, nil
+}
+
+const roomLayout = `-- name: RoomLayout :one
+SELECT slots, seen FROM room_layouts WHERE student_client_id = $1
+`
+
+type RoomLayoutRow struct {
+	Slots []byte
+	Seen  []string
+}
+
+// Mako's room (spec 28).
+func (q *Queries) RoomLayout(ctx context.Context, studentClientID int32) (RoomLayoutRow, error) {
+	row := q.db.QueryRow(ctx, roomLayout, studentClientID)
+	var i RoomLayoutRow
+	err := row.Scan(&i.Slots, &i.Seen)
+	return i, err
+}
+
+const setRoomSlot = `-- name: SetRoomSlot :exec
+INSERT INTO room_layouts (student_client_id, slots)
+VALUES ($1, jsonb_build_object($2::text, $3::text))
+ON CONFLICT (student_client_id) DO UPDATE
+    SET slots = room_layouts.slots || jsonb_build_object($2::text, $3::text), updated_at = now()
+`
+
+type SetRoomSlotParams struct {
+	StudentClientID int32
+	Slot            string
+	Item            string
+}
+
+// Places an item in a slot; the other slots stay.
+func (q *Queries) SetRoomSlot(ctx context.Context, arg SetRoomSlotParams) error {
+	_, err := q.db.Exec(ctx, setRoomSlot, arg.StudentClientID, arg.Slot, arg.Item)
+	return err
 }
 
 const totals = `-- name: Totals :one
