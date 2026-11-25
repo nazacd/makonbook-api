@@ -2743,6 +2743,64 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Gamification" } } }
         "401": { $ref: "#/components/responses/Error" }
         "403": { $ref: "#/components/responses/Error" }
+  /v1/me/room:
+    get:
+      summary: Mako's room, what is placed in it and what can be
+      description: |
+        Spec 28. Six slots, each holding one item; a slot's default is there
+        from the start and the others unlock from the figures of spec 27
+        (level, XP, best streak, word reviews, quests done). Cosmetic only.
+        The web draws each item by its code. Students with a phone only.
+      operationId: room
+      tags: [gamification]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The room
+          content: { application/json: { schema: { $ref: "#/components/schemas/Room" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+  /v1/me/room/slots/{slot}:
+    put:
+      summary: Place an unlocked item in a slot
+      description: |
+        The other slots keep theirs. 422 `invalid_room_item` for a slot or
+        item that doesn't exist, or an item of another slot; 403
+        `room_item_locked` for one not unlocked yet.
+      operationId: equipRoom
+      tags: [gamification]
+      security: [{ bearer: [] }]
+      parameters:
+        - { name: slot, in: path, required: true, schema: { type: string, enum: [wallpaper, art, rug, desk, corner, plant] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [item]
+              properties:
+                item: { type: string, description: "The item's code" }
+      responses:
+        "200":
+          description: The room with the item placed
+          content: { application/json: { schema: { $ref: "#/components/schemas/Room" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+  /v1/me/room/seen:
+    post:
+      summary: Mark the newly unlocked items as shown
+      description: After this no item is `is_new` until another unlocks.
+      operationId: seenRoom
+      tags: [gamification]
+      security: [{ bearer: [] }]
+      responses:
+        "200":
+          description: The room, with nothing new
+          content: { application/json: { schema: { $ref: "#/components/schemas/Room" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
   /v1/me/practice/saved:
     get:
       summary: The questions the student saved, newest first
@@ -5906,6 +5964,45 @@ components:
         seconds: { type: integer }
         me: { type: boolean }
 
+    Room:
+      type: object
+      required: [level, items_unlocked, items_total, slots]
+      properties:
+        level: { type: integer, minimum: 1 }
+        items_unlocked: { type: integer }
+        items_total: { type: integer }
+        slots:
+          type: array
+          description: In the picker's order
+          items:
+            type: object
+            required: [key, label, items]
+            properties:
+              key: { type: string, enum: [wallpaper, art, rug, desk, corner, plant] }
+              label: { type: string }
+              items:
+                type: array
+                items:
+                  type: object
+                  required: [code, name, blurb, unlocked, equipped, is_new, requirement]
+                  properties:
+                    code: { type: string, description: "What the web draws the item by" }
+                    name: { type: string }
+                    blurb: { type: string }
+                    unlocked: { type: boolean }
+                    equipped: { type: boolean, description: "Exactly one item per slot" }
+                    is_new: { type: boolean, description: "Unlocked since the room was last marked seen; never a default" }
+                    requirement:
+                      description: What unlocks it; null for the slot's default
+                      oneOf:
+                        - type: "null"
+                        - type: object
+                          required: [key, target, progress, label]
+                          properties:
+                            key: { type: string, enum: [xp_total, level, best_streak, reviews, quests] }
+                            target: { type: integer }
+                            progress: { type: integer, description: "At most the target" }
+                            label: { type: string, description: "In words: Reach level 3" }
     Gamification:
       type: object
       required: [xp_total, xp_today, level, level_title, level_floor, next_level_xp, leveled_up_today, streak, quests, achievements, recent]

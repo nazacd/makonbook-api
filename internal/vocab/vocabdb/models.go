@@ -618,6 +618,13 @@ type RoadmapChoice struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+type RoomLayout struct {
+	StudentClientID int32
+	Slots           []byte
+	Seen            []string
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type SavedQuestion struct {
 	StudentClientID int32
 	QuestionID      pgtype.UUID

@@ -141,3 +141,21 @@ FROM library_progress WHERE person_kind = 'student' GROUP BY 1, 2 ORDER BY last_
 -- name: PastAttendance :many
 SELECT m.session_id, m.student_client_id, COALESCE(m.scanned_at, m.updated_at)::timestamptz AS at
 FROM attendance_marks m WHERE m.state IN ('present', 'late') ORDER BY at;
+
+-- Mako's room (spec 28).
+-- name: RoomLayout :one
+SELECT slots, seen FROM room_layouts WHERE student_client_id = @student_client_id;
+
+-- Places an item in a slot; the other slots stay.
+-- name: SetRoomSlot :exec
+INSERT INTO room_layouts (student_client_id, slots)
+VALUES (@student_client_id, jsonb_build_object(@slot::text, @item::text))
+ON CONFLICT (student_client_id) DO UPDATE
+    SET slots = room_layouts.slots || jsonb_build_object(@slot::text, @item::text), updated_at = now();
+
+-- Adds to the items already shown as new.
+-- name: AddRoomSeen :exec
+INSERT INTO room_layouts (student_client_id, seen)
+VALUES (@student_client_id, @seen::text[])
+ON CONFLICT (student_client_id) DO UPDATE
+    SET seen = ARRAY(SELECT DISTINCT unnest(room_layouts.seen || @seen::text[]) ORDER BY 1), updated_at = now();

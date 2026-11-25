@@ -197,6 +197,9 @@ func MergeSelfStudent(ctx context.Context, db peopledb.DBTX, from, toStudent int
 			func(ctx context.Context) error {
 				return q.MoveStudentAchievements(ctx, peopledb.MoveStudentAchievementsParams{ToID: toStudent, FromID: from})
 			},
+			func(ctx context.Context) error {
+				return q.MoveStudentRoom(ctx, peopledb.MoveStudentRoomParams{ToID: toStudent, FromID: from})
+			},
 		} {
 			if err := move(ctx); err != nil {
 				return fmt.Errorf("merge %d into %d: %w", from, toStudent, err)

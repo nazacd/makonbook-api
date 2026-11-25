@@ -1825,6 +1825,71 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/room": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Mako's room, what is placed in it and what can be
+         * @description Spec 28. Six slots, each holding one item; a slot's default is there
+         *     from the start and the others unlock from the figures of spec 27
+         *     (level, XP, best streak, word reviews, quests done). Cosmetic only.
+         *     The web draws each item by its code. Students with a phone only.
+         */
+        get: operations["room"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/room/slots/{slot}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Place an unlocked item in a slot
+         * @description The other slots keep theirs. 422 `invalid_room_item` for a slot or
+         *     item that doesn't exist, or an item of another slot; 403
+         *     `room_item_locked` for one not unlocked yet.
+         */
+        put: operations["equipRoom"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/me/room/seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark the newly unlocked items as shown
+         * @description After this no item is `is_new` until another unlocks.
+         */
+        post: operations["seenRoom"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/practice/saved": {
         parameters: {
             query?: never;
@@ -4538,6 +4603,38 @@ export interface components {
             total: number;
             seconds: number;
             me: boolean;
+        };
+        Room: {
+            level: number;
+            items_unlocked: number;
+            items_total: number;
+            /** @description In the picker's order */
+            slots: {
+                /** @enum {string} */
+                key: "wallpaper" | "art" | "rug" | "desk" | "corner" | "plant";
+                label: string;
+                items: {
+                    /** @description What the web draws the item by */
+                    code: string;
+                    name: string;
+                    blurb: string;
+                    unlocked: boolean;
+                    /** @description Exactly one item per slot */
+                    equipped: boolean;
+                    /** @description Unlocked since the room was last marked seen; never a default */
+                    is_new: boolean;
+                    /** @description What unlocks it; null for the slot's default */
+                    requirement: null | {
+                        /** @enum {string} */
+                        key: "xp_total" | "level" | "best_streak" | "reviews" | "quests";
+                        target: number;
+                        /** @description At most the target */
+                        progress: number;
+                        /** @description In words: Reach level 3 */
+                        label: string;
+                    };
+                }[];
+            }[];
         };
         Gamification: {
             xp_total: number;
@@ -8981,6 +9078,82 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Gamification"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    room: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The room */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Room"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    equipRoom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slot: "wallpaper" | "art" | "rug" | "desk" | "corner" | "plant";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The item's code */
+                    item: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The room with the item placed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Room"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    seenRoom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The room, with nothing new */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Room"];
                 };
             };
             401: components["responses"]["Error"];
